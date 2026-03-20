@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <em>v0.1.0 - ALPHA</em>
+  v0.1.0 - ALPHA
 </p>
 
 # Tablix
