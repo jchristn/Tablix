@@ -1,0 +1,33 @@
+# .NET
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.DotSettings.user
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# Databases (except docker sample)
+*.db
+*.sqlite
+!docker/database.db
+!docker/factory/database.db

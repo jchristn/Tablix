@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Tablix.Core\Tablix.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SerializableDataTable" Version="1.0.6" />
+    <PackageReference Include="SwiftStack" Version="0.4.7" />
+    <PackageReference Include="SyslogLogging" Version="2.0.13" />
+    <PackageReference Include="Voltaic" Version="0.1.9" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('..\..\docker\database.db')">
+    <None Include="..\..\docker\database.db" CopyToOutputDirectory="PreserveNewest" Link="database.db" />
+  </ItemGroup>
+
+</Project>

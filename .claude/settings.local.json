@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -X POST http://localhost:9100/v1/database/db_sample_sqlite/query -H \"Authorization: Bearer tablixadmin\" -H \"Content-Type: application/json\" -d '{\"\"\"\"Query\"\"\"\":\"\"\"\"SELECT * FROM users LIMIT 2\"\"\"\"}')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl:*)",
+      "Bash(npm run:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet Tablix.Server.dll --install-mcp)",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\(r''C:\\\\Users\\\\joelc\\\\.claude.json''\\)\\); print\\(''mcpServers:'', list\\(d.get\\(''mcpServers'',{}\\).keys\\(\\)\\)\\); print\\(''numStartups:'', d.get\\(''numStartups'',''MISSING''\\)\\)\")",
+      "Bash(rm -f tablix.json)",
+      "Bash(timeout 4 dotnet run)",
+      "Bash(timeout 5 dotnet run)",
+      "Bash(cd:*)",
+      "Bash(tail -5 /c/Code/Tablix/src/Tablix.Server/logs/*.20260320)",
+      "Bash(tail -5 /c/Code/Tablix/src/Tablix.Server/bin/Debug/net10.0/logs/*.20260320)",
+      "Bash(dotnet test:*)"
+    ]
+  }
+}

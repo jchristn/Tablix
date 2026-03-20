@@ -1,0 +1,35 @@
+{
+  "Rest": {
+    "Hostname": "*",
+    "Port": 9100,
+    "Ssl": false,
+    "McpPort": 9102
+  },
+  "Logging": {
+    "ConsoleLogging": true,
+    "FileLogging": true,
+    "LogDirectory": "./logs/",
+    "LogFilename": "tablix.log",
+    "MinimumSeverity": 0,
+    "EnableColors": true
+  },
+  "Databases": [
+    {
+      "Id": "db_sample_sqlite",
+      "Type": "Sqlite",
+      "Filename": "./database.db",
+      "DatabaseName": "sample",
+      "Schema": "main",
+      "AllowedQueries": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE"
+      ],
+      "Context": "Sample e-commerce database with three tables. The 'users' table stores customer information (Name, Email, CreatedUtc). The 'orders' table tracks purchases with a foreign key to users (UserId) and includes OrderDate, Total, and Status fields. The 'line_items' table holds individual order items with a foreign key to orders (OrderId) and includes ProductName, Quantity, and UnitPrice. Typical queries: find orders by user, calculate order totals, list products purchased."
+    }
+  ],
+  "ApiKeys": [
+    "tablixadmin"
+  ]
+}

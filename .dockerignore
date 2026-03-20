@@ -1,0 +1,14 @@
+.git/
+.vs/
+node_modules/
+bin/
+obj/
+dist/
+logs/
+*.md
+*.bat
+.gitignore
+.dockerignore
+docker/
+dashboard/
+assets/
