@@ -162,6 +162,70 @@ Tablix is configured via `tablix.json`:
 }
 ```
 
+### Example Database Entries
+
+**SQLite**
+```json
+{
+  "Id": "db_my_sqlite",
+  "Name": "Local App Database",
+  "Type": "Sqlite",
+  "Filename": "./myapp.db",
+  "AllowedQueries": ["SELECT"],
+  "Context": "Local SQLite database for the myapp application."
+}
+```
+
+**PostgreSQL**
+```json
+{
+  "Id": "db_my_postgres",
+  "Name": "Staging Orders",
+  "Type": "Postgresql",
+  "Hostname": "pg.example.com",
+  "Port": 5432,
+  "User": "readonly",
+  "Password": "secret",
+  "DatabaseName": "orders",
+  "Schema": "public",
+  "AllowedQueries": ["SELECT"],
+  "Context": "Staging PostgreSQL database for the orders service."
+}
+```
+
+**MySQL**
+```json
+{
+  "Id": "db_my_mysql",
+  "Name": "Production Users",
+  "Type": "Mysql",
+  "Hostname": "mysql.example.com",
+  "Port": 3306,
+  "User": "readonly",
+  "Password": "secret",
+  "DatabaseName": "users",
+  "AllowedQueries": ["SELECT"],
+  "Context": "Production MySQL database for user accounts."
+}
+```
+
+**SQL Server**
+```json
+{
+  "Id": "db_my_sqlserver",
+  "Name": "Analytics Warehouse",
+  "Type": "SqlServer",
+  "Hostname": "sql.example.com",
+  "Port": 1433,
+  "User": "readonly",
+  "Password": "secret",
+  "DatabaseName": "analytics",
+  "Schema": "dbo",
+  "AllowedQueries": ["SELECT"],
+  "Context": "SQL Server analytics warehouse for reporting."
+}
+```
+
 ### Database Entry Fields
 
 | Field | Description |
