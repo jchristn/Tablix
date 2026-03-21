@@ -6,7 +6,9 @@
   v0.1.0 - ALPHA - API and structure may change without notice
 </p>
 
-**Authors:** @jchristn @rawingate
+<p align="center">
+  <b>Authors:</b> @jchristn @rawingate
+</p>
 
 # Tablix
 
