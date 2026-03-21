@@ -347,17 +347,19 @@ Tablix is configured via `tablix.json`:
 
 ### REST API
 
-All endpoints require `Authorization: Bearer <api-key>`.
+All endpoints except health checks require `Authorization: Bearer <api-key>`. See [REST_API.md](REST_API.md) for full request/response details.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/v1/database` | List databases (paginated) |
-| `GET` | `/v1/database/{id}` | Get database details and schema geometry |
-| `POST` | `/v1/database` | Add a database entry |
-| `PUT` | `/v1/database/{id}` | Update a database entry |
-| `DELETE` | `/v1/database/{id}` | Delete a database entry |
-| `POST` | `/v1/database/{id}/crawl` | Re-crawl database schema |
-| `POST` | `/v1/database/{id}/query` | Execute a SQL query |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/` | No | Health check with version, uptime |
+| `HEAD` | `/` | No | Lightweight health check (200 OK) |
+| `GET` | `/v1/database` | Yes | List databases (paginated) |
+| `GET` | `/v1/database/{id}` | Yes | Get database details and schema geometry |
+| `POST` | `/v1/database` | Yes | Add a database entry |
+| `PUT` | `/v1/database/{id}` | Yes | Update a database entry |
+| `DELETE` | `/v1/database/{id}` | Yes | Delete a database entry |
+| `POST` | `/v1/database/{id}/crawl` | Yes | Re-crawl database schema |
+| `POST` | `/v1/database/{id}/query` | Yes | Execute a SQL query |
 
 ### Query Validation
 
