@@ -1,4 +1,4 @@
-{
+﻿{
   "Rest": {
     "Hostname": "*",
     "Port": 9100,
@@ -18,16 +18,32 @@
       "Id": "db_sample_sqlite",
       "Name": "Sample E-Commerce",
       "Type": "Sqlite",
-      "Filename": "./database.db",
       "DatabaseName": "sample",
       "Schema": "main",
+      "Filename": "./database.db",
       "AllowedQueries": [
         "SELECT",
         "INSERT",
         "UPDATE",
         "DELETE"
       ],
-      "Context": "Sample e-commerce database with three tables. The 'users' table stores customer information (Name, Email, CreatedUtc). The 'orders' table tracks purchases with a foreign key to users (UserId) and includes OrderDate, Total, and Status fields. The 'line_items' table holds individual order items with a foreign key to orders (OrderId) and includes ProductName, Quantity, and UnitPrice. Typical queries: find orders by user, calculate order totals, list products purchased."
+      "Context": "Sample e-commerce database with three tables. The \u0027users\u0027 table stores customer information (Name, Email, CreatedUtc). The \u0027orders\u0027 table tracks purchases with a foreign key to users (UserId) and includes OrderDate, Total, and Status fields. The \u0027line_items\u0027 table holds individual order items with a foreign key to orders (OrderId) and includes ProductName, Quantity, and UnitPrice. Typical queries: find orders by user, calculate order totals, list products purchased."
+    },
+    {
+      "Id": "db_jurat_staging",
+      "Name": "Jurat Staging Database",
+      "Type": "Mysql",
+      "Hostname": "jurat-stage-20240518.chuashtcoj10.us-east-2.rds.amazonaws.com",
+      "Port": 3306,
+      "User": "admin",
+      "Password": "KK9ZC3K26CBPOsZnxRFX",
+      "DatabaseName": "enotary",
+      "Schema": "public",
+      "Filename": "",
+      "AllowedQueries": [
+        "SELECT"
+      ],
+      "Context": "Jurat digital notary journal database."
     }
   ],
   "ApiKeys": [

@@ -157,15 +157,17 @@ export default function DatabaseFormPage() {
                   <input title="Password for database authentication (stored in cleartext)" type="password" value={entry.Password || ''} onChange={e => handleChange('Password', e.target.value)} />
                 </div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: entry.Type === 'Mysql' ? '1fr' : '1fr 1fr', gap: '12px' }}>
                 <div className="form-group">
                   <label title="Name of the database to connect to">Database Name</label>
                   <input title="The specific database on the server" value={entry.DatabaseName || ''} onChange={e => handleChange('DatabaseName', e.target.value)} />
                 </div>
-                <div className="form-group">
-                  <label title="Database schema to crawl (default: public)">Schema</label>
-                  <input title="Schema name used when discovering tables" value={entry.Schema || ''} onChange={e => handleChange('Schema', e.target.value)} placeholder="public" />
-                </div>
+                {entry.Type !== 'Mysql' && (
+                  <div className="form-group">
+                    <label title="Database schema to crawl (default: public)">Schema</label>
+                    <input title="Schema name used when discovering tables" value={entry.Schema || ''} onChange={e => handleChange('Schema', e.target.value)} placeholder="public" />
+                  </div>
+                )}
               </div>
             </>
           )}
