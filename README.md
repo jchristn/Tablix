@@ -119,7 +119,7 @@ dotnet run --project Tablix.Server
 
 The server creates a default `tablix.json` on first run with a sample SQLite database entry.
 
-### Dashboard Development
+### Running Dashboard Locally
 
 ```bash
 cd dashboard
