@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  v0.1.0 - ALPHA - API and structure may change without notice
+  <b>v0.1.0 - ALPHA</b> - API and structure may change without notice
 </p>
 
 <p align="center">
