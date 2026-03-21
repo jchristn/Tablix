@@ -57,6 +57,7 @@ namespace Tablix.Core.Settings
             new DatabaseEntry
             {
                 Id = "db_sample_sqlite",
+                Name = "Sample E-Commerce",
                 Type = DatabaseTypeEnum.Sqlite,
                 Filename = "./database.db",
                 DatabaseName = "sample",

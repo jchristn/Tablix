@@ -21,6 +21,11 @@ namespace Tablix.Core.Settings
         }
 
         /// <summary>
+        /// Human-readable display name for this database (e.g. "Staging Orders DB").
+        /// </summary>
+        public string Name { get; set; } = null;
+
+        /// <summary>
         /// Database type.
         /// </summary>
         public DatabaseTypeEnum Type { get; set; } = DatabaseTypeEnum.Sqlite;

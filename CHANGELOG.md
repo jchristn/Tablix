@@ -9,7 +9,7 @@ Initial release.
 - **Database providers**: SQLite, PostgreSQL, MySQL, SQL Server — schema crawl and query execution
 - **Schema discovery**: crawl tables, columns, primary keys, foreign keys, and indexes on startup or on demand
 - **REST API**: seven endpoints with Bearer token authentication and OpenAPI/Swagger documentation
-- **MCP tools**: three Voltaic-based tools (`tablix_discover_databases`, `tablix_discover_database`, `tablix_execute_query`) for AI agent integration
+- **MCP tools**: six Voltaic-based tools (`tablix_discover_databases`, `tablix_discover_database`, `tablix_list_tables`, `tablix_discover_table`, `tablix_execute_query`, `tablix_update_context`) for AI agent integration
 - **MCP auto-installer**: `--install-mcp` CLI flag patches config for Claude Code, Cursor, Codex, and Gemini
 - **Query validation**: per-database `AllowedQueries` enforcement with semicolon rejection and comment stripping
 - **Degraded state**: non-fatal crawl failures with per-database error reporting

@@ -64,6 +64,7 @@ namespace Tablix.Server
 
             try
             {
+                _LogInfo?.Invoke("crawling database '" + entry.Id + "'");
                 IDatabaseCrawler crawler = CrawlerFactory.Create(entry.Type);
                 DatabaseDetail detail = await crawler.CrawlAsync(entry).ConfigureAwait(false);
                 _Cache[entry.Id] = detail;

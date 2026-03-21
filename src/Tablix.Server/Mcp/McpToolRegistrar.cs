@@ -46,7 +46,10 @@ namespace Tablix.Server.Mcp
 
             RegisterDiscoverDatabases(register, settingsManager, logDebug);
             RegisterDiscoverDatabase(register, settingsManager, crawlCache, logDebug);
+            RegisterListTables(register, settingsManager, crawlCache, logDebug);
+            RegisterDiscoverTable(register, settingsManager, crawlCache, logDebug);
             RegisterExecuteQuery(register, settingsManager, crawlCache, logDebug);
+            RegisterUpdateContext(register, settingsManager, crawlCache, logDebug);
         }
 
         #endregion
@@ -66,7 +69,7 @@ namespace Tablix.Server.Mcp
         {
             register(
                 "tablix_discover_databases",
-                "List all configured databases with their connection details and user-supplied context. Supports pagination via maxResults and skip, and optional filtering by database ID or name.",
+                "Step 1: Start here. Lists all configured databases with their connection details and user-supplied context. After identifying a database, call tablix_list_tables to see its tables, then tablix_discover_table for the geometry of each table you need. Supports pagination via maxResults and skip, and optional filtering by database ID or name.",
                 new
                 {
                     type = "object",
@@ -130,7 +133,7 @@ namespace Tablix.Server.Mcp
         {
             register(
                 "tablix_discover_database",
-                "Get detailed information about a specific database by ID, including user context, and the full schema geometry (tables, columns, primary keys, foreign keys, indexes).",
+                "Returns the full schema geometry for every table in a database at once (tables, columns, primary keys, foreign keys, indexes). This can produce large responses — prefer the targeted workflow: tablix_list_tables to see available tables, then tablix_discover_table for only the tables you need.",
                 new
                 {
                     type = "object",
@@ -163,6 +166,113 @@ namespace Tablix.Server.Mcp
                     }
 
                     return (object)detail;
+                });
+        }
+
+        private static void RegisterListTables(RegisterToolDelegate register, SettingsManager settingsManager, CrawlCache crawlCache, Action<string> logDebug)
+        {
+            register(
+                "tablix_list_tables",
+                "Step 2: After identifying a database with tablix_discover_databases, call this to list its tables. Returns each table's name, schema, and column count. Then call tablix_discover_table for the full geometry of each table you need.",
+                new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        databaseId = new { type = "string", description = "Database entry ID" }
+                    },
+                    required = new[] { "databaseId" }
+                },
+                async (args) =>
+                {
+                    logDebug?.Invoke("[MCP] tablix_list_tables invoked");
+
+                    string databaseId = null;
+                    if (args.HasValue && args.Value.TryGetProperty("databaseId", out JsonElement idEl))
+                        databaseId = idEl.GetString();
+
+                    if (String.IsNullOrEmpty(databaseId))
+                        return (object)new { Error = "databaseId is required" };
+
+                    DatabaseEntry entry = settingsManager.GetDatabase(databaseId);
+                    if (entry == null)
+                        return (object)new { Error = "Database '" + databaseId + "' not found" };
+
+                    DatabaseDetail detail = crawlCache.Get(databaseId);
+                    if (detail == null)
+                    {
+                        detail = await crawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+                    }
+
+                    var tables = detail.Tables.Select(t => new { t.SchemaName, t.TableName, Columns = t.Columns.Count }).ToList();
+
+                    return (object)new
+                    {
+                        DatabaseId = databaseId,
+                        Context = detail.Context,
+                        IsCrawled = detail.IsCrawled,
+                        TableCount = detail.Tables.Count,
+                        Tables = tables
+                    };
+                });
+        }
+
+        private static void RegisterDiscoverTable(RegisterToolDelegate register, SettingsManager settingsManager, CrawlCache crawlCache, Action<string> logDebug)
+        {
+            register(
+                "tablix_discover_table",
+                "Step 3: After listing tables with tablix_list_tables, call this to get full geometry for a specific table — columns, data types, primary keys, foreign keys, and indexes. Call once per table you need to understand before writing queries.",
+                new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        databaseId = new { type = "string", description = "Database entry ID" },
+                        tableName = new { type = "string", description = "Table name to retrieve geometry for" }
+                    },
+                    required = new[] { "databaseId", "tableName" }
+                },
+                async (args) =>
+                {
+                    logDebug?.Invoke("[MCP] tablix_discover_table invoked");
+
+                    string databaseId = null;
+                    string tableName = null;
+
+                    if (args.HasValue)
+                    {
+                        if (args.Value.TryGetProperty("databaseId", out JsonElement idEl)) databaseId = idEl.GetString();
+                        if (args.Value.TryGetProperty("tableName", out JsonElement tblEl)) tableName = tblEl.GetString();
+                    }
+
+                    if (String.IsNullOrEmpty(databaseId))
+                        return (object)new { Error = "databaseId is required" };
+
+                    if (String.IsNullOrEmpty(tableName))
+                        return (object)new { Error = "tableName is required" };
+
+                    DatabaseEntry entry = settingsManager.GetDatabase(databaseId);
+                    if (entry == null)
+                        return (object)new { Error = "Database '" + databaseId + "' not found" };
+
+                    DatabaseDetail detail = crawlCache.Get(databaseId);
+                    if (detail == null)
+                    {
+                        detail = await crawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+                    }
+
+                    TableDetail table = detail.Tables.FirstOrDefault(t =>
+                        String.Equals(t.TableName, tableName, StringComparison.OrdinalIgnoreCase));
+
+                    if (table == null)
+                        return (object)new { Error = "Table '" + tableName + "' not found in database '" + databaseId + "'" };
+
+                    return (object)new
+                    {
+                        DatabaseId = databaseId,
+                        Context = detail.Context,
+                        Table = table
+                    };
                 });
         }
 
@@ -218,6 +328,63 @@ namespace Tablix.Server.Mcp
                     catch (Exception ex)
                     {
                         return (object)new QueryResult { Success = false, DatabaseId = databaseId, Error = ex.Message };
+                    }
+                });
+        }
+
+        private static void RegisterUpdateContext(RegisterToolDelegate register, SettingsManager settingsManager, CrawlCache crawlCache, Action<string> logDebug)
+        {
+            register(
+                "tablix_update_context",
+                "Update the user-supplied context description for a database. The context helps AI agents understand what the database contains, how its tables relate, and what queries are useful.",
+                new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        databaseId = new { type = "string", description = "Database entry ID" },
+                        context = new { type = "string", description = "New context description for the database" }
+                    },
+                    required = new[] { "databaseId", "context" }
+                },
+                async (args) =>
+                {
+                    logDebug?.Invoke("[MCP] tablix_update_context invoked");
+
+                    string databaseId = null;
+                    string context = null;
+
+                    if (args.HasValue)
+                    {
+                        if (args.Value.TryGetProperty("databaseId", out JsonElement idEl)) databaseId = idEl.GetString();
+                        if (args.Value.TryGetProperty("context", out JsonElement ctxEl)) context = ctxEl.GetString();
+                    }
+
+                    if (String.IsNullOrEmpty(databaseId))
+                        return (object)new { Success = false, Error = "databaseId is required" };
+
+                    DatabaseEntry entry = settingsManager.GetDatabase(databaseId);
+                    if (entry == null)
+                        return (object)new { Success = false, Error = "Database '" + databaseId + "' not found" };
+
+                    entry.Context = context;
+
+                    try
+                    {
+                        settingsManager.UpdateDatabase(entry);
+
+                        // Update the cached crawl detail so the dashboard reflects the new context
+                        DatabaseDetail cached = crawlCache.Get(databaseId);
+                        if (cached != null)
+                        {
+                            cached.Context = context;
+                        }
+
+                        return (object)new { Success = true, DatabaseId = databaseId, Context = context };
+                    }
+                    catch (Exception ex)
+                    {
+                        return (object)new { Success = false, DatabaseId = databaseId, Error = ex.Message };
                     }
                 });
         }

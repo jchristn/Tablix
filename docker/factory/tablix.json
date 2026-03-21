@@ -16,6 +16,7 @@
   "Databases": [
     {
       "Id": "db_sample_sqlite",
+      "Name": "Sample E-Commerce",
       "Type": "Sqlite",
       "Filename": "./database.db",
       "DatabaseName": "sample",

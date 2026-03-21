@@ -119,8 +119,8 @@ export default function DatabaseListPage() {
             <thead>
               <tr>
                 <th title="Unique database entry identifier">ID</th>
+                <th title="Human-readable display name">Name</th>
                 <th title="Database engine type (Sqlite, Postgresql, Mysql, SqlServer)">Type</th>
-                <th title="Database or file name">Name</th>
                 <th title="Database schema">Schema</th>
               </tr>
             </thead>
@@ -128,8 +128,8 @@ export default function DatabaseListPage() {
               {result.Objects.map(db => (
                 <tr key={db.Id} title="Click to view database details and schema geometry" style={{ cursor: 'pointer' }} onClick={() => navigate(`/databases/${db.Id}`)}>
                   <td><Link to={`/databases/${db.Id}`} title={"View details for " + db.Id}>{db.Id}</Link></td>
+                  <td title={db.Name || '—'}>{db.Name || '—'}</td>
                   <td title={db.Type}>{db.Type}</td>
-                  <td title={db.DatabaseName || db.Filename || '—'}>{db.DatabaseName || db.Filename || '—'}</td>
                   <td title={db.Schema || '—'}>{db.Schema || '—'}</td>
                 </tr>
               ))}

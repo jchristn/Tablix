@@ -1,5 +1,6 @@
 export interface DatabaseEntry {
   Id: string;
+  Name: string | null;
   Type: string;
   Hostname: string | null;
   Port: number;

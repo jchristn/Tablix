@@ -24,7 +24,12 @@ namespace Tablix.Core.DatabaseDrivers
         {
             if (entry == null) throw new ArgumentNullException(nameof(entry));
 
-            string schema = entry.Schema ?? entry.DatabaseName;
+            string schema = entry.DatabaseName;
+            if (!String.IsNullOrEmpty(entry.Schema)
+                && !String.Equals(entry.Schema, "public", StringComparison.OrdinalIgnoreCase))
+            {
+                schema = entry.Schema;
+            }
 
             DatabaseDetail detail = new DatabaseDetail
             {

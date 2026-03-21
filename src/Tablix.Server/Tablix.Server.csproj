@@ -23,4 +23,9 @@
     <None Include="..\..\docker\database.db" CopyToOutputDirectory="PreserveNewest" Link="database.db" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="clean.bat" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="clean.sh" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -3,8 +3,10 @@
 </p>
 
 <p align="center">
-  v0.1.0 - ALPHA
+  v0.1.0 - ALPHA - API and structure may change without notice
 </p>
+
+**Authors:** @jchristn @rawingate
 
 # Tablix
 
@@ -109,11 +111,21 @@ To configure manually, add to your client's MCP settings:
 
 ### MCP Tools
 
+The recommended discovery flow for AI agents is:
+
+1. **`tablix_discover_databases`** — List all configured databases to identify which ones are available
+2. **`tablix_list_tables`** — List the tables in a specific database
+3. **`tablix_discover_table`** — Get full geometry (columns, types, PKs, FKs, indexes) for a specific table
+4. **`tablix_execute_query`** — Execute a SQL query once you understand the schema
+
 | Tool | Description |
 |------|-------------|
 | `tablix_discover_databases` | List all configured databases with pagination and filtering |
-| `tablix_discover_database` | Get full schema geometry for a specific database |
+| `tablix_discover_database` | Get full schema geometry for an entire database (prefer the targeted flow above) |
+| `tablix_list_tables` | List table names, schemas, and column counts for a database |
+| `tablix_discover_table` | Get full geometry for a single table in a database |
 | `tablix_execute_query` | Execute a validated SQL query |
+| `tablix_update_context` | Update the user-supplied context description for a database |
 
 ## Configuration
 

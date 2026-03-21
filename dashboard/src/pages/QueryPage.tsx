@@ -46,7 +46,8 @@ export default function QueryPage() {
       if (response.ok && data.Success) {
         setResult(data);
       } else {
-        setError(data.Error || data.Description || data.Message || 'Query failed.');
+        const parts = [data.Error, data.Description].filter(Boolean);
+        setError(parts.length > 0 ? parts.join(': ') : (data.Message || 'Query failed.'));
       }
     } catch {
       setError('Could not connect to server.');
@@ -102,24 +103,31 @@ export default function QueryPage() {
           </div>
 
           <div style={{ overflowX: 'auto' }}>
-            <table>
+            <table style={{ borderCollapse: 'collapse', border: '1px solid var(--border-color)' }}>
               <thead>
                 <tr>
                   {columns.map(col => (
-                    <th key={col.Name} title={col.Name + ' (' + col.Type + ')'}>{col.Name}</th>
+                    <th key={col.Name} title={col.Name + ' (' + col.Type + ')'} style={{ border: '1px solid var(--border-color)' }}>{col.Name}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((row, i) => (
                   <tr key={i}>
-                    {columns.map(col => (
-                      <td key={col.Name} title={row[col.Name] !== null && row[col.Name] !== undefined ? String(row[col.Name]) : 'NULL'} style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>
-                        {row[col.Name] !== null && row[col.Name] !== undefined
-                          ? String(row[col.Name])
-                          : <span className="muted-text">NULL</span>}
-                      </td>
-                    ))}
+                    {columns.map(col => {
+                      const raw = row[col.Name];
+                      const isNull = raw === null || raw === undefined;
+                      const text = isNull ? null : String(raw);
+                      return (
+                        <td key={col.Name} title={isNull ? 'NULL' : text!} style={{
+                          fontFamily: 'var(--font-mono)', fontSize: '13px',
+                          border: '1px solid var(--border-color)',
+                          maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                        }}>
+                          {isNull ? <span className="muted-text">NULL</span> : text}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
                 {rows.length === 0 && (

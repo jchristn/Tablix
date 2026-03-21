@@ -5,6 +5,7 @@ import type { DatabaseEntry } from '../types';
 
 const emptyEntry: DatabaseEntry = {
   Id: '',
+  Name: '',
   Type: 'Sqlite',
   Hostname: '',
   Port: 5432,
@@ -36,6 +37,7 @@ export default function DatabaseFormPage() {
       const data = await response.json();
       const dbEntry: DatabaseEntry = {
         Id: data.DatabaseId || id || '',
+        Name: data.Name || '',
         Type: data.Type || 'Sqlite',
         Hostname: data.Hostname || '',
         Port: data.Port || 5432,
@@ -98,6 +100,11 @@ export default function DatabaseFormPage() {
           </div>
 
           <div className="form-group">
+            <label title="Human-readable display name for this database">Name</label>
+            <input title="A friendly name to identify this database (e.g. Staging Orders DB)" value={entry.Name || ''} onChange={e => handleChange('Name', e.target.value)} placeholder="My Database" />
+          </div>
+
+          <div className="form-group">
             <label title="Database engine type">Type</label>
             <select title="Select the database engine" value={entry.Type} onChange={e => handleChange('Type', e.target.value)}>
               <option value="Sqlite">SQLite</option>
@@ -154,7 +161,7 @@ export default function DatabaseFormPage() {
 
           <div className="form-group">
             <label title="Free-form description of the database for AI agents — describe tables, relationships, and typical queries">Context</label>
-            <textarea title="This text is provided to AI agents to help them understand the database" rows={4} value={entry.Context || ''} onChange={e => handleChange('Context', e.target.value)} placeholder="Describe the database, its tables, and how they relate..." />
+            <textarea title="This text is provided to AI agents to help them understand the database" rows={4} value={entry.Context || ''} onChange={e => handleChange('Context', e.target.value)} placeholder="Describe the database, its tables, and how they relate..." style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }} />
           </div>
 
           {error && <p className="error-text" style={{ marginBottom: '12px' }}>{error}</p>}
