@@ -11,8 +11,24 @@ cat > /usr/share/nginx/html/config.json << EOF
 }
 EOF
 
-# Substitute the backend URL into the nginx config for proxying
-export TABLIX_PROXY_PASS="${SERVER_URL}"
-envsubst '${TABLIX_PROXY_PASS}' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf
+# Write nginx config with the backend URL for proxying
+cat > /etc/nginx/conf.d/default.conf << EOF
+server {
+    listen 9101;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    location /v1/ {
+        proxy_pass ${SERVER_URL}/v1/;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+
+    location / {
+        try_files \$uri \$uri/ /index.html;
+    }
+}
+EOF
 
 exec nginx -g 'daemon off;'
