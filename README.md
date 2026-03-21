@@ -245,6 +245,7 @@ Tablix is configured via `tablix.json`:
     "McpPort": 9102
   },
   "Logging": {
+    "Servers": [],
     "ConsoleLogging": true,
     "FileLogging": true,
     "LogDirectory": "./logs/",
@@ -344,6 +345,38 @@ Tablix is configured via `tablix.json`:
 | `Filename` | File path (SQLite) |
 | `AllowedQueries` | Permitted SQL statement types |
 | `Context` | Free-form description for AI agents |
+
+### Logging Settings
+
+| Field | Description |
+|-------|-------------|
+| `Servers` | Array of syslog server objects (optional, default empty) |
+| `ConsoleLogging` | Enable console output (default `true`) |
+| `FileLogging` | Enable file logging (default `true`) |
+| `LogDirectory` | Directory for log files (default `./logs/`) |
+| `LogFilename` | Log filename (default `tablix.log`) |
+| `MinimumSeverity` | 0 = debug, 1 = info, 2 = warn, 3 = error, 4 = alert, 5 = critical, 6 = emergency (default `0`) |
+| `EnableColors` | Colored console output (default `true`) |
+
+Each syslog server entry has `Hostname` and `Port`:
+
+```json
+{
+  "Logging": {
+    "Servers": [
+      { "Hostname": "127.0.0.1", "Port": 514 }
+    ],
+    "ConsoleLogging": true,
+    "FileLogging": true,
+    "LogDirectory": "./logs/",
+    "LogFilename": "tablix.log",
+    "MinimumSeverity": 0,
+    "EnableColors": true
+  }
+}
+```
+
+When syslog servers are configured, log messages are forwarded to each server in addition to console and file output.
 
 ### REST API
 

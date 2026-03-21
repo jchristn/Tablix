@@ -1,6 +1,7 @@
 namespace Tablix.Core.Settings
 {
     using System;
+    using System.Collections.Generic;
 
     /// <summary>
     /// Logging configuration settings.
@@ -8,6 +9,15 @@ namespace Tablix.Core.Settings
     public class LoggingSettings
     {
         #region Public-Members
+
+        /// <summary>
+        /// List of syslog servers.
+        /// </summary>
+        public List<SyslogServer> Servers
+        {
+            get { return _Servers; }
+            set { _Servers = value ?? new List<SyslogServer>(); }
+        }
 
         /// <summary>
         /// Enable console logging.
@@ -55,6 +65,7 @@ namespace Tablix.Core.Settings
 
         #region Private-Members
 
+        private List<SyslogServer> _Servers = new List<SyslogServer>();
         private string _LogDirectory = "./logs/";
         private string _LogFilename = "tablix.log";
         private int _MinimumSeverity = 0;

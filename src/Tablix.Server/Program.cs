@@ -2,6 +2,8 @@ namespace Tablix.Server
 {
     using System;
     using System.Linq;
+    using System.Runtime.Loader;
+    using System.Threading;
     using System.Threading.Tasks;
     using Tablix.Core.Helpers;
     using Tablix.Core.Settings;
@@ -11,6 +13,10 @@ namespace Tablix.Server
     /// </summary>
     public class Program
     {
+        private static readonly string _Header = "[Program] ";
+        private static CancellationTokenSource _TokenSource = new CancellationTokenSource();
+        private static Task _ServerTask = null;
+
         /// <summary>
         /// Main entry point.
         /// </summary>
@@ -37,7 +43,26 @@ namespace Tablix.Server
             }
 
             TablixServer server = new TablixServer(settingsFilename);
-            await server.StartAsync().ConfigureAwait(false);
+            _ServerTask = server.StartAsync(_TokenSource.Token);
+
+            EventWaitHandle waitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
+            AssemblyLoadContext.Default.Unloading += (ctx) => waitHandle.Set();
+            Console.CancelKeyPress += (sender, eventArgs) =>
+            {
+                Console.WriteLine(_Header + "termination signal received");
+                eventArgs.Cancel = true;
+                waitHandle.Set();
+            };
+
+            bool waitHandleSignal = false;
+            do
+            {
+                waitHandleSignal = waitHandle.WaitOne(1000);
+            }
+            while (!waitHandleSignal);
+
+            _TokenSource.Cancel();
+            Console.WriteLine(_Header + "stopping at " + DateTime.UtcNow);
         }
     }
 }

@@ -34,5 +34,15 @@ namespace Tablix.Core.Helpers
         /// Bearer token prefix.
         /// </summary>
         public static readonly string BearerPrefix = "Bearer ";
+
+        /// <summary>
+        /// ASCII art logo.
+        /// </summary>
+        public static readonly string Logo = "\n" +
+            @"   _        _     _ _" + "\n" +
+            @"  | |_ __ _| |__ | (_)_  __" + "\n" +
+            @"  | __/ _` | '_ \| | \ \/ /" + "\n" +
+            @"  | || (_| | |_) | | |>  < " + "\n" +
+            @"   \__\__,_|_.__/|_|_/_/\_\";
     }
 }

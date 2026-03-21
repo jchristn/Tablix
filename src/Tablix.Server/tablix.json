@@ -6,6 +6,7 @@
     "McpPort": 9102
   },
   "Logging": {
+    "Servers": [],
     "ConsoleLogging": true,
     "FileLogging": true,
     "LogDirectory": "./logs/",

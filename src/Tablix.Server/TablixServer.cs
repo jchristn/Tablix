@@ -36,7 +36,6 @@ namespace Tablix.Server
         private SwiftStackApp _App;
         private McpHttpServer _McpServer;
         private DatabaseHandler _DatabaseHandler;
-        private CancellationTokenSource _TokenSource = new CancellationTokenSource();
         private DateTime _StartTimeUtc;
 
         #endregion
@@ -59,7 +58,8 @@ namespace Tablix.Server
         /// <summary>
         /// Start the server.
         /// </summary>
-        public async Task StartAsync()
+        /// <param name="token">Cancellation token.</param>
+        public async Task StartAsync(CancellationToken token = default)
         {
             _StartTimeUtc = DateTime.UtcNow;
             Welcome();
@@ -74,27 +74,14 @@ namespace Tablix.Server
             InitializeMcp();
 
             // Start REST
-            Task restTask = Task.Run(() => _App.Rest.Run(_TokenSource.Token));
+            Task restTask = Task.Run(() => _App.Rest.Run(token));
             string restUrl = "http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.Port;
             _Logging.Info(_Header + "REST API available at " + restUrl);
             _Logging.Info(_Header + "Swagger UI available at " + restUrl + "/swagger");
 
             // Start MCP
-            Task mcpTask = Task.Run(() => _McpServer.StartAsync(_TokenSource.Token));
+            Task mcpTask = Task.Run(() => _McpServer.StartAsync(token));
             _Logging.Info(_Header + "MCP server available at http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.McpPort + "/rpc");
-
-            // Wait for shutdown
-            ManualResetEvent waitHandle = new ManualResetEvent(false);
-
-            Console.CancelKeyPress += (sender, e) =>
-            {
-                e.Cancel = true;
-                _Logging.Info(_Header + "shutting down");
-                _TokenSource.Cancel();
-                waitHandle.Set();
-            };
-
-            waitHandle.WaitOne();
         }
 
         #endregion
@@ -104,12 +91,7 @@ namespace Tablix.Server
         private void Welcome()
         {
             Console.WriteLine(
-                Environment.NewLine +
-                @"   _        _     _ _" + Environment.NewLine +
-                @"  | |_ __ _| |__ | (_)_  __" + Environment.NewLine +
-                @"  | __/ _` | '_ \| | \ \/ /" + Environment.NewLine +
-                @"  | || (_| | |_) | | |>  < " + Environment.NewLine +
-                @"   \__\__,_|_.__/|_|_/_/\_\" + Environment.NewLine +
+                Constants.Logo + Environment.NewLine +
                 Environment.NewLine +
                 "Tablix v" + Constants.ProductVersion + Environment.NewLine +
                 "Database discovery and query platform" +
@@ -126,7 +108,29 @@ namespace Tablix.Server
         {
             LoggingSettings logSettings = _SettingsManager.Settings.Logging;
 
-            _Logging = new LoggingModule();
+            List<SyslogLogging.SyslogServer> syslogServers = new List<SyslogLogging.SyslogServer>();
+
+            if (logSettings.Servers != null && logSettings.Servers.Count > 0)
+            {
+                foreach (Core.Settings.SyslogServer server in logSettings.Servers)
+                {
+                    syslogServers.Add(
+                        new SyslogLogging.SyslogServer
+                        {
+                            Hostname = server.Hostname,
+                            Port = server.Port
+                        }
+                    );
+
+                    Console.WriteLine("| syslog://" + server.Hostname + ":" + server.Port);
+                }
+            }
+
+            if (syslogServers.Count > 0)
+                _Logging = new LoggingModule(syslogServers);
+            else
+                _Logging = new LoggingModule();
+
             _Logging.Settings.EnableConsole = logSettings.ConsoleLogging;
             _Logging.Settings.EnableColors = logSettings.EnableColors;
             _Logging.Settings.MinimumSeverity = (Severity)logSettings.MinimumSeverity;
