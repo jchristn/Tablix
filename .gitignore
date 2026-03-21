@@ -16,10 +16,6 @@ dist/
 .env.local
 .env.*.local
 
-# Logs
-logs/
-*.log
-
 # OS / Editor
 .DS_Store
 Thumbs.db
