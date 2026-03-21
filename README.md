@@ -384,4 +384,4 @@ If a database crawl fails on startup (unreachable host, bad credentials, missing
 
 ## License
 
-[MIT License](LICENSE.md) — Copyright (c) 2026 Joel Christner
+[MIT License](LICENSE.md) - Copyright (c) 2026 Joel Christner and Adam Wingate
