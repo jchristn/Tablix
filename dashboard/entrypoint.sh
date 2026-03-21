@@ -11,7 +11,9 @@ cat > /usr/share/nginx/html/config.json << EOF
 }
 EOF
 
-# Write nginx config with the backend URL for proxying
+# Write nginx config with the backend URL for proxying.
+# Uses a variable for proxy_pass so nginx resolves the upstream at request
+# time rather than at startup (avoids failure when DNS isn't ready yet).
 cat > /etc/nginx/conf.d/default.conf << EOF
 server {
     listen 9101;
@@ -19,8 +21,11 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
     location /v1/ {
-        proxy_pass ${SERVER_URL}/v1/;
+        set \$backend "${SERVER_URL}";
+        proxy_pass \$backend/v1/;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
     }
