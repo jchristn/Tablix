@@ -151,6 +151,8 @@ This detects and patches configuration for:
 | Codex | `~/.codex/config.json` |
 | Gemini | `~/.gemini/settings.json` |
 
+After installing or updating MCP configuration, restart your AI agent or client to pick up the changes.
+
 To configure manually, add to your client's MCP settings:
 
 ```json
