@@ -36,12 +36,12 @@ namespace Tablix.Core.Settings
         public string Hostname { get; set; } = null;
 
         /// <summary>
-        /// Port for network-based databases.
+        /// Port for network-based databases. Null for file-based databases like SQLite.
         /// </summary>
-        public int Port
+        public int? Port
         {
             get { return _Port; }
-            set { _Port = Math.Clamp(value, 1, 65535); }
+            set { _Port = value.HasValue ? Math.Clamp(value.Value, 1, 65535) : (int?)null; }
         }
 
         /// <summary>
@@ -88,7 +88,7 @@ namespace Tablix.Core.Settings
         #region Private-Members
 
         private string _Id = "db_" + Guid.NewGuid().ToString().Substring(0, 8);
-        private int _Port = 5432;
+        private int? _Port = null;
         private List<string> _AllowedQueries = new List<string> { "SELECT" };
 
         #endregion

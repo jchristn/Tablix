@@ -101,12 +101,14 @@ namespace Tablix.Tests
         }
 
         /// <summary>
-        /// DatabaseEntry.Port clamps to 1-65535.
+        /// DatabaseEntry.Port clamps to 1-65535 and supports null.
         /// </summary>
         [Fact]
         public void DatabaseEntry_Port_ClampsToValidRange()
         {
             DatabaseEntry entry = new DatabaseEntry();
+
+            Assert.Null(entry.Port);
 
             entry.Port = 0;
             Assert.Equal(1, entry.Port);
@@ -116,6 +118,9 @@ namespace Tablix.Tests
 
             entry.Port = 3306;
             Assert.Equal(3306, entry.Port);
+
+            entry.Port = null;
+            Assert.Null(entry.Port);
         }
 
         /// <summary>

@@ -3,7 +3,7 @@ export interface DatabaseEntry {
   Name: string | null;
   Type: string;
   Hostname: string | null;
-  Port: number;
+  Port: number | null;
   User: string | null;
   Password: string | null;
   DatabaseName: string | null;

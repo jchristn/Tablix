@@ -129,7 +129,7 @@ namespace Tablix.Core.DatabaseDrivers
 
         private string BuildConnectionString(DatabaseEntry entry)
         {
-            return "Server=" + entry.Hostname + "," + entry.Port
+            return "Server=" + entry.Hostname + "," + (entry.Port ?? 1433)
                 + ";Database=" + entry.DatabaseName
                 + ";User Id=" + entry.User
                 + ";Password=" + entry.Password

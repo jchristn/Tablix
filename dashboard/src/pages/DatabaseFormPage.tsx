@@ -8,7 +8,7 @@ const emptyEntry: DatabaseEntry = {
   Name: '',
   Type: 'Sqlite',
   Hostname: '',
-  Port: 5432,
+  Port: null,
   User: '',
   Password: '',
   DatabaseName: '',
@@ -40,7 +40,7 @@ export default function DatabaseFormPage() {
         Name: data.Name || '',
         Type: data.Type || 'Sqlite',
         Hostname: data.Hostname || '',
-        Port: data.Port || 5432,
+        Port: data.Port ?? null,
         User: data.User || '',
         Password: data.Password || '',
         DatabaseName: data.DatabaseName || '',
@@ -128,7 +128,7 @@ export default function DatabaseFormPage() {
                 </div>
                 <div className="form-group">
                   <label title="Database server port number (1-65535)">Port</label>
-                  <input title="TCP port the database listens on" type="number" value={entry.Port} onChange={e => handleChange('Port', parseInt(e.target.value) || 0)} />
+                  <input title="TCP port the database listens on" type="number" value={entry.Port ?? ''} onChange={e => { const v = parseInt(e.target.value); handleChange('Port', isNaN(v) ? '' as any : v); }} />
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>

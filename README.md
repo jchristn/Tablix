@@ -37,13 +37,17 @@ Tablix sits between your databases and your tools. It crawls database schemas �
 
 ## Getting Started
 
-### Docker Compose
+### Running from Docker
+
+The quickest way to get Tablix running is with Docker Compose. The setup includes a Tablix server, a dashboard UI, and a sample SQLite database.
 
 ```bash
 git clone https://github.com/jchristn/Tablix.git
 cd Tablix/docker
 docker compose up -d
 ```
+
+Once running, the following services are available:
 
 | Service | URL |
 |---------|-----|
@@ -54,7 +58,56 @@ docker compose up -d
 
 Default API key: `tablixadmin`
 
-The Docker setup includes a sample SQLite database with `users`, `orders`, and `line_items` tables.
+The sample SQLite database includes `users`, `orders`, and `line_items` tables so you can explore schema discovery and query execution immediately.
+
+#### Docker Compose Details
+
+The `docker/compose.yaml` starts two containers:
+
+- **tablix-server** (`jchristn77/tablix-server`) — the REST API and MCP server. Ports 9100 (REST) and 9102 (MCP) are exposed. The `tablix.json` configuration, `database.db` SQLite file, and `logs/` directory are bind-mounted from the `docker/` directory so data persists across restarts.
+- **tablix-ui** (`jchristn77/tablix-ui`) — the dashboard, served via nginx on port 9101. It connects to the server using the `TABLIX_SERVER_URL` environment variable.
+
+#### Running Individual Containers
+
+To run the server standalone with `docker run`:
+
+```bash
+docker run -d \
+  -p 9100:9100 \
+  -p 9102:9102 \
+  -v $(pwd)/tablix.json:/app/tablix.json \
+  -v $(pwd)/database.db:/app/database.db \
+  -v $(pwd)/logs:/app/logs \
+  jchristn77/tablix-server:v0.1.0
+```
+
+To run the dashboard standalone:
+
+```bash
+docker run -d \
+  -p 9101:9101 \
+  -e TABLIX_SERVER_URL=http://host.docker.internal:9100 \
+  jchristn77/tablix-ui:v0.1.0
+```
+
+#### Factory Reset
+
+To restore the Docker environment to its default state (resets `tablix.json` and `database.db` to their original contents):
+
+```bash
+cd docker/factory
+./reset.sh      # Linux/Mac
+reset.bat       # Windows
+```
+
+#### Building Images
+
+To build and push Docker images from source:
+
+```bash
+build-server.bat v0.1.0
+build-dashboard.bat v0.1.0
+```
 
 ### From Source
 
@@ -273,29 +326,6 @@ If a database crawl fails on startup (unreachable host, bad credentials, missing
 - Re-crawl at any time via `POST /v1/database/{id}/crawl` or the dashboard
 - Query execution may still work even when the crawl has not completed
 
-### Docker Images
-
-| Image | Docker Hub |
-|-------|-----------|
-| `jchristn77/tablix-server` | https://hub.docker.com/r/jchristn77/tablix-server |
-| `jchristn77/tablix-ui` | https://hub.docker.com/r/jchristn77/tablix-ui |
-
-Build and push images:
-
-```bash
-build-server.bat v0.1.0
-build-dashboard.bat v0.1.0
-```
-
-### Factory Reset
-
-To restore the Docker environment to its default state:
-
-```bash
-cd docker/factory
-./reset.sh      # Linux/Mac
-reset.bat       # Windows
-```
 
 ## Issues and Discussions
 

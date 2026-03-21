@@ -124,7 +124,27 @@ namespace Tablix.Server.Handlers
                 };
             }
 
-            return detail;
+            // Merge connection fields from the settings entry so the dashboard
+            // edit form can populate them (DatabaseDetail doesn't carry these).
+            return new
+            {
+                detail.DatabaseId,
+                detail.Type,
+                detail.DatabaseName,
+                detail.Schema,
+                detail.Context,
+                detail.Tables,
+                detail.CrawledUtc,
+                detail.IsCrawled,
+                detail.CrawlError,
+                entry.Name,
+                entry.Hostname,
+                entry.Port,
+                entry.User,
+                entry.Password,
+                entry.Filename,
+                entry.AllowedQueries
+            };
         }
 
         /// <summary>
@@ -142,6 +162,10 @@ namespace Tablix.Server.Handlers
             try
             {
                 _SettingsManager.AddDatabase(entry);
+
+                // Trigger an initial crawl so the database is immediately usable
+                _ = _CrawlCache.CrawlOneAsync(entry);
+
                 req.Http.Response.StatusCode = 201;
                 return entry;
             }
@@ -170,6 +194,16 @@ namespace Tablix.Server.Handlers
             try
             {
                 _SettingsManager.UpdateDatabase(entry);
+
+                // Update the cached crawl detail so the dashboard reflects changes immediately
+                DatabaseDetail cached = _CrawlCache.Get(id);
+                if (cached != null)
+                {
+                    cached.Context = entry.Context;
+                    cached.DatabaseName = entry.DatabaseName ?? entry.Filename;
+                    cached.Schema = entry.Schema;
+                }
+
                 return entry;
             }
             catch (KeyNotFoundException ex)
