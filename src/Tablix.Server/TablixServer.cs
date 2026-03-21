@@ -256,6 +256,9 @@ namespace Tablix.Server
             rest.Get("/", async (AppRequest r) => new { Name = Constants.ProductName, Version = Constants.ProductVersion, StartTimeUtc = _StartTimeUtc, Uptime = DateTime.UtcNow - _StartTimeUtc },
                 api => api.WithTag("Health").WithSummary("Health check"), false);
 
+            rest.Head("/", async (AppRequest r) => { r.Http.Response.StatusCode = 200; return null; },
+                api => api.WithTag("Health").WithSummary("Health check (HEAD)"), false);
+
             // Database CRUD routes (require auth)
             rest.Get("/v1/database", _DatabaseHandler.ListDatabasesAsync,
                 api => api.WithTag("Database").WithSummary("List all databases (paginated)")
