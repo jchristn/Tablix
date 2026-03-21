@@ -37,6 +37,7 @@ namespace Tablix.Server
         private McpHttpServer _McpServer;
         private DatabaseHandler _DatabaseHandler;
         private CancellationTokenSource _TokenSource = new CancellationTokenSource();
+        private DateTime _StartTimeUtc;
 
         #endregion
 
@@ -60,6 +61,7 @@ namespace Tablix.Server
         /// </summary>
         public async Task StartAsync()
         {
+            _StartTimeUtc = DateTime.UtcNow;
             Welcome();
             InitializeSettings();
             InitializeLogging();
@@ -251,7 +253,7 @@ namespace Tablix.Server
             _DatabaseHandler = new DatabaseHandler(_SettingsManager, _CrawlCache);
 
             // Health (no auth)
-            rest.Get("/", async (AppRequest r) => new { Name = Constants.ProductName, Version = Constants.ProductVersion },
+            rest.Get("/", async (AppRequest r) => new { Name = Constants.ProductName, Version = Constants.ProductVersion, StartTimeUtc = _StartTimeUtc, Uptime = DateTime.UtcNow - _StartTimeUtc },
                 api => api.WithTag("Health").WithSummary("Health check"), false);
 
             // Database CRUD routes (require auth)
