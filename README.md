@@ -109,7 +109,7 @@ build-server.bat v0.1.0
 build-dashboard.bat v0.1.0
 ```
 
-### From Source
+### Running from Source
 
 ```bash
 cd src
