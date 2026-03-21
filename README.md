@@ -168,21 +168,69 @@ To configure manually, add to your client's MCP settings:
 
 ### MCP Tools
 
-The recommended discovery flow for AI agents is:
+Tablix exposes six MCP tools. The recommended discovery flow for AI agents is:
 
 1. **`tablix_discover_databases`** — List all configured databases to identify which ones are available
 2. **`tablix_list_tables`** — List the tables in a specific database
 3. **`tablix_discover_table`** — Get full geometry (columns, types, PKs, FKs, indexes) for a specific table
 4. **`tablix_execute_query`** — Execute a SQL query once you understand the schema
 
-| Tool | Description |
-|------|-------------|
-| `tablix_discover_databases` | List all configured databases with pagination and filtering |
-| `tablix_discover_database` | Get full schema geometry for an entire database (prefer the targeted flow above) |
-| `tablix_list_tables` | List table names, schemas, and column counts for a database |
-| `tablix_discover_table` | Get full geometry for a single table in a database |
-| `tablix_execute_query` | Execute a validated SQL query |
-| `tablix_update_context` | Update the user-supplied context description for a database |
+#### `tablix_discover_databases`
+
+List all configured databases with their connection details and user-supplied context.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `maxResults` | integer | No | Maximum results to return (1–1000, default 100) |
+| `skip` | integer | No | Number of records to skip (default 0) |
+| `filter` | string | No | Filter by database ID or name |
+
+#### `tablix_discover_database`
+
+Get full schema geometry for every table in a database at once. This can produce large responses — prefer `tablix_list_tables` + `tablix_discover_table` for targeted discovery.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `databaseId` | string | Yes | Database entry ID |
+
+#### `tablix_list_tables`
+
+List all tables in a database with their schema names and column counts.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `databaseId` | string | Yes | Database entry ID |
+
+Returns each table's `SchemaName`, `TableName`, and `Columns` (column count), along with the database `Context` and `IsCrawled` status.
+
+#### `tablix_discover_table`
+
+Get full geometry for a single table — columns (names, data types, primary keys, nullability, defaults), foreign keys, and indexes.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `databaseId` | string | Yes | Database entry ID |
+| `tableName` | string | Yes | Table name to retrieve geometry for |
+
+#### `tablix_execute_query`
+
+Execute a SQL query against a database. The query must be a single statement (no semicolons) and the statement type must be in the database's `AllowedQueries` list.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `databaseId` | string | Yes | Database entry ID |
+| `query` | string | Yes | SQL query to execute |
+
+Returns `Success`, `RowsReturned`, `TotalMs`, and a `Data` object containing `Columns` (name and type) and `Rows`.
+
+#### `tablix_update_context`
+
+Update the user-supplied context description for a database. The context helps AI agents understand what the database contains, how its tables relate, and what queries are useful.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `databaseId` | string | Yes | Database entry ID |
+| `context` | string | Yes | New context description |
 
 ## Configuration
 
