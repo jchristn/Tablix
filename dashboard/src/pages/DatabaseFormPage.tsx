@@ -54,8 +54,24 @@ export default function DatabaseFormPage() {
     }
   }
 
+  const typeDefaults: Record<string, { Port: number; User: string; Schema: string }> = {
+    Postgresql: { Port: 5432, User: 'postgres', Schema: 'public' },
+    Mysql: { Port: 3306, User: 'root', Schema: 'public' },
+    SqlServer: { Port: 1433, User: 'sa', Schema: 'dbo' },
+  };
+
   function handleChange(field: keyof DatabaseEntry, value: string | number) {
-    setEntry({ ...entry, [field]: value });
+    const updated = { ...entry, [field]: value };
+
+    // Auto-populate defaults when switching type on a new database
+    if (field === 'Type' && !isEdit && typeof value === 'string' && value in typeDefaults) {
+      const defaults = typeDefaults[value];
+      if (!entry.Port) updated.Port = defaults.Port;
+      if (!entry.User) updated.User = defaults.User;
+      if (!entry.Schema) updated.Schema = defaults.Schema;
+    }
+
+    setEntry(updated);
   }
 
   async function handleSubmit(e: React.FormEvent) {
