@@ -7,7 +7,7 @@
 </p>
 
 <p align="center">
-  <b>Authors:</b> @jchristn @rawingate
+  <b>Authors:</b> <a href="https://github.com/jchristn">@jchristn</a> <a href="https://github.com/rawingate">@rawingate</a>
 </p>
 
 # Tablix
