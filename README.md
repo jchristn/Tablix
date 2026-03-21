@@ -117,7 +117,7 @@ dotnet build
 dotnet run --project Tablix.Server
 ```
 
-The server creates a default `tablix.json` on first run with a sample SQLite database entry.
+The server creates a default `tablix.json` on first run with a sample SQLite database entry. Swagger UI is available at http://localhost:9100/swagger.
 
 ### Running Dashboard Locally
 
@@ -347,7 +347,7 @@ Tablix is configured via `tablix.json`:
 
 ### REST API
 
-All endpoints except health checks require `Authorization: Bearer <api-key>`. See [REST_API.md](REST_API.md) for full request/response details.
+All endpoints except health checks require `Authorization: Bearer <api-key>`. See [REST_API.md](REST_API.md) for full request/response details. A [Postman collection](Tablix.postman_collection.json) is included in the repository. Swagger UI is available at `/swagger` when the server is running.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|

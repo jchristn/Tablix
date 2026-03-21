@@ -1,0 +1,221 @@
+{
+	"info": {
+		"name": "Tablix",
+		"description": "Tablix REST API — database discovery and query platform.\n\nSet the `baseUrl` variable to your Tablix server (default: http://localhost:9100).\nSet the `apiKey` variable to a valid API key from tablix.json (default: tablixadmin).\n\nSwagger UI is available at {{baseUrl}}/swagger.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:9100"
+		},
+		{
+			"key": "apiKey",
+			"value": "tablixadmin"
+		},
+		{
+			"key": "databaseId",
+			"value": "db_sample_sqlite"
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{apiKey}}",
+				"type": "string"
+			}
+		]
+	},
+	"item": [
+		{
+			"name": "Health",
+			"item": [
+				{
+					"name": "Health Check (GET)",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/",
+							"host": ["{{baseUrl}}"],
+							"path": [""]
+						},
+						"auth": {
+							"type": "noauth"
+						},
+						"description": "Returns server name, version, start time, and uptime. No authentication required."
+					}
+				},
+				{
+					"name": "Health Check (HEAD)",
+					"request": {
+						"method": "HEAD",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/",
+							"host": ["{{baseUrl}}"],
+							"path": [""]
+						},
+						"auth": {
+							"type": "noauth"
+						},
+						"description": "Lightweight health check. Returns 200 OK with no body. No authentication required."
+					}
+				}
+			]
+		},
+		{
+			"name": "Database CRUD",
+			"item": [
+				{
+					"name": "List Databases",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/v1/database?maxResults=100&skip=0",
+							"host": ["{{baseUrl}}"],
+							"path": ["v1", "database"],
+							"query": [
+								{
+									"key": "maxResults",
+									"value": "100",
+									"description": "Maximum results to return (1-1000, default 100)"
+								},
+								{
+									"key": "skip",
+									"value": "0",
+									"description": "Number of records to skip (default 0)"
+								},
+								{
+									"key": "filter",
+									"value": "",
+									"description": "Filter by database ID or name (case-insensitive)",
+									"disabled": true
+								}
+							]
+						},
+						"description": "List all configured databases with pagination and optional filtering."
+					}
+				},
+				{
+					"name": "Get Database",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["v1", "database", "{{databaseId}}"]
+						},
+						"description": "Get database details including connection settings, schema geometry (tables, columns, PKs, FKs, indexes), and crawl status."
+					}
+				},
+				{
+					"name": "Add Database",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"Id\": \"db_new_database\",\n  \"Name\": \"My New Database\",\n  \"Type\": \"Postgresql\",\n  \"Hostname\": \"localhost\",\n  \"Port\": 5432,\n  \"User\": \"postgres\",\n  \"Password\": \"secret\",\n  \"DatabaseName\": \"mydb\",\n  \"Schema\": \"public\",\n  \"AllowedQueries\": [\"SELECT\"],\n  \"Context\": \"Description of this database for AI agents...\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/v1/database",
+							"host": ["{{baseUrl}}"],
+							"path": ["v1", "database"]
+						},
+						"description": "Add a new database entry. An initial schema crawl is triggered automatically. Returns 201 Created on success, 409 Conflict if the ID already exists."
+					}
+				},
+				{
+					"name": "Update Database",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"Name\": \"Updated Name\",\n  \"Type\": \"Postgresql\",\n  \"Hostname\": \"localhost\",\n  \"Port\": 5432,\n  \"User\": \"postgres\",\n  \"Password\": \"secret\",\n  \"DatabaseName\": \"mydb\",\n  \"Schema\": \"public\",\n  \"AllowedQueries\": [\"SELECT\", \"INSERT\", \"UPDATE\", \"DELETE\"],\n  \"Context\": \"Updated context description...\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["v1", "database", "{{databaseId}}"]
+						},
+						"description": "Update an existing database entry. The ID in the path is used; any ID in the body is ignored. The crawl cache is updated immediately."
+					}
+				},
+				{
+					"name": "Delete Database",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}",
+							"host": ["{{baseUrl}}"],
+							"path": ["v1", "database", "{{databaseId}}"]
+						},
+						"description": "Delete a database entry and remove it from the crawl cache. Returns 204 No Content on success."
+					}
+				}
+			]
+		},
+		{
+			"name": "Schema Discovery",
+			"item": [
+				{
+					"name": "Re-Crawl Database",
+					"request": {
+						"method": "POST",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}/crawl",
+							"host": ["{{baseUrl}}"],
+							"path": ["v1", "database", "{{databaseId}}", "crawl"]
+						},
+						"description": "Re-crawl the database schema. Discovers tables, columns, primary keys, foreign keys, and indexes. Returns the updated DatabaseDetail. If the crawl fails (unreachable host, bad credentials), the response still returns 200 with IsCrawled: false and a CrawlError message."
+					}
+				}
+			]
+		},
+		{
+			"name": "Query Execution",
+			"item": [
+				{
+					"name": "Execute Query",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"Query\": \"SELECT * FROM users LIMIT 10\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}/query",
+							"host": ["{{baseUrl}}"],
+							"path": ["v1", "database", "{{databaseId}}", "query"]
+						},
+						"description": "Execute a SQL query against a database. The query must be a single statement (no semicolons) and the statement type must be in the database's AllowedQueries list. Returns 403 if the statement type is not allowed, 500 if execution fails (with the error in the Description field)."
+					}
+				}
+			]
+		}
+	]
+}
