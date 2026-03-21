@@ -11,4 +11,9 @@ if [ -f database.db ]; then
     echo "Deleted database.db"
 fi
 
+if [ -d logs ]; then
+    rm -f logs/*
+    echo "Cleaned logs/"
+fi
+
 echo "Done."

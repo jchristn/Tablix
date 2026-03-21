@@ -11,4 +11,9 @@ if exist database.db (
     echo Deleted database.db
 )
 
+if exist logs\ (
+    del /q logs\*
+    echo Cleaned logs/
+)
+
 echo Done.

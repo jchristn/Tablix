@@ -14,7 +14,9 @@
       "Bash(cd:*)",
       "Bash(tail -5 /c/Code/Tablix/src/Tablix.Server/logs/*.20260320)",
       "Bash(tail -5 /c/Code/Tablix/src/Tablix.Server/bin/Debug/net10.0/logs/*.20260320)",
-      "Bash(dotnet test:*)"
+      "Bash(dotnet test:*)",
+      "Bash(taskkill /F /PID 126932)",
+      "Bash(taskkill /IM Tablix.Server.exe /F)"
     ]
   }
 }
