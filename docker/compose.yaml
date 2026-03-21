@@ -18,7 +18,7 @@ services:
     ports:
       - "9101:9101"
     environment:
-      - TABLIX_SERVER_URL=http://tablix-server:9100
+      - TABLIX_SERVER_URL=http:/tablix-server:9100
     depends_on:
       - tablix-server
     restart: unless-stopped
