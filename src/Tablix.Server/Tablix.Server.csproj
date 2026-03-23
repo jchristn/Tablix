@@ -6,9 +6,9 @@
 
   <ItemGroup>
     <PackageReference Include="SerializableDataTable" Version="1.0.6" />
-    <PackageReference Include="SwiftStack" Version="0.4.7" />
+    <PackageReference Include="SwiftStack" Version="0.4.8" />
     <PackageReference Include="SyslogLogging" Version="2.0.13" />
-    <PackageReference Include="Voltaic" Version="0.1.9" />
+    <PackageReference Include="Voltaic" Version="0.1.11" />
   </ItemGroup>
 
   <PropertyGroup>
