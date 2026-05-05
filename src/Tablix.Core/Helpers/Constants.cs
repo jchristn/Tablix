@@ -13,7 +13,7 @@ namespace Tablix.Core.Helpers
         /// <summary>
         /// Product version.
         /// </summary>
-        public static readonly string ProductVersion = "0.1.0";
+        public static readonly string ProductVersion = "0.1.1";
 
         /// <summary>
         /// Default settings filename.

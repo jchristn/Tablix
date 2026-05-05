@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <b>v0.1.0 - ALPHA</b> - API and structure may change without notice
+  <b>v0.1.1 - ALPHA</b> - API and structure may change without notice
 </p>
 
 <p align="center">
@@ -78,7 +78,7 @@ docker run -d \
   -v $(pwd)/tablix.json:/app/tablix.json \
   -v $(pwd)/database.db:/app/database.db \
   -v $(pwd)/logs:/app/logs \
-  jchristn77/tablix-server:v0.1.0
+  jchristn77/tablix-server:v0.1.1
 ```
 
 To run the dashboard standalone:
@@ -87,7 +87,7 @@ To run the dashboard standalone:
 docker run -d \
   -p 9101:9101 \
   -e TABLIX_SERVER_URL=http://host.docker.internal:9100 \
-  jchristn77/tablix-ui:v0.1.0
+  jchristn77/tablix-ui:v0.1.1
 ```
 
 #### Factory Reset
@@ -105,8 +105,8 @@ reset.bat       # Windows
 To build and push Docker images from source:
 
 ```bash
-build-server.bat v0.1.0
-build-dashboard.bat v0.1.0
+build-server.bat v0.1.1
+build-dashboard.bat v0.1.1
 ```
 
 ### Running from Source

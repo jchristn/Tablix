@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.1 - ALPHA (2026-05-05)
+
+Patch release.
+
+### Changes
+
+- Updated `Voltaic` in `Tablix.Server` from `0.1.11` to `0.2.0`
+- Rebuilt and verified the existing automated test suite against the updated dependency
+
 ## v0.1.0 - ALPHA (2026-03-20)
 
 Initial release.
