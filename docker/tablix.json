@@ -1,4 +1,4 @@
-﻿{
+{
   "Rest": {
     "Hostname": "*",
     "Port": 9100,
@@ -14,45 +14,11 @@
     "MinimumSeverity": 0,
     "EnableColors": true
   },
-  "Databases": [
-    {
-      "Id": "db_sample_sqlite",
-      "Name": "Sample E-Commerce",
-      "Type": "Sqlite",
-      "DatabaseName": "sample",
-      "Schema": "main",
-      "Filename": "./database.db",
-      "AllowedQueries": [
-        "SELECT",
-        "INSERT",
-        "UPDATE",
-        "DELETE"
-      ],
-      "Context": "Sample e-commerce database with three tables. The \u0027users\u0027 table stores customer information (Name, Email, CreatedUtc). The \u0027orders\u0027 table tracks purchases with a foreign key to users (UserId) and includes OrderDate, Total, and Status fields. The \u0027line_items\u0027 table holds individual order items with a foreign key to orders (OrderId) and includes ProductName, Quantity, and UnitPrice. Typical queries: find orders by user, calculate order totals, list products purchased."
-    },
-    {
-      "Id": "db_jurat_prod",
-      "Name": "Jurat Production",
-      "Type": "Mysql",
-      "Hostname": "jurat-prod-20240518.chuashtcoj10.us-east-2.rds.amazonaws.com",
-      "Port": 3306,
-      "User": "admin",
-      "Password": "JuratAdmin123",
-      "DatabaseName": "enotary",
-      "AllowedQueries": [
-        "SELECT"
-      ],
-      "Context": "**Database Context \u2013 Jurat Production (enotary)**  \n*Schema:* enotary  \n*Allowed query type:* SELECT only  \n\n---\n\n### 1. Purpose\nThe database supports a mobile\u2011first notarization platform that records electronic signatures, identity verification, document management, and subscription billing for users across multiple tenants.\n\n---\n\n### 2. Major Entities \u0026 Workflow Groupings\n\n| Group | Key Tables (primary key) | Typical workflow |\n|-------|--------------------------|------------------|\n| **Authentication / User** | \u0060usermaster\u0060, \u0060userlogin\u0060, \u0060apikey\u0060 | Sign\u2011in, API access, tenant assignment |\n| **Tenant \u0026 Settings** | \u0060tenant\u0060, \u0060systemsettings\u0060 | Organization boundaries, global configuration |\n| **Identity \u0026 Verification** | \u0060identification\u0060, \u0060masterclientidentification\u0060, \u0060witness\u0060, \u0060fingerprint\u0060 | Collect and store ID documents, witness data, biometric scans |\n| **Signature Capture** | \u0060signature\u0060, \u0060usersignature\u0060, \u0060signing\u0060, \u0060signingdraft\u0060, \u0060signingfee\u0060 | Create, edit, store signatures and signing sessions |\n| **Document \u0026 Collection** | \u0060doccoll\u0060, \u0060doctype\u0060, \u0060journalexport\u0060 | Organize documents, export logs |\n| **Notary Entry** | \u0060notaryentry\u0060 | Record a notarization event linking identities, signatures, fees |\n| **Subscription \u0026 Billing** | \u0060subscription\u0060, \u0060subscriptiontier\u0060, \u0060paymentcard\u0060, \u0060paymenttxn\u0060 | Manage user plans and payment processing |\n| **Device \u0026 Device Tracking** | \u0060device\u0060, \u0060userprofile\u0060 | Track devices used for signing, profile preferences |\n\n---\n\n### 3. Declared Relationships (Foreign Keys via GUIDs)\n\n| Child Table | FK Column | Parent Table | PK/Unique in Parent |\n|-------------|-----------|--------------|---------------------|\n| \u0060apikey\u0060 | \u0060usermasterguid\u0060 | \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060blob\u0060 | \u0060refobjguid\u0060, \u0060refobjtype\u0060 | (various) | inferred |\n| \u0060combinedclientsignerdata\u0060 | \u0060signerguid\u0060 | \u0060signature\u0060.\u0060guid\u0060 | unique |\n| \u0060device\u0060 | \u0060usermasterguid\u0060 | \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060doccoll\u0060 | \u0060usermasterguid\u0060 | \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060doctype\u0060 | \u0060usermasterguid\u0060 | \u0060usermaster\u0060.\u0060guid\u0060 | nullable |\n| \u0060featureflags\u0060 | \u0060userguidcsv\u0060 | (comma\u2011separated list) | inferred |\n| \u0060fingerprint\u0060 | \u0060notaryentryguid\u0060, \u0060usermasterguid\u0060 | \u0060notaryentry\u0060.\u0060guid\u0060, \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060identification\u0060 | \u0060notaryentryguid\u0060, \u0060witnessguid\u0060, \u0060usermasterguid\u0060 | \u0060notaryentry\u0060.\u0060guid\u0060, \u0060witness\u0060.\u0060guid\u0060, \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060journalexport\u0060 | \u0060usermasterguid\u0060 | \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060location\u0060 | \u0060usermasterguid\u0060 | \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060masterclientidentification\u0060 | \u0060signerguid\u0060, \u0060usermasterguid\u0060 | \u0060signature\u0060.\u0060guid\u0060, \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060masterclientsigner\u0060 | \u0060identificationid\u0060, \u0060usermasterguid\u0060 | \u0060identification\u0060.\u0060identificationid\u0060, \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060notaryentry\u0060 | \u0060signingguid\u0060, \u0060usermasterguid\u0060 | (inferred) | unique |\n| \u0060paymentcard\u0060 | \u0060usermasterguid\u0060 | \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060paymenttxn\u0060 | \u0060paymentcardguid\u0060, \u0060subscriptionguid\u0060, \u0060usermasterguid\u0060 | \u0060paymentcard\u0060.\u0060paymentcardid\u0060, \u0060subscription\u0060.\u0060subscriptionid\u0060, \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060signature\u0060 | \u0060notaryentryguid\u0060, \u0060witnessguid\u0060, \u0060usermasterguid\u0060 | \u0060notaryentry\u0060.\u0060guid\u0060, \u0060witness\u0060.\u0060guid\u0060, \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060signing\u0060 | \u0060deviceguid\u0060, \u0060userprofileguid\u0060, \u0060vendorid\u0060, \u0060usermasterguid\u0060 | \u0060device\u0060.\u0060deviceid\u0060, \u0060userprofile\u0060.\u0060userprofileid\u0060, (inferred) | unique |\n| \u0060signingdraft_*\u0060 tables | \u0060signingdraftguid\u0060, \u0060notaryentryguid\u0060, etc. | \u0060signingdraft\u0060.\u0060signingdraftid\u0060, \u0060notaryentry\u0060.\u0060guid\u0060 | unique |\n| \u0060signingfee\u0060 | \u0060doccollguid\u0060, \u0060usermasterguid\u0060, \u0060signingguid\u0060 | \u0060doccoll\u0060.\u0060doccollid\u0060, \u0060usermaster\u0060.\u0060guid\u0060, \u0060signing\u0060.\u0060signingid\u0060 | unique |\n| \u0060subscription\u0060 | \u0060paymentcardguid\u0060, \u0060stripecustomerid\u0060, \u0060stripepaymentmethodid\u0060, \u0060usermasterguid\u0060 | \u0060paymentcard\u0060.\u0060paymentcardid\u0060, (Stripe IDs), \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060usernotificationpreference\u0060 | \u0060usermasterguid\u0060 | \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n| \u0060userprofile\u0060 | \u0060usermasterguid\u0060 | \u0060usermaster\u0060.\u0060guid\u0060 | unique |\n\n*Inferred relationships:* Many tables reference GUIDs that are not explicitly declared as foreign keys but logically link to parent entities (e.g., \u0060blob.refobjguid\u0060 \u2192 various entity GUIDs, \u0060signingdraft_*\u0060 \u2192 related signing or notary entry).\n\n---\n\n### 4. Naming Conventions \u0026 Key Columns\n\n| Convention | Example |\n|------------|---------|\n| Primary key: \u0060\u003Ctablename\u003Eid\u0060 | \u0060usermasterid\u0060, \u0060subscriptionid\u0060 |\n| GUID columns: \u0060\u003Centity\u003Eguid\u0060 | \u0060usermaster.guid\u0060, \u0060signature.guid\u0060 |\n| Foreign keys: \u0060\u003Cparent\u003Eguid\u0060 or \u0060\u003Cparent\u003Eid\u0060 | \u0060usermasterguid\u0060, \u0060paymentcardguid\u0060 |\n| Boolean flags: tinyint, often named \u0060is...\u0060 or \u0060deleted\u0060 | \u0060isdocumentwitness\u0060, \u0060isdeleted\u0060 |\n| Timestamps: \u0060created\u0060, \u0060updated\u0060, \u0060start\u0060, \u0060end\u0060 | \u0060created datetime\u0060, \u0060updated datetime\u0060 |\n| Status fields: \u0060state\u0060, \u0060status\u0060 | \u0060signing.state\u0060, \u0060paymenttxn.status\u0060 |\n| Monetary amounts: decimal, with currency columns | \u0060amount decimal\u0060, \u0060feecurrency varchar\u0060 |\n\n**Key Columns per Table**\n\n- \u0060usermaster\u0060: \u0060usermasterid (PK)\u0060, \u0060guid (unique)\u0060, \u0060email\u0060\n- \u0060tenant\u0060: \u0060tenantid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060subscriptiontier\u0060: \u0060subscriptiontierid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060subscription\u0060: \u0060subscriptionid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060notaryentry\u0060: \u0060notaryentryid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060signature\u0060: \u0060signatureid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060signing\u0060: \u0060signingid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060paymenttxn\u0060: \u0060paymenttxnid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060identification\u0060: \u0060identificationid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060witness\u0060: \u0060witnessid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060fingerprint\u0060: \u0060fingerprintid (PK)\u0060, \u0060guid (unique)\u0060\n- \u0060blob\u0060: \u0060blobid (PK)\u0060, \u0060guid (unique)\u0060\n\n---\n\n### 5. Common Join Paths\n\n| Purpose | Typical JOIN |\n|---------|--------------|\n| Retrieve a signing session with user and device info | \u0060signing\u0060 JOIN \u0060usermaster\u0060 ON \u0060signing.usermasterguid = usermaster.guid\u0060 JOIN \u0060device\u0060 ON \u0060signing.deviceguid = device.guid\u0060 |\n| Get all signatures for a notary entry | \u0060signature\u0060 JOIN \u0060notaryentry\u0060 ON \u0060signature.notaryentryguid = notaryentry.guid\u0060 |\n| List active subscriptions per tenant | \u0060subscription\u0060 JOIN \u0060usermaster\u0060 ON \u0060subscription.usermasterguid = usermaster.guid\u0060 JOIN \u0060tenant\u0060 ON \u0060usermaster.tenantguid = tenant.guid\u0060 |\n| Fetch identity documents for a signing draft | \u0060signingdraft_identification\u0060 JOIN \u0060identification\u0060 ON \u0060signingdraft_identification.payload_guid = identification.guid\u0060 (payload contains GUID) |\n| Get payment details for a subscription | \u0060paymenttxn\u0060 JOIN \u0060subscription\u0060 ON \u0060paymenttxn.subscriptionguid = subscription.guid\u0060 JOIN \u0060paymentcard\u0060 ON \u0060paymenttxn.paymentcardguid = paymentcard.guid\u0060 |\n\n---\n\n### 6. Safe Query Guidance\n\n- **Only SELECT** statements are allowed; no INSERT, UPDATE, DELETE, or DDL.\n- Use **parameterized queries** to avoid SQL injection (e.g., \u0060WHERE guid = ?\u0060).\n- Prefer **JOINs on indexed columns** (\u0060guid\u0060, \u0060usermasterguid\u0060, \u0060subscriptionid\u0060) for performance.\n- When filtering by date ranges, use the \u0060created\u0060, \u0060updated\u0060, or specific timestamp columns; indexes exist on these fields in many tables.\n- For multi\u2011tenant isolation, always filter by \u0060usermaster.tenantguid\u0060 or \u0060tenant.guid\u0060.\n- Avoid selecting entire tables (\u0060SELECT *\u0060) when possible; specify needed columns to reduce payload.\n\n---\n\n**End of Context**"
-    }
-  ],
-  "ApiKeys": [
-    "tablixadmin"
-  ],
   "Chat": {
     "Enabled": true,
     "DefaultProviderId": "provider_ollama_local",
     "DefaultStreaming": true,
-    "SystemPrompt": "You are Tablix, a database assistant. Restrict your conversation to only the selected database, its structure, its contents, and their relationships. Use configured database context first, inspect schema before writing SQL, run only allowed query types, clearly label inferred relationships, and never reveal credentials or secret settings. If query execution reports a bad or unknown column, missing column, or column type mismatch, refresh the database schema by crawling or discovering the relevant tables before retrying. When refreshed schema proves saved context was wrong or stale, update the database context with corrected column names, column types, and any corrected relationship guidance.",
+    "SystemPrompt": "You are Tablix, a database assistant. Restrict your conversation to only the selected database, its structure, its contents, and their relationships. Use configured database context first, inspect schema before writing SQL, run only allowed query types, clearly label inferred relationships, and never reveal credentials or secret settings. If the user asks for data or an answer that requires database contents, and you have access to a Tablix query execution tool that can run an allowed query to answer it, execute the query instead of only describing SQL. Use the query tool with the selected database, one permitted SQL statement, no semicolons, and only the columns needed; then return the results in the form the user asked for. If query execution reports a bad or unknown column, missing column, or column type mismatch, refresh the database schema by crawling or discovering the relevant tables before retrying. When refreshed schema proves saved context was wrong or stale, update the database context with corrected column names, column types, and any corrected relationship guidance.",
     "MaxContextTables": 100,
     "Tools": {
       "Enabled": true,
@@ -68,9 +34,9 @@
         "Id": "provider_ollama_local",
         "Name": "Local Ollama",
         "Type": "Ollama",
-        "Endpoint": "http://view.homedns.org:11434",
+        "Endpoint": "http://ollama:11434",
         "ApiKey": "",
-        "Model": "gpt-oss:20b",
+        "Model": "gemma3:4b",
         "Enabled": true,
         "DefaultStreaming": true,
         "Temperature": 0.2,
@@ -117,5 +83,25 @@
         "RequestTimeoutMs": 120000
       }
     ]
-  }
+  },
+  "Databases": [
+    {
+      "Id": "db_sample_sqlite",
+      "Name": "Sample E-Commerce",
+      "Type": "Sqlite",
+      "Filename": "./database.db",
+      "DatabaseName": "sample",
+      "Schema": "main",
+      "AllowedQueries": [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE"
+      ],
+      "Context": "Sample e-commerce database with three tables. The 'users' table stores customer information (Name, Email, CreatedUtc). The 'orders' table tracks purchases with a foreign key to users (UserId) and includes OrderDate, Total, and Status fields. The 'line_items' table holds individual order items with a foreign key to orders (OrderId) and includes ProductName, Quantity, and UnitPrice. Typical queries: find orders by user, calculate order totals, list products purchased."
+    }
+  ],
+  "ApiKeys": [
+    "tablixadmin"
+  ]
 }

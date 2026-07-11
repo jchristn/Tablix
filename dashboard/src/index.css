@@ -132,6 +132,17 @@ textarea {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding-top: 52px;
+}
+
+.topbar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  flex: 0 0 52px;
+  height: 52px;
+  min-height: 52px;
+  max-height: 52px;
+  overflow: hidden;
 }
 
 .app-main {

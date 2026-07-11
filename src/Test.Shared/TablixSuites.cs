@@ -464,6 +464,9 @@ namespace Test.Shared
 
                         NotNull(settings.Chat, "Chat settings should not be null.");
                         Contains(settings.Chat.SystemPrompt, "Restrict your conversation to only the selected database", "Default chat prompt should restrict scope.");
+                        Contains(settings.Chat.SystemPrompt, "execute the query", "Default chat prompt should tell models to execute answerable data queries.");
+                        Contains(settings.Chat.SystemPrompt, "instead of only describing SQL", "Default chat prompt should discourage SQL-only answers when a tool can execute.");
+                        Contains(settings.Chat.SystemPrompt, "one permitted SQL statement", "Default chat prompt should give concise query tool usage guidance.");
                         Contains(settings.Chat.SystemPrompt, "bad or unknown column", "Default chat prompt should handle unknown column failures.");
                         Contains(settings.Chat.SystemPrompt, "column type mismatch", "Default chat prompt should handle column type failures.");
                         Contains(settings.Chat.SystemPrompt, "update the database context", "Default chat prompt should correct stale saved context.");
@@ -1786,6 +1789,28 @@ namespace Test.Shared
                         Contains(chatPage, "function handleProviderChanged", "Provider selector should use a reset-aware change handler.");
                         Contains(chatPage, "onChange={event => handleDatabaseChanged(event.target.value)}", "Database selector should reset the conversation when changed.");
                         Contains(chatPage, "onChange={event => handleProviderChanged(event.target.value)}", "Provider selector should reset the conversation when changed.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "TopbarHeightIsFixed", "Dashboard topbar keeps a fixed vertical size", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string navbar = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "Navbar.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(navbar, "className=\"topbar\"", "Navbar should use the fixed topbar class.");
+                        Contains(navbar, "position: 'fixed'", "Navbar should be fixed to the viewport instead of participating in page scroll.");
+                        Contains(navbar, "left: 0", "Navbar should be pinned to the left edge.");
+                        Contains(navbar, "right: 0", "Navbar should be pinned to the right edge.");
+                        Contains(navbar, "flex: '0 0 52px'", "Navbar should not shrink as an app-shell flex child.");
+                        Contains(navbar, "minHeight: '52px'", "Navbar should keep a fixed minimum height.");
+                        Contains(navbar, "maxHeight: '52px'", "Navbar should keep a fixed maximum height.");
+                        Contains(stylesheet, "padding-top: 52px;", "App shell should reserve fixed topbar space.");
+                        Contains(stylesheet, ".topbar", "Stylesheet should define the fixed topbar contract.");
+                        Contains(stylesheet, "position: fixed;", "Topbar stylesheet should keep the topbar independent from scroll containers.");
+                        Contains(stylesheet, "inset: 0 0 auto 0;", "Topbar stylesheet should pin the bar to the viewport top.");
+                        Contains(stylesheet, "flex: 0 0 52px;", "Topbar stylesheet should prevent flex shrink.");
+                        Contains(stylesheet, "min-height: 52px;", "Topbar stylesheet should pin minimum height.");
+                        Contains(stylesheet, "max-height: 52px;", "Topbar stylesheet should pin maximum height.");
                         return Task.CompletedTask;
                     })
                 });

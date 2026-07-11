@@ -40,6 +40,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Changed server startup so REST and MCP listeners start before initial background database crawls complete
 - Added Docker Compose healthchecks for server and UI containers, made the UI depend on a healthy backend, and added a configurable 15 second UI startup delay
 - Updated chat and MCP guidance to refresh schema after bad/unknown column or column type errors and correct saved context when refreshed schema proves it stale
+- Updated chat prompt guidance to tell models to execute allowed Tablix query-tool calls when the user asks for data that can be answered from the selected database
 - Added direct `SQLitePCLRaw.lib.e_sqlite3` package override to resolve the transitive vulnerability warning from 2.1.11
 
 ### Fixed
@@ -52,6 +53,8 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Fixed Chat page layout so transcript scrolling is constrained to the chat window while the composer remains visible
 - Fixed Chat transcript scrolling after expanding or collapsing tool-call details so users can always reach the top and bottom of the conversation
 - Fixed Chat page behavior so changing the selected database or provider clears the current conversation
+- Fixed Dashboard topbar sizing so route content and chat scrolling cannot shrink its vertical height
+- Removed a credential-bearing local database entry from the checked-in Docker default configuration
 
 ### Testing
 
@@ -65,7 +68,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added settings coverage for chat provider defaults and provider enum serialization
 - Added model guard coverage for chat telemetry, chat request list handling, and provider API key redaction
 - Added crawl progress event payload coverage
-- Expanded shared Touchstone coverage from 53 to 142 descriptors across query validation, settings persistence, serialization, SQLite edge cases, schema projection, model guards, crawler factory, crawl cache, MCP tool behavior, credential redaction, Docker dashboard proxy packaging, and dashboard/server API contract checks
+- Expanded shared Touchstone coverage from 53 to 143 descriptors across query validation, settings persistence, serialization, SQLite edge cases, schema projection, model guards, crawler factory, crawl cache, MCP tool behavior, credential redaction, Docker dashboard proxy packaging, and dashboard/server API contract checks
 
 ### Upgrade Notes
 

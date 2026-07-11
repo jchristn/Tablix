@@ -36,15 +36,21 @@ export default function Navbar() {
   };
 
   return (
-    <nav style={{
-      position: 'sticky',
+    <nav className="topbar" style={{
+      position: 'fixed',
       top: 0,
+      left: 0,
+      right: 0,
       zIndex: 100,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
       padding: '0 20px',
       height: '52px',
+      minHeight: '52px',
+      maxHeight: '52px',
+      flex: '0 0 52px',
+      overflow: 'hidden',
       backgroundColor: 'var(--bg-primary)',
       borderBottom: '1px solid var(--border-color)',
       boxShadow: 'var(--shadow)',

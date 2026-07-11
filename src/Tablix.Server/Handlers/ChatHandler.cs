@@ -467,7 +467,7 @@ namespace Tablix.Server.Handlers
             StringBuilder builder = new StringBuilder();
             builder.AppendLine("You are answering questions about a configured Tablix database.");
             builder.AppendLine("Use the database context and schema below as authoritative metadata. Do not invent tables or columns.");
-            builder.AppendLine("If the user asks for data or a database change, produce one SQL statement compatible with the database type and allowed query policy so Tablix can execute it.");
+            builder.AppendLine("If the user asks for data or a database change and an allowed query can answer or perform it, use the available Tablix query execution tool instead of only describing SQL. Provide one compatible SQL statement with no semicolons and only needed columns so Tablix can execute it, then answer from the tool result.");
             builder.AppendLine("Do not tell the user they can run a query when they asked for the answer; Tablix will execute permitted SQL and provide results.");
             builder.AppendLine("If the user names a table, use that exact table when it exists; do not silently substitute a different table. If the named table is not present, explain the closest match or ask for clarification.");
             builder.AppendLine("If information is missing, say what needs to be inspected next.");

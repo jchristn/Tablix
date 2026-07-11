@@ -12,7 +12,7 @@ services:
       - ./logs:/app/logs
     healthcheck:
       test: ["CMD-SHELL", "if curl -fsS --max-time 2 http://localhost:9100/ >/dev/null; then n=$$(cat /tmp/tablix-health-success 2>/dev/null || echo 0); n=$$((n+1)); echo $$n > /tmp/tablix-health-success; rm -f /tmp/tablix-health-fail; [ $$n -ge 2 ]; else rm -f /tmp/tablix-health-success; n=$$(cat /tmp/tablix-health-fail 2>/dev/null || echo 0); n=$$((n+1)); echo $$n > /tmp/tablix-health-fail; if [ $$n -ge 2 ]; then kill 1; fi; exit 1; fi"]
-      interval: 10s
+      interval: 5s
       timeout: 2s
       retries: 2
     restart: unless-stopped
@@ -30,7 +30,7 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "if curl -fsS --max-time 2 http://localhost:9101/ >/dev/null; then n=$$(cat /tmp/tablix-ui-health-success 2>/dev/null || echo 0); n=$$((n+1)); echo $$n > /tmp/tablix-ui-health-success; rm -f /tmp/tablix-ui-health-fail; [ $$n -ge 2 ]; else rm -f /tmp/tablix-ui-health-success; n=$$(cat /tmp/tablix-ui-health-fail 2>/dev/null || echo 0); n=$$((n+1)); echo $$n > /tmp/tablix-ui-health-fail; if [ $$n -ge 2 ]; then kill 1; fi; exit 1; fi"]
-      interval: 10s
+      interval: 5s
       timeout: 2s
       retries: 2
       start_period: 15s
