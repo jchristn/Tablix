@@ -49,6 +49,16 @@ namespace Tablix.Core.Models
         }
 
         /// <summary>
+        /// Execution path used to produce the response.
+        /// </summary>
+        public string ExecutionPath { get; set; } = null;
+
+        /// <summary>
+        /// Provider/tool capability notice for the UI.
+        /// </summary>
+        public string CapabilityNotice { get; set; } = null;
+
+        /// <summary>
         /// Error message when unsuccessful.
         /// </summary>
         public string Error { get; set; } = null;

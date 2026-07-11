@@ -31,3 +31,5 @@ Thumbs.db
 *.sqlite
 !docker/database.db
 !docker/factory/database.db
+!docker/tablix.db
+!docker/factory/tablix.db

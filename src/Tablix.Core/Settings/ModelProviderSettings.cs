@@ -60,6 +60,26 @@ namespace Tablix.Core.Settings
         public bool DefaultStreaming { get; set; } = true;
 
         /// <summary>
+        /// Whether this provider/model is expected to support native PolyPrompt tool calls.
+        /// </summary>
+        public bool SupportsNativeToolCalls { get; set; } = false;
+
+        /// <summary>
+        /// Whether Tablix should attempt native PolyPrompt tool calls for this provider.
+        /// </summary>
+        public bool UseNativeToolCalls { get; set; } = false;
+
+        /// <summary>
+        /// Whether this provider/model is expected to reliably return strict JSON for fallback planning.
+        /// </summary>
+        public bool SupportsStrictJson { get; set; } = false;
+
+        /// <summary>
+        /// Human-readable note describing provider/model tool capability.
+        /// </summary>
+        public string ToolCapabilityNote { get; set; } = null;
+
+        /// <summary>
         /// Sampling temperature. Null uses the provider/client default; non-null values are clamped from 0.0 to 2.0.
         /// </summary>
         public double? Temperature

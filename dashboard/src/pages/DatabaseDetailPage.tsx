@@ -4,12 +4,16 @@ import { apiFetch } from '../api/client';
 import ClipboardButton from '../components/ClipboardButton';
 import type {
   BuildContextResponse,
+  BuildTableContextResponse,
   ChatOptionsResponse,
   ContextUpdateRequest,
   ContextUpdateResponse,
   CrawlProgressEvent,
   DatabaseDetail,
+  DatabaseConnectivityTestResponse,
   ModelProviderSummary,
+  TableDetail,
+  TableContextRead,
 } from '../types';
 
 interface ParsedSseFrame {
@@ -36,6 +40,11 @@ export default function DatabaseDetailPage() {
   const [buildContextProviderId, setBuildContextProviderId] = useState('');
   const [buildContextBusy, setBuildContextBusy] = useState(false);
   const [buildContextError, setBuildContextError] = useState('');
+  const [connectionTest, setConnectionTest] = useState<DatabaseConnectivityTestResponse | null>(null);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [tableContextDrafts, setTableContextDrafts] = useState<Record<string, string>>({});
+  const [savingTableContext, setSavingTableContext] = useState<string | null>(null);
+  const [buildingTableContext, setBuildingTableContext] = useState<string | null>(null);
 
   useEffect(() => { loadDetail(); }, [id]);
   useEffect(() => { loadChatOptions(); }, []);
@@ -48,6 +57,7 @@ export default function DatabaseDetailPage() {
       const data: DatabaseDetail = await response.json();
       setDetail(data);
       setContextDraft(data.Context || '');
+      setTableContextDrafts(createTableContextDrafts(data));
       setError('');
     } catch {
       setError('Could not connect to server.');
@@ -117,6 +127,7 @@ export default function DatabaseDetailPage() {
 
     if (event.Detail) {
       setDetail(event.Detail);
+      setTableContextDrafts(createTableContextDrafts(event.Detail));
       if (!editingContext) {
         setContextDraft(event.Detail.Context || '');
       }
@@ -265,6 +276,115 @@ export default function DatabaseDetailPage() {
     }
   }
 
+  async function handleTestConnection() {
+    setTestingConnection(true);
+    setConnectionTest(null);
+    setError('');
+
+    try {
+      const response = await apiFetch(`/v1/database/${id}/test`, { method: 'POST' });
+      if (response.status === 401) { navigate('/login'); return; }
+      const result: DatabaseConnectivityTestResponse = await response.json();
+      setConnectionTest(result);
+    } catch {
+      setConnectionTest({ Success: false, DatabaseId: id || null, Message: null, Error: 'Could not connect to server.', TotalMs: 0 });
+    } finally {
+      setTestingConnection(false);
+    }
+  }
+
+  async function handleSaveTableContext(table: TableDetail) {
+    const tableId = table.TableId;
+    if (!tableId) return;
+
+    setSavingTableContext(tableId);
+    setError('');
+
+    try {
+      const response = await apiFetch(`/v1/database/${detail?.DatabaseId}/table-context/${tableId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          Context: (tableContextDrafts[tableId] || '').trim() || null,
+          Mode: 'replace',
+          Source: 'user',
+        }),
+      });
+
+      if (response.status === 401) { navigate('/login'); return; }
+      if (!response.ok) {
+        const message = await response.text();
+        setError(message || 'Failed to save table context.');
+        return;
+      }
+
+      const updated: TableContextRead = await response.json();
+      setDetail(previous => {
+        if (!previous) return previous;
+        return {
+          ...previous,
+          Tables: previous.Tables.map(existing => existing.TableId === tableId ? { ...existing, Context: updated.Context } : existing),
+        };
+      });
+      setMessageForTable(tableId, 'Saved');
+    } catch {
+      setError('Could not connect to server.');
+    } finally {
+      setSavingTableContext(null);
+    }
+  }
+
+  async function handleBuildTableContext(table: TableDetail) {
+    const tableId = table.TableId;
+    if (!tableId || !detail) return;
+
+    setBuildingTableContext(tableId);
+    setError('');
+
+    try {
+      const response = await apiFetch(`/v1/database/${detail.DatabaseId}/table-context/${tableId}/build`, {
+        method: 'POST',
+        body: JSON.stringify({
+          ProviderId: buildContextProviderId || defaultProviderId || providers[0]?.Id || null,
+          Prompt: defaultTableContextPrompt(detail, table),
+          TableIds: [tableId],
+        }),
+      });
+
+      if (response.status === 401) { navigate('/login'); return; }
+      const result: BuildTableContextResponse = await response.json();
+      if (!response.ok || !result.Success) {
+        setError(result.Error || 'Failed to build table context.');
+        return;
+      }
+
+      const updated = result.Objects.find(context => context.TableId === tableId);
+      if (!updated) {
+        setError('Provider did not return table context.');
+        return;
+      }
+
+      setTableContextDrafts(previous => ({ ...previous, [tableId]: updated.Context || '' }));
+      setDetail(previous => {
+        if (!previous) return previous;
+        return {
+          ...previous,
+          Tables: previous.Tables.map(existing => existing.TableId === tableId ? { ...existing, Context: updated.Context } : existing),
+        };
+      });
+      setMessageForTable(tableId, 'Built');
+    } catch {
+      setError('Could not connect to server.');
+    } finally {
+      setBuildingTableContext(null);
+    }
+  }
+
+  function setMessageForTable(tableId: string, value: string) {
+    const key = `table_context_${tableId}`;
+    sessionStorage.setItem(key, value);
+    window.setTimeout(() => sessionStorage.removeItem(key), 1500);
+  }
+
   if (error) return <p className="error-text">{error}</p>;
   if (!detail) return <p className="muted-text">Loading...</p>;
 
@@ -294,6 +414,9 @@ export default function DatabaseDetailPage() {
             disabled={!detail.IsCrawled || providers.length === 0}
           >
             Build Context
+          </button>
+          <button className="btn-secondary" title="Validate this saved database connection" onClick={handleTestConnection} disabled={testingConnection}>
+            {testingConnection ? 'Testing...' : 'Test'}
           </button>
           <button className="btn-secondary" title="Edit this database entry's connection settings and context" onClick={() => navigate(`/databases/${id}/edit`)}>Edit</button>
           <button className="btn-danger" title="Permanently remove this database entry from the configuration" onClick={handleDelete}>Delete</button>
@@ -348,6 +471,13 @@ export default function DatabaseDetailPage() {
 
       {crawlEvents.length > 0 && (
         <CrawlStatusPanel events={crawlEvents} />
+      )}
+
+      {connectionTest && (
+        <div className="card" style={{ marginBottom: '16px' }}>
+          <strong>{connectionTest.Success ? 'Connection test succeeded' : 'Connection test failed'}</strong>
+          <p className={connectionTest.Success ? 'muted-text' : 'error-text'}>{connectionTest.Message || connectionTest.Error}</p>
+        </div>
       )}
 
       <div className="card" style={{ marginBottom: '16px' }}>
@@ -415,8 +545,37 @@ export default function DatabaseDetailPage() {
         <div>
           <h3 title="Tables discovered by the schema crawler" style={{ fontSize: '16px', marginBottom: '12px' }}>Tables ({detail.Tables.length})</h3>
           {detail.Tables.map(table => (
-            <div key={table.TableName} className="card" style={{ marginBottom: '12px' }}>
+            <div key={table.TableId || table.TableName} className="card" style={{ marginBottom: '12px' }}>
               <h4 title="Fully qualified table name" style={{ fontSize: '14px', marginBottom: '8px' }}>{table.SchemaName}.{table.TableName}</h4>
+              <div className="table-context-editor">
+                <div className="table-context-header">
+                  <span className="muted-text">Table Context</span>
+                  <div className="table-context-actions">
+                    <ClipboardButton text={table.Context || ''} title="Copy table context" label="Copy table context" />
+                    <button
+                      className="btn-secondary compact-button"
+                      onClick={() => handleBuildTableContext(table)}
+                      disabled={!table.TableId || providers.length === 0 || buildingTableContext === table.TableId}
+                    >
+                      {buildingTableContext === table.TableId ? 'Building...' : 'Build'}
+                    </button>
+                    <button
+                      className="btn-secondary compact-button"
+                      onClick={() => handleSaveTableContext(table)}
+                      disabled={!table.TableId || savingTableContext === table.TableId}
+                    >
+                      {savingTableContext === table.TableId ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </div>
+                <textarea
+                  rows={3}
+                  value={table.TableId ? tableContextDrafts[table.TableId] || '' : ''}
+                  onChange={event => table.TableId && setTableContextDrafts(previous => ({ ...previous, [table.TableId as string]: event.target.value }))}
+                  placeholder="Add table-specific context, important columns, join guidance, caveats, and common filters."
+                  disabled={!table.TableId}
+                />
+              </div>
               <table>
                 <thead>
                   <tr>
@@ -539,6 +698,21 @@ Include:
 - Safe query guidance that respects the configured allowed query types.
 
 Do not include credentials, secrets, raw result rows, or unrelated commentary.`;
+}
+
+function defaultTableContextPrompt(detail: DatabaseDetail, table: TableDetail) {
+  const databaseName = detail.Name || detail.DatabaseName || detail.Filename || detail.DatabaseId;
+  return `Generate durable context for ${table.SchemaName}.${table.TableName} in ${databaseName}. Include the table purpose, key columns, primary key, relationships and join paths, common filters, caveats, and how this table is typically used. Clearly label inferred relationships and do not include secrets or raw data.`;
+}
+
+function createTableContextDrafts(detail: DatabaseDetail) {
+  const drafts: Record<string, string> = {};
+  detail.Tables.forEach(table => {
+    if (table.TableId) {
+      drafts[table.TableId] = table.Context || '';
+    }
+  });
+  return drafts;
 }
 
 function CloseIcon() {

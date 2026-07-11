@@ -41,6 +41,11 @@ namespace Tablix.Core.Models
         public ChatToolSettings Tools { get; set; } = null;
 
         /// <summary>
+        /// Prompt-processing settings.
+        /// </summary>
+        public PromptProcessingSettings PromptProcessing { get; set; } = null;
+
+        /// <summary>
         /// Redacted providers.
         /// </summary>
         public List<ModelProviderRead> Providers

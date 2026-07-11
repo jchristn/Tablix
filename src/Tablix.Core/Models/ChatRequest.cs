@@ -33,6 +33,16 @@ namespace Tablix.Core.Models
         /// </summary>
         public bool? Streaming { get; set; } = null;
 
+        /// <summary>
+        /// Optional per-request override to prefer native provider tool calls.
+        /// </summary>
+        public bool? PreferNativeToolCalls { get; set; } = null;
+
+        /// <summary>
+        /// Optional per-request override to use fallback execution when native tools are unavailable or omitted.
+        /// </summary>
+        public bool? FallbackWhenNativeToolNotCalled { get; set; } = null;
+
         #endregion
 
         #region Private-Members

@@ -2,9 +2,68 @@
 
 All responses are JSON (`Content-Type: application/json`). Authenticated endpoints require the `Authorization: Bearer <api-key>` header. API keys for Tablix REST authentication are configured in the `ApiKeys` array in `tablix.json`.
 
-Model provider credentials are separate from REST API keys. Provider authentication material is configured under `Chat.Providers[].ApiKey` in `tablix.json`; the Docker and factory defaults include this field as an empty string placeholder for every provider template.
+Model provider credentials are separate from REST API keys. Provider authentication material is stored in `tablix.db` and managed through `/v1/model`; read APIs redact secret values and expose `HasApiKey`.
 
 Interactive documentation is available at `/swagger` when the server is running. The MCP tool contract is documented separately in [MCP_API.md](MCP_API.md).
+
+## Setup
+
+Setup endpoints drive the first-login wizard.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/setup` | Read setup state and whether the wizard should be shown |
+| `PUT` | `/v1/setup` | Save wizard progress, selected provider, and selected database |
+| `POST` | `/v1/setup/complete` | Mark first-run setup complete |
+
+## Models
+
+Model provider records are stored in `tablix.db`. Read responses never include plaintext API keys.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/model?maxResults=100&skip=0&filter=&enabled=` | List providers |
+| `GET` | `/v1/model/{id}` | Read one redacted provider |
+| `POST` | `/v1/model` | Create a provider |
+| `PUT` | `/v1/model/{id}` | Update a provider; leave `ApiKey` empty to preserve it or set `ClearApiKey` |
+| `DELETE` | `/v1/model/{id}` | Delete a provider |
+| `POST` | `/v1/model/test` | Test unsaved provider settings |
+| `POST` | `/v1/model/{id}/test` | Test a saved provider |
+
+## Databases
+
+Database connection records, crawl metadata, table metadata, relationships, and context records are stored in `tablix.db`. Read responses redact credentials.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/v1/database?maxResults=100&skip=0&filter=` | List persisted database records |
+| `GET` | `/v1/database/{id}` | Read one redacted database record with cached crawl geometry |
+| `POST` | `/v1/database` | Create a database record |
+| `PUT` | `/v1/database/{id}` | Update a database record |
+| `DELETE` | `/v1/database/{id}` | Delete a database record, crawl metadata, and context records |
+| `POST` | `/v1/database/test` | Test unsaved database settings |
+| `POST` | `/v1/database/{id}/test` | Test a saved database connection |
+| `GET` | `/v1/database/{id}/tables` | List crawled table summaries |
+| `GET` | `/v1/database/{id}/relationships` | List crawled relationship summaries |
+| `POST` | `/v1/database/{id}/crawl` | Re-crawl database schema |
+| `POST` | `/v1/database/{id}/crawl/stream` | Re-crawl database schema with SSE progress |
+| `POST` | `/v1/database/{id}/query` | Execute a permitted query |
+
+## Context
+
+Database and table context are stored in `tablix.db`. REST exposes database and table context management for the dashboard and automation. MCP exposes the same persisted context concepts through `tablix_get_database_context`, `tablix_get_table_context`, `tablix_update_database_context`, `tablix_update_table_context`, and the generic scoped `tablix_update_context`; see [MCP_API.md](MCP_API.md) for model-facing request shapes, batch behavior, and guidance.
+
+REST reads database-level context through `GET /v1/database/{id}` and writes it through `POST /v1/database/{id}/context`. REST reads table-level context through `GET /v1/database/{id}/table-context` and `GET /v1/database/{id}/table-context/{tableId}`, and writes one table context through `PUT /v1/database/{id}/table-context/{tableId}`. For batch table context generation with a model provider, use `POST /v1/database/{id}/table-context/build`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/v1/database/{id}/context` | Replace or append database-level context |
+| `POST` | `/v1/database/{id}/context/build` | Generate database-level context from persisted crawl metadata |
+| `GET` | `/v1/database/{id}/table-context` | List table-level contexts |
+| `GET` | `/v1/database/{id}/table-context/{tableId}` | Read one table context |
+| `PUT` | `/v1/database/{id}/table-context/{tableId}` | Replace or append table-level context |
+| `POST` | `/v1/database/{id}/table-context/build` | Generate table-level context for all or selected tables |
+| `POST` | `/v1/database/{id}/table-context/{tableId}/build` | Generate table-level context for one table |
 
 ## Error Responses
 
@@ -65,7 +124,7 @@ Paginated responses use `EnumerationResult<T>` fields:
 | `Schema` | string or null | Schema to crawl, usually `public`, `dbo`, or `main` |
 | `Filename` | string or null | SQLite file path |
 | `AllowedQueries` | string[] | Allowed SQL statement types |
-| `Context` | string or null | Human-authored or curated database context |
+| `Context` | string or null | Human-authored or curated database context persisted as a database-scope `context_records` row |
 
 ### DatabaseSummary
 
@@ -84,9 +143,25 @@ Paginated responses use `EnumerationResult<T>` fields:
 | `Schema` | string or null | Schema name |
 | `Filename` | string or null | SQLite file path |
 | `AllowedQueries` | string[] | Allowed SQL statement types |
-| `Context` | string or null | Saved database context |
+| `Context` | string or null | Saved database context from database-scope `context_records` |
 | `IsCrawled` | boolean | Whether cached schema crawl succeeded |
 | `CrawlError` | string or null | Last crawl error, if any |
+
+### DatabaseConnectivityTestRequest
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Database` | `DatabaseEntry` | Unsaved database settings to validate without persisting |
+
+### DatabaseConnectivityTestResponse
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Success` | boolean | Whether the connection test succeeded |
+| `DatabaseId` | string or null | Database ID when known |
+| `Message` | string or null | Sanitized success or status message |
+| `Error` | string or null | Sanitized failure message |
+| `TotalMs` | number | Runtime in milliseconds |
 
 ### DatabaseReadDetail
 
@@ -98,7 +173,7 @@ Paginated responses use `EnumerationResult<T>` fields:
 | `Type` | string | Database engine type |
 | `DatabaseName` | string or null | Database/catalog name |
 | `Schema` | string or null | Schema name |
-| `Context` | string or null | Saved database context |
+| `Context` | string or null | Saved database context from database-scope `context_records` |
 | `Tables` | `TableDetail[]` | Full discovered table geometry |
 | `CrawledUtc` | string or null | Last successful crawl time in UTC |
 | `IsCrawled` | boolean | Whether the schema crawl succeeded |
@@ -143,7 +218,9 @@ Paginated responses use `EnumerationResult<T>` fields:
 
 ### Compact Discovery Shapes
 
-`TableSummary` fields are `SchemaName`, `TableName`, `Columns`, `ForeignKeys`, and `Indexes`.
+`TableSummary` fields are `TableId`, `SchemaName`, `TableName`, `Columns`, `ForeignKeys`, and `Indexes`.
+
+`TableDetail` fields are `TableId`, `TableName`, `SchemaName`, `Context`, `Columns`, `ForeignKeys`, and `Indexes`. `Context` is the current table-scope `context_records` value when one exists.
 
 `RelationshipDetail` fields are `FromSchema`, `FromTable`, `FromColumn`, `ToSchema`, `ToTable`, `ToColumn`, `ConstraintName`, `Source`, and `Confidence`.
 
@@ -154,9 +231,11 @@ Paginated responses use `EnumerationResult<T>` fields:
 | Field | Type | Description |
 |-------|------|-------------|
 | `DatabaseId` | string | Database ID used for schema and context |
-| `ProviderId` | string | `Chat.Providers[].Id` from settings |
+| `ProviderId` | string | Persisted model provider ID from `/v1/model` |
 | `Messages` | array | Conversation messages with `Role` and `Content` |
 | `Streaming` | boolean or null | Client streaming preference; null uses settings defaults |
+| `PreferNativeToolCalls` | boolean or null | Optional per-request override for native PolyPrompt tool preference |
+| `FallbackWhenNativeToolNotCalled` | boolean or null | Optional per-request override for server fallback when native tools are unavailable or omitted |
 
 `ChatTelemetry` fields:
 
@@ -185,9 +264,29 @@ Provider API keys are never returned by read endpoints. Redacted provider object
 | `Success` | boolean | Whether context was generated and persisted |
 | `DatabaseId` | string | Database ID |
 | `ProviderId` | string | Provider used |
-| `Context` | string or null | Generated context saved to `tablix.json` |
+| `Context` | string or null | Generated context saved to `tablix.db` |
 | `Model` | string or null | Provider model |
 | `Telemetry` | `ChatTelemetry` or null | Generation telemetry |
+| `Error` | string or null | Error when unsuccessful |
+
+`BuildTableContextRequest` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ProviderId` | string or null | Enabled provider ID; null uses `Chat.DefaultProviderId` |
+| `Prompt` | string or null | User-editable instructions that influence generated table context |
+| `TableIds` | string[] | Optional persisted table metadata IDs. Empty means every crawled table |
+
+`BuildTableContextResponse` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Success` | boolean | Whether table context was generated and persisted |
+| `DatabaseId` | string | Database ID |
+| `ProviderId` | string | Provider used |
+| `Model` | string or null | Provider model |
+| `Objects` | `TableContextRead[]` | Generated table context records saved to `context_records` |
+| `Telemetry` | `ChatTelemetry` or null | Aggregate generation telemetry |
 | `Error` | string or null | Error when unsuccessful |
 
 ---
@@ -212,6 +311,179 @@ Health check. No authentication required.
 ### `HEAD /`
 
 Lightweight health check. No authentication required. Returns `200 OK` with no body.
+
+---
+
+## Setup
+
+### `GET /v1/setup`
+
+Read first-run setup state.
+
+**Response** `200 OK`
+
+```json
+{
+  "Id": "default",
+  "Status": "InProgress",
+  "CurrentStep": "database-context",
+  "SelectedProviderId": "provider_ollama_local",
+  "SelectedDatabaseId": "db_sample_sqlite",
+  "CompletedUtc": null,
+  "UpdatedUtc": "2026-07-11T12:00:00Z",
+  "ShouldShowWizard": true
+}
+```
+
+### `PUT /v1/setup`
+
+Persist setup wizard progress.
+
+**Request Body**
+
+```json
+{
+  "Status": "InProgress",
+  "CurrentStep": "table-context",
+  "SelectedProviderId": "provider_ollama_local",
+  "SelectedDatabaseId": "db_sample_sqlite"
+}
+```
+
+**Response** `200 OK` - returns `SetupStateRead`.
+
+### `POST /v1/setup/complete`
+
+Mark setup complete.
+
+**Response** `200 OK` - returns `SetupStateRead` with `Status: "Complete"` and `ShouldShowWizard: false`.
+
+---
+
+## Models
+
+Model providers are stored in `tablix.db`. Read APIs never return plaintext `ApiKey`; they expose `HasApiKey` only.
+
+### `GET /v1/model`
+
+List model providers.
+
+**Query Parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `maxResults` | integer | 100 | Maximum results to return (1-1000) |
+| `skip` | integer | 0 | Number of records to skip |
+| `filter` | string | - | Filter by ID, name, endpoint, model, or type |
+| `enabled` | boolean | - | Optional enabled-state filter |
+
+**Response** `200 OK` - returns `EnumerationResult<ModelProviderSummary>`.
+
+### `GET /v1/model/{id}`
+
+Read one redacted provider.
+
+**Response** `200 OK`
+
+```json
+{
+  "Id": "provider_ollama_local",
+  "Name": "Local Ollama",
+  "Type": "Ollama",
+  "Endpoint": "http://ollama:11434",
+  "ApiKey": null,
+  "HasApiKey": false,
+  "Model": "gemma3:4b",
+  "SystemPrompt": null,
+  "Enabled": true,
+  "DefaultStreaming": true,
+  "SupportsNativeToolCalls": true,
+  "UseNativeToolCalls": false,
+  "SupportsStrictJson": false,
+  "ToolCapabilityNote": "Enable native tools after validating this provider/model emits tool calls reliably.",
+  "Temperature": 0.2,
+  "TopP": null,
+  "MaxTokens": 4096,
+  "RequestTimeoutMs": 120000
+}
+```
+
+### `POST /v1/model`
+
+Create a provider.
+
+**Request Body**
+
+```json
+{
+  "Id": "provider_ollama_local",
+  "Name": "Local Ollama",
+  "Type": "Ollama",
+  "Endpoint": "http://ollama:11434",
+  "ApiKey": "",
+  "ClearApiKey": false,
+  "Model": "gemma3:4b",
+  "SystemPrompt": null,
+  "Enabled": true,
+  "DefaultStreaming": true,
+  "SupportsNativeToolCalls": true,
+  "UseNativeToolCalls": false,
+  "SupportsStrictJson": false,
+  "ToolCapabilityNote": "Enable native tools after validating this provider/model emits tool calls reliably.",
+  "Temperature": 0.2,
+  "TopP": null,
+  "MaxTokens": 4096,
+  "RequestTimeoutMs": 120000
+}
+```
+
+**Response** `201 Created` - returns `ModelProviderSummary`.
+
+### `PUT /v1/model/{id}`
+
+Update a provider. Leave `ApiKey` empty/null to preserve the current key. Set `ClearApiKey` to `true` to remove the saved key.
+
+**Response** `200 OK` - returns `ModelProviderSummary`.
+
+### `DELETE /v1/model/{id}`
+
+Delete a provider.
+
+**Response** `204 No Content`
+
+### `POST /v1/model/test`
+
+Test unsaved provider settings.
+
+**Request Body**
+
+```json
+{
+  "Provider": {
+    "Id": "provider_ollama_local",
+    "Type": "Ollama",
+    "Endpoint": "http://ollama:11434",
+    "Model": "gemma3:4b"
+  }
+}
+```
+
+**Response** `200 OK`
+
+```json
+{
+  "Success": true,
+  "ProviderId": "provider_ollama_local",
+  "Model": "gemma3:4b",
+  "Message": "Provider returned a response.",
+  "Error": null,
+  "TotalMs": 125.4
+}
+```
+
+### `POST /v1/model/{id}/test`
+
+Test a saved provider. Response shape matches `/v1/model/test`.
 
 ---
 
@@ -262,7 +534,7 @@ List all configured databases with pagination and optional filtering.
 
 ### `GET /v1/database/{id}`
 
-Get database details including saved context, redacted connection settings, and cached schema geometry. `Context` is read from the current server settings entry. Credential values are never returned by read endpoints; `HasUser` and `HasPassword` only indicate whether credentials are configured.
+Get database details including saved context, redacted connection settings, and cached schema geometry. `Context` is read from the database-scope row in `context_records`. Credential values are never returned by read endpoints; `HasUser` and `HasPassword` only indicate whether credentials are configured.
 
 **Path Parameters**
 
@@ -354,6 +626,7 @@ List crawled tables for a database with pagination and optional filtering. This 
   "TotalMs": 0.3,
   "Objects": [
     {
+      "TableId": "tbl_db_sample_sqlite_main_orders",
       "SchemaName": "main",
       "TableName": "orders",
       "Columns": 5,
@@ -519,9 +792,44 @@ Update an existing database entry. The crawl cache is updated to reflect changes
 | 400 | Request body is missing |
 | 404 | Database ID not found |
 
+### `POST /v1/database/test`
+
+Test unsaved database settings without persisting them. The request body wraps the same `DatabaseEntry` shape used by `POST /v1/database`.
+
+**Request Body**
+
+```json
+{
+  "Database": {
+    "Id": "db_candidate",
+    "Name": "Candidate SQLite",
+    "Type": "Sqlite",
+    "Filename": "./database.db",
+    "Schema": "main",
+    "AllowedQueries": ["SELECT"]
+  }
+}
+```
+
+**Response** `200 OK`
+
+```json
+{
+  "Success": true,
+  "DatabaseId": "db_candidate",
+  "Message": "Connection test succeeded.",
+  "Error": null,
+  "TotalMs": 12.4
+}
+```
+
+### `POST /v1/database/{id}/test`
+
+Test a saved database connection. Response shape matches `/v1/database/test`.
+
 ### `POST /v1/database/{id}/context`
 
-Update only the user-supplied context for a database. This is intended for AI-assisted schema analysis workflows where a model, optionally guided by human input, persists a concise database summary back to `tablix.json`.
+Update only the user-supplied database-level context. This is intended for AI-assisted schema analysis workflows where a model, optionally guided by human input, persists a concise database summary back to `tablix.db`.
 
 **Path Parameters**
 
@@ -560,7 +868,7 @@ Update only the user-supplied context for a database. This is intended for AI-as
 
 ### `POST /v1/database/{id}/context/build`
 
-Generate database context with a configured chat provider, persist it to `tablix.json`, and update the running settings entry. The prompt uses the last successful schema crawl; the endpoint returns `409` if the database has not been crawled successfully.
+Generate database context with a configured chat provider and persist it as a database-scope row in `context_records`. The prompt uses the last successful schema crawl; the endpoint returns `409` if the database has not been crawled successfully.
 
 **Path Parameters**
 
@@ -607,6 +915,160 @@ Generate database context with a configured chat provider, persist it to `tablix
 | 404 | Database ID or provider ID not found |
 | 409 | No successful crawl is available |
 | 502 | Provider context generation failed |
+
+### `GET /v1/database/{id}/table-context`
+
+List table-level context records for a database.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Database entry ID |
+
+**Response** `200 OK`
+
+```json
+[
+  {
+    "Id": "ctx_012345",
+    "DatabaseId": "db_sample_sqlite",
+    "TableId": "tbl_db_sample_sqlite_main_users",
+    "SchemaName": "main",
+    "TableName": "users",
+    "Context": "Stores application users...",
+    "Source": "user",
+    "UpdatedUtc": "2026-07-11T12:00:00Z"
+  }
+]
+```
+
+### `GET /v1/database/{id}/table-context/{tableId}`
+
+Read table-level context for one table.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Database entry ID |
+| `tableId` | string | Persisted table metadata ID |
+
+**Response** `200 OK` - returns `TableContextRead`.
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| 404 | Database or table context not found |
+
+### `PUT /v1/database/{id}/table-context/{tableId}`
+
+Replace or append table-level context.
+
+**Request Body**
+
+```json
+{
+  "Context": "Table-specific context, important columns, joins, filters, and caveats.",
+  "Mode": "replace",
+  "Source": "user"
+}
+```
+
+`Mode` may be `replace` or `append`. `Source` is an optional label such as `user` or `model`.
+
+**Response** `200 OK` - returns `TableContextRead`.
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| 400 | Request body is missing or mode is unsupported |
+| 404 | Database or table not found |
+
+### `POST /v1/database/{id}/table-context/build`
+
+Generate table-level context with a configured chat provider and persist each generated record to `context_records` with `scope = "Table"`. If `TableIds` is empty or omitted, Tablix generates context for every crawled table that has persisted table metadata.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Database entry ID |
+
+**Request Body**
+
+```json
+{
+  "ProviderId": "provider_ollama_local",
+  "Prompt": "For each table, produce concise durable table context with key columns and join guidance.",
+  "TableIds": ["tbl_db_sample_sqlite_main_users"]
+}
+```
+
+**Response** `200 OK`
+
+```json
+{
+  "Success": true,
+  "DatabaseId": "db_sample_sqlite",
+  "ProviderId": "provider_ollama_local",
+  "Model": "gemma3:4b",
+  "Objects": [
+    {
+      "Id": "ctx_012345",
+      "DatabaseId": "db_sample_sqlite",
+      "TableId": "tbl_db_sample_sqlite_main_users",
+      "SchemaName": "main",
+      "TableName": "users",
+      "Context": "Stores application users...",
+      "Source": "model",
+      "UpdatedUtc": "2026-07-11T12:00:00Z"
+    }
+  ],
+  "Telemetry": {
+    "TimeToFirstTokenMs": 1200,
+    "TotalStreamingTimeMs": 3100,
+    "InputTokens": 1200,
+    "OutputTokens": 240,
+    "TotalTokens": 1440,
+    "EstimatedTokens": true
+  },
+  "Error": null
+}
+```
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| 400 | Request body is missing |
+| 403 | Chat is disabled |
+| 404 | Database ID or provider ID not found |
+| 409 | No successful crawl or persisted table metadata is available |
+| 502 | Provider table-context generation failed |
+
+### `POST /v1/database/{id}/table-context/{tableId}/build`
+
+Generate and persist context for exactly one crawled table. The request and response bodies match `/v1/database/{id}/table-context/build`; `TableIds` is ignored because the path selects the table.
+
+**Path Parameters**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Database entry ID |
+| `tableId` | string | Persisted table metadata ID |
+
+**Errors**
+
+| Status | Condition |
+|--------|-----------|
+| 400 | Request body is missing |
+| 403 | Chat is disabled |
+| 404 | Database ID, provider ID, or table ID not found |
+| 409 | No successful crawl is available |
+| 502 | Provider table-context generation failed |
 
 ### `DELETE /v1/database/{id}`
 
@@ -762,9 +1224,9 @@ Execute a SQL query against a database.
 
 ## Chat
 
-Chat endpoints use the selected database's saved context, allowed query policy, crawl state, table geometry, and declared foreign keys to build a database-aware model prompt. The default `Chat.SystemPrompt` restricts model conversation to the selected database, its structure, its contents, and their relationships. It also tells the model to execute an allowed query through the available Tablix query tool when the user asks for data that can be answered from the database, rather than merely returning SQL for the user to run. If query execution reports a bad or unknown column, missing column, or column type mismatch, the prompt tells the model to refresh schema by crawling or discovering relevant tables, then update saved context when refreshed schema proves column names, column types, or relationship guidance were stale. Providers are configured under `Chat.Providers` in `tablix.json` and are executed through PolyPrompt.
+Chat endpoints use the selected database's saved database/table context, allowed query policy, crawl state, table geometry, and declared foreign keys to build a database-aware model prompt. The default `Chat.SystemPrompt` restricts model conversation to the selected database, its structure, its contents, and their relationships. It tells the model to use database context for database-wide guidance, table context for table-specific guidance, and schema discovery as the source of truth for table names, column names, keys, indexes, and data types. It also tells the model to execute an allowed query through the available Tablix query tool when the user asks for data that can be answered from the database, rather than merely returning SQL for the user to run. If query execution reports a bad or unknown column, missing column, or column type mismatch, the prompt tells the model to refresh schema by crawling or discovering relevant tables, then update database or table context when refreshed schema proves saved context stale. Providers are stored in `tablix.db` and executed through PolyPrompt.
 
-When the model produces SQL for a user request that asks for actual data or an explicit database change, Tablix can execute the generated statement through the same query validator and crawler path used by `POST /v1/database/{id}/query`. The model then receives the tool result and produces a final answer grounded in returned rows or write outcome. Tool calls are returned in JSON responses and streamed as SSE events.
+Tablix uses PolyPrompt `1.5.0` native tool chat when `Chat.PromptProcessing.PreferNativeToolCalls` and the selected persisted provider's native tool settings are enabled. Tablix defines `tablix_execute_query`, receives model-requested tool calls, validates the selected database and query, executes through the same validator/crawler path used by `POST /v1/database/{id}/query`, appends the tool result, and asks the model for a final answer. If native tool calls are unavailable or the model does not request a tool for a clear data request, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` allows Tablix to use server-side planning and the same execution service. Tool calls are returned in JSON responses and streamed as SSE events.
 
 ### `GET /v1/chat/options`
 
@@ -842,9 +1304,12 @@ Send a non-streaming chat request.
       "Arguments": "{\"DatabaseId\":\"db_sample_sqlite\",\"Query\":\"SELECT COUNT(*) AS total_users FROM users\"}",
       "Result": "{\"Success\":true,\"RowsReturned\":1,\"Data\":{\"Rows\":[{\"total_users\":5}]}}",
       "Success": true,
-      "TotalMs": 12.4
+      "TotalMs": 12.4,
+      "Phase": "native"
     }
-  ]
+  ],
+  "ExecutionPath": "native_tool_calls",
+  "CapabilityNotice": "Native tool calls are enabled for this provider. Tablix still validates every database query before execution."
 }
 ```
 
@@ -883,7 +1348,7 @@ data: {"EventType":"completed","Message":"There are 5 users.","Telemetry":{"Time
 
 ## Settings
 
-Settings endpoints power the dashboard Settings page. `GET /v1/settings` redacts provider API keys and exposes `HasApiKey` instead. `PUT /v1/settings` accepts new provider `ApiKey` values; leave `ApiKey` empty to preserve the existing key, or set `ClearApiKey` to `true` to remove it.
+Settings endpoints power the dashboard Settings page. `GET /v1/settings` exposes bootstrap/server settings and persistence health. Model providers and configured databases are managed through `/v1/model` and `/v1/database`. Prompt-processing settings take effect immediately for new chat requests; persistence filename/type and listener/logging changes are annotated as restart-required when applicable.
 
 ### `GET /v1/settings`
 
@@ -893,45 +1358,86 @@ Return form-editable settings.
 
 ```json
 {
+  "Persistence": {
+    "Type": "Sqlite",
+    "Filename": "tablix.db"
+  },
+  "PersistenceHealth": {
+    "Type": "Sqlite",
+    "Filename": "tablix.db",
+    "ResolvedFilename": "C:\\Code\\Tablix\\docker\\tablix.db",
+    "Exists": true,
+    "CanOpen": true,
+    "Error": null
+  },
   "Rest": {
     "Hostname": "*",
     "Port": 9100,
     "Ssl": false,
     "McpPort": 9102
   },
+  "Logging": {
+    "Servers": [],
+    "ConsoleLogging": true,
+    "FileLogging": true,
+    "LogDirectory": "./logs/",
+    "LogFilename": "tablix.log",
+    "MinimumSeverity": 0,
+    "EnableColors": true
+  },
   "ApiKeys": ["tablixadmin"],
   "Chat": {
     "Enabled": true,
     "DefaultProviderId": "provider_ollama_local",
     "DefaultStreaming": true,
+    "SystemPrompt": "You are Tablix, a database assistant...",
     "MaxContextTables": 100,
-    "Providers": [
-      {
-        "Id": "provider_ollama_local",
-        "Name": "Local Ollama",
-        "Type": "Ollama",
-        "Endpoint": "http://ollama:11434",
-        "Model": "gemma3:4b",
-        "HasApiKey": false
-      }
-    ]
+    "Tools": {
+      "Enabled": true,
+      "AllowReadOnlyQueries": true,
+      "AllowContextUpdates": true,
+      "MaxToolIterations": 8,
+      "MaxToolCalls": 20,
+      "ToolTimeoutMs": 30000,
+      "MaxToolOutputCharacters": 12000
+    },
+    "PromptProcessing": {
+      "Enabled": true,
+      "PreferNativeToolCalls": true,
+      "RequireExecutionForDataRequests": true,
+      "AllowSqlOnlyByExplicitRequest": true,
+      "FallbackWhenNativeToolNotCalled": true,
+      "RetryAfterSchemaRefresh": true,
+      "MaxNativeToolIterations": 4,
+      "MaxPlanningAttempts": 2,
+      "PlannerTemperature": 0
+    }
   },
-  "RestartRequiredPaths": ["Rest.Hostname", "Rest.Port", "Rest.Ssl", "Rest.McpPort"]
+  "RestartRequiredPaths": ["Persistence.Type", "Persistence.Filename", "Rest.Hostname", "Rest.Port", "Rest.Ssl", "Rest.McpPort", "Logging"]
 }
 ```
 
 ### `PUT /v1/settings`
 
-Save updated settings to `tablix.json` and replace the running settings object. Chat providers, chat defaults, API keys, and other in-memory reads take effect immediately. REST/MCP listener and active logging pipeline changes are saved immediately but require server restart to affect already-initialized listeners/loggers; those paths are listed in `RestartRequiredPaths`.
+Save updated bootstrap settings to `tablix.json` and replace the running settings object. Chat defaults, prompt-processing settings, API keys, and other in-memory reads take effect immediately. REST/MCP listener, active logging pipeline, and persistence filename/type changes are saved immediately but require server restart to affect already-initialized components; those paths are listed in `RestartRequiredPaths`.
 
 **Request Body**
 
-The request uses the same shape returned by `GET /v1/settings`, with provider objects optionally including:
+The request uses the same editable shape returned by `GET /v1/settings`, excluding read-only `PersistenceHealth` and `RestartRequiredPaths`. Model providers are not part of the settings payload; manage providers through `/v1/model`.
+
+`Chat.PromptProcessing` fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `ApiKey` | string or null | New provider API key; empty/null preserves existing key |
-| `ClearApiKey` | boolean | Remove the existing provider API key |
+| `Enabled` | boolean | Enable prompt processing and tool orchestration |
+| `PreferNativeToolCalls` | boolean | Prefer PolyPrompt native tool calls when provider settings allow them |
+| `RequireExecutionForDataRequests` | boolean | Execute permitted queries for data-answer requests |
+| `AllowSqlOnlyByExplicitRequest` | boolean | Preserve SQL-only behavior when explicitly requested |
+| `FallbackWhenNativeToolNotCalled` | boolean | Use server-side fallback planning when native tools are unavailable or omitted |
+| `RetryAfterSchemaRefresh` | boolean | Recrawl and retry once for schema-related query errors |
+| `MaxNativeToolIterations` | integer | Maximum native tool iterations |
+| `MaxPlanningAttempts` | integer | Maximum fallback planning attempts |
+| `PlannerTemperature` | number | Fallback planner temperature |
 
 **Errors**
 

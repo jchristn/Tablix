@@ -1,19 +1,18 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
-import type { ModelProviderUpdate, SettingsReadResponse, SettingsUpdateRequest } from '../types';
-
-const providerTypes = ['Ollama', 'OpenAI', 'OpenAICompatible', 'Gemini'];
+import type { ChatOptionsResponse, SettingsReadResponse, SettingsUpdateRequest } from '../types';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
   const [settings, setSettings] = useState<SettingsReadResponse | null>(null);
+  const [providers, setProviders] = useState<{ Id: string; Name: string | null }[]>([]);
   const [apiKeysText, setApiKeysText] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
 
-  useEffect(() => { loadSettings(); }, []);
+  useEffect(() => { loadSettings(); loadProviders(); }, []);
 
   async function loadSettings() {
     try {
@@ -30,6 +29,18 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadProviders() {
+    try {
+      const response = await apiFetch('/v1/chat/options');
+      if (!response.ok) return;
+
+      const data: ChatOptionsResponse = await response.json();
+      setProviders((data.Providers || []).map(provider => ({ Id: provider.Id, Name: provider.Name })));
+    } catch {
+      setProviders([]);
+    }
+  }
+
   async function handleSave(event: React.FormEvent) {
     event.preventDefault();
     if (!settings) return;
@@ -39,16 +50,11 @@ export default function SettingsPage() {
     setMessage('');
 
     const update: SettingsUpdateRequest = {
+      Persistence: settings.Persistence,
       Rest: settings.Rest,
       Logging: settings.Logging,
       ApiKeys: apiKeysText.split('\n').map(key => key.trim()).filter(Boolean),
-      Chat: {
-        ...settings.Chat,
-        Providers: settings.Chat.Providers.map(provider => ({
-          ...provider,
-          ClearApiKey: (provider as ModelProviderUpdate).ClearApiKey || false,
-        })),
-      },
+      Chat: settings.Chat,
     };
 
     try {
@@ -84,36 +90,6 @@ export default function SettingsPage() {
     });
   }
 
-  function addProvider() {
-    updateSettings(draft => {
-      draft.Chat.Providers.push({
-        Id: `provider_${crypto.randomUUID().slice(0, 8)}`,
-        Name: 'New Provider',
-        Type: 'Ollama',
-        Endpoint: 'http://localhost:11434',
-        ApiKey: null,
-        HasApiKey: false,
-        Model: 'gemma3:4b',
-        SystemPrompt: null,
-        Enabled: true,
-        DefaultStreaming: true,
-        Temperature: 0.2,
-        TopP: null,
-        MaxTokens: 4096,
-        RequestTimeoutMs: 120000,
-      });
-    });
-  }
-
-  function removeProvider(index: number) {
-    updateSettings(draft => {
-      draft.Chat.Providers.splice(index, 1);
-      if (!draft.Chat.Providers.some(provider => provider.Id === draft.Chat.DefaultProviderId)) {
-        draft.Chat.DefaultProviderId = draft.Chat.Providers[0]?.Id || null;
-      }
-    });
-  }
-
   function isRestartPath(path: string) {
     return settings?.RestartRequiredPaths.includes(path) || false;
   }
@@ -130,6 +106,26 @@ export default function SettingsPage() {
       </div>
 
       <form id="settings-form" className="settings-form" onSubmit={handleSave}>
+        <section className="settings-section">
+          <h3>Persistence <RestartBadge show={isRestartPath('Persistence.Filename') || isRestartPath('Persistence.Type')} /></h3>
+          <div className="settings-grid">
+            <Field label="Database Type" restart={isRestartPath('Persistence.Type')}>
+              <select value={settings.Persistence.Type} onChange={event => updateSettings(draft => { draft.Persistence.Type = event.target.value; })}>
+                <option value="Sqlite">SQLite</option>
+              </select>
+            </Field>
+            <Field label="Database Filename" restart={isRestartPath('Persistence.Filename')}>
+              <input value={settings.Persistence.Filename} onChange={event => updateSettings(draft => { draft.Persistence.Filename = event.target.value; })} />
+            </Field>
+            <Field label="Resolved Filename">
+              <input value={settings.PersistenceHealth?.ResolvedFilename || ''} readOnly />
+            </Field>
+            <Field label="Persistence Health">
+              <input value={settings.PersistenceHealth?.CanOpen ? 'Open' : settings.PersistenceHealth?.Error || 'Unavailable'} readOnly />
+            </Field>
+          </div>
+        </section>
+
         <section className="settings-section">
           <h3>REST and MCP <RestartBadge show={isRestartPath('Rest.Port')} /></h3>
           <div className="settings-grid">
@@ -190,8 +186,9 @@ export default function SettingsPage() {
               <span>Default streaming</span>
             </label>
             <Field label="Default Provider">
-              <select value={settings.Chat.DefaultProviderId || ''} onChange={event => updateSettings(draft => { draft.Chat.DefaultProviderId = event.target.value; })}>
-                {settings.Chat.Providers.map(provider => <option key={provider.Id} value={provider.Id}>{provider.Name || provider.Id}</option>)}
+              <select value={settings.Chat.DefaultProviderId || ''} onChange={event => updateSettings(draft => { draft.Chat.DefaultProviderId = event.target.value || null; })}>
+                <option value="">No default provider</option>
+                {providers.map(provider => <option key={provider.Id} value={provider.Id}>{provider.Name || provider.Id}</option>)}
               </select>
             </Field>
             <Field label="Max Context Tables">
@@ -201,6 +198,45 @@ export default function SettingsPage() {
           <div className="form-group" style={{ marginTop: '12px' }}>
             <label>System Prompt</label>
             <textarea rows={4} value={settings.Chat.SystemPrompt || ''} onChange={event => updateSettings(draft => { draft.Chat.SystemPrompt = event.target.value; })} />
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h3>Prompt Processing</h3>
+          <div className="settings-grid">
+            <label className="toggle-row settings-toggle">
+              <input type="checkbox" checked={settings.Chat.PromptProcessing.Enabled} onChange={event => updateSettings(draft => { draft.Chat.PromptProcessing.Enabled = event.target.checked; })} />
+              <span>Enabled</span>
+            </label>
+            <label className="toggle-row settings-toggle">
+              <input type="checkbox" checked={settings.Chat.PromptProcessing.PreferNativeToolCalls} onChange={event => updateSettings(draft => { draft.Chat.PromptProcessing.PreferNativeToolCalls = event.target.checked; })} />
+              <span>Prefer native tools</span>
+            </label>
+            <label className="toggle-row settings-toggle">
+              <input type="checkbox" checked={settings.Chat.PromptProcessing.RequireExecutionForDataRequests} onChange={event => updateSettings(draft => { draft.Chat.PromptProcessing.RequireExecutionForDataRequests = event.target.checked; })} />
+              <span>Execute data requests</span>
+            </label>
+            <label className="toggle-row settings-toggle">
+              <input type="checkbox" checked={settings.Chat.PromptProcessing.AllowSqlOnlyByExplicitRequest} onChange={event => updateSettings(draft => { draft.Chat.PromptProcessing.AllowSqlOnlyByExplicitRequest = event.target.checked; })} />
+              <span>Honor SQL-only requests</span>
+            </label>
+            <label className="toggle-row settings-toggle">
+              <input type="checkbox" checked={settings.Chat.PromptProcessing.FallbackWhenNativeToolNotCalled} onChange={event => updateSettings(draft => { draft.Chat.PromptProcessing.FallbackWhenNativeToolNotCalled = event.target.checked; })} />
+              <span>Server fallback</span>
+            </label>
+            <label className="toggle-row settings-toggle">
+              <input type="checkbox" checked={settings.Chat.PromptProcessing.RetryAfterSchemaRefresh} onChange={event => updateSettings(draft => { draft.Chat.PromptProcessing.RetryAfterSchemaRefresh = event.target.checked; })} />
+              <span>Retry after schema refresh</span>
+            </label>
+            <Field label="Max Native Tool Iterations">
+              <input type="number" value={settings.Chat.PromptProcessing.MaxNativeToolIterations} onChange={event => updateSettings(draft => { draft.Chat.PromptProcessing.MaxNativeToolIterations = parseNumber(event.target.value, 4); })} />
+            </Field>
+            <Field label="Max Planning Attempts">
+              <input type="number" value={settings.Chat.PromptProcessing.MaxPlanningAttempts} onChange={event => updateSettings(draft => { draft.Chat.PromptProcessing.MaxPlanningAttempts = parseNumber(event.target.value, 2); })} />
+            </Field>
+            <Field label="Planner Temperature">
+              <input type="number" step="0.1" value={settings.Chat.PromptProcessing.PlannerTemperature} onChange={event => updateSettings(draft => { draft.Chat.PromptProcessing.PlannerTemperature = Number(event.target.value); })} />
+            </Field>
           </div>
         </section>
 
@@ -234,75 +270,9 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="settings-section">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <h3 style={{ margin: 0 }}>Model Providers</h3>
-            <button type="button" className="btn-secondary" onClick={addProvider}>Add Provider</button>
-          </div>
-          <div className="provider-list">
-            {settings.Chat.Providers.map((provider, index) => (
-              <ProviderEditor
-                key={provider.Id}
-                provider={provider as ModelProviderUpdate}
-                onChange={updated => updateSettings(draft => { draft.Chat.Providers[index] = updated; })}
-                onRemove={() => removeProvider(index)}
-              />
-            ))}
-          </div>
-        </section>
-
         {error && <p className="error-text">{error}</p>}
         {message && <p className="muted-text">{message}</p>}
       </form>
-    </div>
-  );
-}
-
-function ProviderEditor({ provider, onChange, onRemove }: { provider: ModelProviderUpdate; onChange: (provider: ModelProviderUpdate) => void; onRemove: () => void }) {
-  function update(field: keyof ModelProviderUpdate, value: string | number | boolean | null) {
-    onChange({ ...provider, [field]: value });
-  }
-
-  return (
-    <div className="provider-editor">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-        <strong>{provider.Name || provider.Id}</strong>
-        <button type="button" className="btn-danger" onClick={onRemove}>Remove</button>
-      </div>
-      <div className="settings-grid">
-        <Field label="Id"><input value={provider.Id} onChange={event => update('Id', event.target.value)} /></Field>
-        <Field label="Name"><input value={provider.Name || ''} onChange={event => update('Name', event.target.value)} /></Field>
-        <Field label="Type">
-          <select value={provider.Type} onChange={event => update('Type', event.target.value)}>
-            {providerTypes.map(type => <option key={type} value={type}>{type}</option>)}
-          </select>
-        </Field>
-        <Field label="Endpoint"><input value={provider.Endpoint || ''} onChange={event => update('Endpoint', event.target.value)} /></Field>
-        <Field label="Model"><input value={provider.Model || ''} onChange={event => update('Model', event.target.value)} /></Field>
-        <Field label={provider.HasApiKey ? 'API Key Configured' : 'API Key'}>
-          <input type="password" value={provider.ApiKey || ''} placeholder={provider.HasApiKey ? 'Leave blank to keep existing key' : ''} onChange={event => update('ApiKey', event.target.value)} />
-        </Field>
-        <label className="toggle-row settings-toggle">
-          <input type="checkbox" checked={provider.Enabled} onChange={event => update('Enabled', event.target.checked)} />
-          <span>Enabled</span>
-        </label>
-        <label className="toggle-row settings-toggle">
-          <input type="checkbox" checked={provider.DefaultStreaming} onChange={event => update('DefaultStreaming', event.target.checked)} />
-          <span>Streaming</span>
-        </label>
-        <label className="toggle-row settings-toggle">
-          <input type="checkbox" checked={provider.ClearApiKey || false} onChange={event => update('ClearApiKey', event.target.checked)} />
-          <span>Clear API key</span>
-        </label>
-        <Field label="Temperature"><input type="number" step="0.1" value={provider.Temperature ?? ''} onChange={event => update('Temperature', nullableNumber(event.target.value))} /></Field>
-        <Field label="Top P"><input type="number" step="0.1" value={provider.TopP ?? ''} onChange={event => update('TopP', nullableNumber(event.target.value))} /></Field>
-        <Field label="Max Tokens"><input type="number" value={provider.MaxTokens ?? ''} onChange={event => update('MaxTokens', nullableNumber(event.target.value))} /></Field>
-        <Field label="Timeout Ms"><input type="number" value={provider.RequestTimeoutMs} onChange={event => update('RequestTimeoutMs', parseNumber(event.target.value, 120000))} /></Field>
-      </div>
-      <div className="form-group" style={{ marginTop: '12px' }}>
-        <label>System Prompt Override</label>
-        <textarea rows={3} value={provider.SystemPrompt || ''} onChange={event => update('SystemPrompt', event.target.value)} />
-      </div>
     </div>
   );
 }
@@ -318,16 +288,10 @@ function Field({ label, restart, children }: { label: string; restart?: boolean;
 
 function RestartBadge({ show }: { show: boolean }) {
   if (!show) return null;
-  return <span className="restart-badge" title="Saved immediately; requires server restart to affect the active listener or logger">Restart</span>;
+  return <span className="restart-badge" title="Saved immediately; requires server restart to affect the active server process">Restart</span>;
 }
 
 function parseNumber(value: string, fallback: number) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function nullableNumber(value: string) {
-  if (value.trim() === '') return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
 }

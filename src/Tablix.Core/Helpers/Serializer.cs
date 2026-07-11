@@ -69,6 +69,20 @@ namespace Tablix.Core.Helpers
             return JsonSerializer.Deserialize<T>(json, _Options);
         }
 
+        /// <summary>
+        /// Deserialize an object by first converting it through JSON.
+        /// </summary>
+        /// <typeparam name="T">Target type.</typeparam>
+        /// <param name="obj">Source object.</param>
+        /// <returns>Deserialized object.</returns>
+        public static T DeserializeObject<T>(object obj)
+        {
+            if (obj == null) return default(T);
+
+            string json = JsonSerializer.Serialize(obj, _Options);
+            return DeserializeJson<T>(json);
+        }
+
         #endregion
     }
 }

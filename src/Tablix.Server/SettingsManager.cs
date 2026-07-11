@@ -29,6 +29,14 @@ namespace Tablix.Server
             }
         }
 
+        /// <summary>
+        /// Settings filename.
+        /// </summary>
+        public string Filename
+        {
+            get { return _Filename; }
+        }
+
         #endregion
 
         #region Private-Members
@@ -64,94 +72,6 @@ namespace Tablix.Server
             try
             {
                 _Settings = LoadOrCreate();
-            }
-            finally
-            {
-                _Semaphore.Release();
-            }
-        }
-
-        /// <summary>
-        /// Add a database entry.
-        /// </summary>
-        /// <param name="entry">Database entry to add.</param>
-        public void AddDatabase(DatabaseEntry entry)
-        {
-            if (entry == null) throw new ArgumentNullException(nameof(entry));
-
-            _Semaphore.Wait();
-            try
-            {
-                if (_Settings.Databases.Any(d => String.Equals(d.Id, entry.Id, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidOperationException("A database with ID '" + entry.Id + "' already exists.");
-
-                _Settings.Databases.Add(entry);
-                Save();
-            }
-            finally
-            {
-                _Semaphore.Release();
-            }
-        }
-
-        /// <summary>
-        /// Update an existing database entry.
-        /// </summary>
-        /// <param name="entry">Updated database entry.</param>
-        public void UpdateDatabase(DatabaseEntry entry)
-        {
-            if (entry == null) throw new ArgumentNullException(nameof(entry));
-
-            _Semaphore.Wait();
-            try
-            {
-                int index = _Settings.Databases.FindIndex(d => String.Equals(d.Id, entry.Id, StringComparison.OrdinalIgnoreCase));
-                if (index < 0)
-                    throw new KeyNotFoundException("Database with ID '" + entry.Id + "' not found.");
-
-                _Settings.Databases[index] = entry;
-                Save();
-            }
-            finally
-            {
-                _Semaphore.Release();
-            }
-        }
-
-        /// <summary>
-        /// Delete a database entry by ID.
-        /// </summary>
-        /// <param name="id">Database entry ID.</param>
-        public void DeleteDatabase(string id)
-        {
-            if (String.IsNullOrEmpty(id)) throw new ArgumentNullException(nameof(id));
-
-            _Semaphore.Wait();
-            try
-            {
-                int removed = _Settings.Databases.RemoveAll(d => String.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase));
-                if (removed == 0)
-                    throw new KeyNotFoundException("Database with ID '" + id + "' not found.");
-
-                Save();
-            }
-            finally
-            {
-                _Semaphore.Release();
-            }
-        }
-
-        /// <summary>
-        /// Get a database entry by ID.
-        /// </summary>
-        /// <param name="id">Database entry ID.</param>
-        /// <returns>Database entry or null.</returns>
-        public DatabaseEntry GetDatabase(string id)
-        {
-            _Semaphore.Wait();
-            try
-            {
-                return _Settings.Databases.FirstOrDefault(d => String.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase));
             }
             finally
             {

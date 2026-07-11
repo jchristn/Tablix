@@ -17,17 +17,30 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added dashboard context viewing and inline editing on database detail pages, backed by the focused context update API
 - Added copyable, fixed-size database context display on database detail pages
 - Added dashboard Build Context flow and REST `POST /v1/database/{id}/context/build` to generate and persist database context from the last successful crawl through a configured model provider
+- Added REST `POST /v1/database/{id}/table-context/build` and `POST /v1/database/{id}/table-context/{tableId}/build` plus dashboard and setup wizard flows for model-generated table context
+- Added MCP context management tools for single and batch database/table context reads and writes: `tablix_get_database_context`, `tablix_get_table_context`, `tablix_update_database_context`, and `tablix_update_table_context`
+- Added SQLite persistence in `tablix.db` for model providers, configured databases, crawl metadata, database context, table context, and setup wizard state
+- Added `Persistence.Type` and `Persistence.Filename` bootstrap settings in `tablix.json`
+- Added REST setup APIs: `GET /v1/setup`, `PUT /v1/setup`, and `POST /v1/setup/complete`
+- Added REST model provider APIs under `/v1/model`, including saved and unsaved provider connectivity tests
+- Added REST database connectivity test APIs and table-context APIs under `/v1/database`
+- Added dashboard Models page for provider CRUD and validation
+- Added first-run setup wizard for provider validation, database validation, crawl, database context, and table context
+- Added table-level context editing on database detail pages
+- Added Docker seed `tablix.db` files for runtime and factory reset
 - Added Databases row action overflow menu with Build Context and Delete actions
 - Added Query result JSON copy and CSV download controls
 - Added PolyPrompt-backed REST chat APIs: `GET /v1/chat/options`, `POST /v1/chat`, and `POST /v1/chat/stream`
+- Upgraded PolyPrompt usage to `1.5.0` and added native tool-call orchestration for providers/models configured to support tools
+- Added prompt-processing settings for native tool preference, data-request execution, SQL-only intent preservation, server fallback planning, schema-refresh retry, and planning/tool iteration limits
 - Added dashboard Chat page with database/provider selectors, streaming and non-streaming responses, markdown rendering, inline query tool calls, and telemetry hover details
-- Added server-side Chat query execution loop so generated permitted SQL can be executed through Tablix query validation and returned to the model for final answers
+- Added server-side Chat fallback execution loop so permitted data requests can still execute when a model/provider does not emit a native tool call
 - Added redacted settings APIs: `GET /v1/settings` and `PUT /v1/settings`
-- Added dashboard Settings page with structured forms for REST/MCP, API keys, logging, chat defaults, chat tools, and model providers
-- Extended MCP `tablix_update_context` with `replace` and `append` modes
+- Added dashboard Settings page with structured forms for REST/MCP, API keys, logging, persistence, chat defaults, prompt processing, and chat tools
+- Extended MCP `tablix_update_context` with `replace` and `append` modes plus a `scope` discriminator for database or table context
 - Expanded MCP tool descriptions with model-facing guidance for pagination, large schemas, relationship fidelity, query safety, and context persistence
 - Clarified MCP query guidance so data-answer or action requests such as counts, totals, lists, "show me", add, update, and delete should execute permitted queries instead of only returning SQL text
-- Added typed `Chat` configuration with model provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini
+- Added persisted model provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini
 
 ### Changed
 
@@ -41,13 +54,15 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added Docker Compose healthchecks for server and UI containers, made the UI depend on a healthy backend, and added a configurable 15 second UI startup delay
 - Updated chat and MCP guidance to refresh schema after bad/unknown column or column type errors and correct saved context when refreshed schema proves it stale
 - Updated chat prompt guidance to tell models to execute allowed Tablix query-tool calls when the user asks for data that can be answered from the selected database
+- Moved configured databases and model providers out of `tablix.json` and into `tablix.db`
+- Updated Docker Compose to mount `tablix.db` as the product-state database
 - Added direct `SQLitePCLRaw.lib.e_sqlite3` package override to resolve the transitive vulnerability warning from 2.1.11
 
 ### Fixed
 
 - Fixed `SyslogServer(string hostname, int port)` to validate constructor port range consistently with the `Port` property setter
 - Fixed database discovery/read responses so MCP and REST no longer return configured database usernames or plaintext passwords
-- Fixed Docker default and factory `tablix.json` files to include the new `Chat` settings, explicit empty `Chat.Providers[].ApiKey` placeholders, and removed a local credential-bearing database entry from the default Docker configuration
+- Fixed Docker default and factory settings so `tablix.json` is a bootstrap file and provider/database product state lives in `tablix.db`
 - Fixed the Docker Compose dashboard server URL to use `http://tablix-server:9100`
 - Fixed the Docker dashboard nginx proxy so `/v1/...` API requests preserve their full path and query string when forwarded to the Tablix server
 - Fixed Chat page layout so transcript scrolling is constrained to the chat window while the composer remains visible
@@ -65,10 +80,18 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added schema projection coverage for paginated table lists and relationship edges
 - Added MCP guidance coverage to prevent regressions in model-facing tool instructions
 - Added credential redaction coverage for database summaries and MCP database discovery
-- Added settings coverage for chat provider defaults and provider enum serialization
+- Added settings coverage for chat provider defaults, prompt-processing defaults, provider tool capability fields, and provider enum serialization
 - Added model guard coverage for chat telemetry, chat request list handling, and provider API key redaction
 - Added crawl progress event payload coverage
-- Expanded shared Touchstone coverage from 53 to 143 descriptors across query validation, settings persistence, serialization, SQLite edge cases, schema projection, model guards, crawler factory, crawl cache, MCP tool behavior, credential redaction, Docker dashboard proxy packaging, and dashboard/server API contract checks
+- Expanded shared Touchstone coverage from 53 to 148 descriptors across query validation, settings persistence, serialization, SQLite edge cases, schema projection, model guards, crawler factory, crawl cache, MCP tool behavior, credential redaction, Docker dashboard proxy packaging, prompt-processing contracts, and dashboard/server API contract checks
+
+### Code Quality
+
+- Enforced explicit local declarations by avoiding `var`
+- Removed tuple usage in favor of named types
+- Removed direct JSON DOM use such as `JsonElement`, `JsonNode`, `JsonObject`, and `JsonArray` from Tablix code and tests
+- Split C# source so each file contains no more than one class, enum, interface, delegate, or struct declaration
+- Enabled XML documentation file generation for Core, Server, and shared test projects
 
 ### Upgrade Notes
 
@@ -76,9 +99,9 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Paginated list responses expose continuation through `NextSkip`. Continue paging until `EndOfResults` is true.
 - `tablix_list_tables` returns compact summaries, not full table geometry. Agents should call `tablix_discover_table` before generating SQL against a table.
 - `tablix_list_relationships` currently reports declared foreign keys. Missing edges do not prove that two tables are unrelated.
-- `tablix_update_context` writes back to `tablix.json`; callers should use it only for human-approved or workflow-approved context and should not store secrets or raw query results.
+- `tablix_update_database_context` and `tablix_update_table_context` write back to `tablix.db`; callers should use them only for human-approved or workflow-approved context and should not store secrets or raw query results. `tablix_update_context` remains available as a generic scoped compatibility tool.
 - Database discovery and REST read responses are redacted: `User` and `Password` are accepted only in write requests and are represented in read responses as `HasUser` and `HasPassword`.
-- Existing `tablix.json` files continue to load without `Chat`; missing chat settings are populated from code defaults when new settings files are created or serialized.
+- Existing pre-persistence `tablix.json` files can be imported into an empty `tablix.db`; new default JSON files no longer contain providers or configured databases.
 
 ## v0.1.1 - ALPHA (2026-05-05)
 

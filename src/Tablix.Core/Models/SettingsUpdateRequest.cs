@@ -10,15 +10,33 @@ namespace Tablix.Core.Models
     {
         #region Public-Members
 
+        /// <summary>
+        /// REST and MCP listener settings.
+        /// </summary>
         public RestSettings Rest { get; set; } = null;
+
+        /// <summary>
+        /// Logging settings.
+        /// </summary>
         public LoggingSettings Logging { get; set; } = null;
 
+        /// <summary>
+        /// Product-state persistence database settings.
+        /// </summary>
+        public PersistenceDatabaseSettings Persistence { get; set; } = null;
+
+        /// <summary>
+        /// API keys for dashboard and REST authentication.
+        /// </summary>
         public List<string> ApiKeys
         {
             get { return _ApiKeys; }
             set { _ApiKeys = value ?? new List<string>(); }
         }
 
+        /// <summary>
+        /// Chat settings.
+        /// </summary>
         public ChatSettingsUpdate Chat { get; set; } = null;
 
         #endregion

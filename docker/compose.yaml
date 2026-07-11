@@ -8,6 +8,7 @@ services:
       - "9102:9102"
     volumes:
       - ./tablix.json:/app/tablix.json
+      - ./tablix.db:/app/tablix.db
       - ./database.db:/app/database.db
       - ./logs:/app/logs
     healthcheck:

@@ -2,11 +2,13 @@ namespace Tablix.Server.Handlers
 {
     using System;
     using System.Collections.Generic;
+    using System.IO;
     using System.Linq;
     using System.Threading.Tasks;
     using SwiftStack.Rest;
     using Tablix.Core.Enums;
     using Tablix.Core.Models;
+    using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
 
@@ -18,6 +20,7 @@ namespace Tablix.Server.Handlers
         #region Private-Members
 
         private readonly SettingsManager _SettingsManager;
+        private readonly DatabaseDriverBase _Persistence;
 
         #endregion
 
@@ -27,9 +30,11 @@ namespace Tablix.Server.Handlers
         /// Instantiate.
         /// </summary>
         /// <param name="settingsManager">Settings manager.</param>
-        public SettingsHandler(SettingsManager settingsManager)
+        /// <param name="persistence">Persistence driver.</param>
+        public SettingsHandler(SettingsManager settingsManager, DatabaseDriverBase persistence)
         {
             _SettingsManager = settingsManager ?? throw new ArgumentNullException(nameof(settingsManager));
+            _Persistence = persistence ?? throw new ArgumentNullException(nameof(persistence));
         }
 
         #endregion
@@ -41,7 +46,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         public Task<object> GetSettingsAsync(AppRequest req)
         {
-            return Task.FromResult((object)CreateReadResponse(_SettingsManager.Settings));
+            return Task.FromResult((object)CreateReadResponse(_SettingsManager.Settings, _SettingsManager.Filename, _Persistence));
         }
 
         /// <summary>
@@ -73,25 +78,35 @@ namespace Tablix.Server.Handlers
             {
                 Rest = request.Rest ?? existing.Rest,
                 Logging = request.Logging ?? existing.Logging,
+                Persistence = request.Persistence ?? existing.Persistence,
                 ApiKeys = apiKeys,
-                Databases = existing.Databases,
                 Chat = BuildChatSettings(existing.Chat, request.Chat)
             };
 
             _SettingsManager.UpdateSettings(updated);
-            return Task.FromResult((object)CreateReadResponse(updated));
+            return Task.FromResult((object)CreateReadResponse(updated, _SettingsManager.Filename, _Persistence));
         }
 
         #endregion
 
         #region Private-Methods
 
-        private static SettingsReadResponse CreateReadResponse(TablixSettings settings)
+        private static SettingsReadResponse CreateReadResponse(TablixSettings settings, string settingsFilename, DatabaseDriverBase persistence)
         {
+            string resolvedFilename = PersistenceBootstrapper.ResolvePersistenceFilename(settingsFilename, settings.Persistence.Filename);
             SettingsReadResponse response = new SettingsReadResponse
             {
                 Rest = settings.Rest,
                 Logging = settings.Logging,
+                Persistence = settings.Persistence,
+                PersistenceHealth = new PersistenceHealthRead
+                {
+                    Type = settings.Persistence.Type,
+                    Filename = settings.Persistence.Filename,
+                    ResolvedFilename = resolvedFilename,
+                    Healthy = persistence != null && File.Exists(resolvedFilename),
+                    Message = persistence == null ? "Persistence has not initialized." : "Persistence initialized."
+                },
                 ApiKeys = new List<string>(settings.ApiKeys),
                 Chat = CreateChatRead(settings.Chat),
                 RestartRequiredPaths = new List<string>
@@ -100,6 +115,8 @@ namespace Tablix.Server.Handlers
                     "Rest.Port",
                     "Rest.Ssl",
                     "Rest.McpPort",
+                    "Persistence.Type",
+                    "Persistence.Filename",
                     "Logging.ConsoleLogging",
                     "Logging.FileLogging",
                     "Logging.LogDirectory",
@@ -123,31 +140,11 @@ namespace Tablix.Server.Handlers
                 SystemPrompt = settings.SystemPrompt,
                 MaxContextTables = settings.MaxContextTables,
                 Tools = settings.Tools,
-                Providers = settings.Providers.Select(CreateProviderRead).ToList()
+                PromptProcessing = settings.PromptProcessing,
+                Providers = new List<ModelProviderRead>()
             };
 
             return read;
-        }
-
-        private static ModelProviderRead CreateProviderRead(ModelProviderSettings provider)
-        {
-            return new ModelProviderRead
-            {
-                Id = provider.Id,
-                Name = provider.Name,
-                Type = provider.Type,
-                Endpoint = provider.Endpoint,
-                ApiKey = null,
-                HasApiKey = !String.IsNullOrEmpty(provider.ApiKey),
-                Model = provider.Model,
-                SystemPrompt = provider.SystemPrompt,
-                Enabled = provider.Enabled,
-                DefaultStreaming = provider.DefaultStreaming,
-                Temperature = provider.Temperature,
-                TopP = provider.TopP,
-                MaxTokens = provider.MaxTokens,
-                RequestTimeoutMs = provider.RequestTimeoutMs
-            };
         }
 
         private static ChatSettings BuildChatSettings(ChatSettings existing, ChatSettingsUpdate update)
@@ -162,52 +159,10 @@ namespace Tablix.Server.Handlers
                 SystemPrompt = update.SystemPrompt,
                 MaxContextTables = update.MaxContextTables,
                 Tools = update.Tools ?? existing.Tools,
-                Providers = BuildProviders(existing.Providers, update.Providers)
+                PromptProcessing = update.PromptProcessing ?? existing.PromptProcessing
             };
 
-            if (String.IsNullOrWhiteSpace(settings.DefaultProviderId) && settings.Providers.Count > 0)
-                settings.DefaultProviderId = settings.Providers[0].Id;
-
             return settings;
-        }
-
-        private static List<ModelProviderSettings> BuildProviders(List<ModelProviderSettings> existing, List<ModelProviderUpdate> updates)
-        {
-            List<ModelProviderSettings> providers = new List<ModelProviderSettings>();
-            if (updates == null) return providers;
-
-            foreach (ModelProviderUpdate update in updates)
-            {
-                if (update == null) continue;
-
-                ModelProviderSettings previous = existing.FirstOrDefault(provider => String.Equals(provider.Id, update.Id, StringComparison.OrdinalIgnoreCase));
-                string apiKey = null;
-                if (update.ClearApiKey)
-                    apiKey = null;
-                else if (!String.IsNullOrEmpty(update.ApiKey))
-                    apiKey = update.ApiKey;
-                else if (previous != null)
-                    apiKey = previous.ApiKey;
-
-                providers.Add(new ModelProviderSettings
-                {
-                    Id = update.Id,
-                    Name = update.Name,
-                    Type = update.Type,
-                    Endpoint = update.Endpoint,
-                    ApiKey = apiKey,
-                    Model = update.Model,
-                    SystemPrompt = update.SystemPrompt,
-                    Enabled = update.Enabled,
-                    DefaultStreaming = update.DefaultStreaming,
-                    Temperature = update.Temperature,
-                    TopP = update.TopP,
-                    MaxTokens = update.MaxTokens,
-                    RequestTimeoutMs = update.RequestTimeoutMs
-                });
-            }
-
-            return providers;
         }
 
         #endregion

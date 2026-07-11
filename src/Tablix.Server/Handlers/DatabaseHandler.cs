@@ -10,6 +10,7 @@ namespace Tablix.Server.Handlers
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
     using Tablix.Core.Models;
+    using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
     using SwiftStack.Rest;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
@@ -22,6 +23,7 @@ namespace Tablix.Server.Handlers
         #region Private-Members
 
         private readonly SettingsManager _SettingsManager;
+        private readonly DatabaseDriverBase _Persistence;
         private readonly CrawlCache _CrawlCache;
         #endregion
 
@@ -31,10 +33,12 @@ namespace Tablix.Server.Handlers
         /// Instantiate.
         /// </summary>
         /// <param name="settingsManager">Settings manager.</param>
+        /// <param name="persistence">Persistence driver.</param>
         /// <param name="crawlCache">Crawl cache.</param>
-        public DatabaseHandler(SettingsManager settingsManager, CrawlCache crawlCache)
+        public DatabaseHandler(SettingsManager settingsManager, DatabaseDriverBase persistence, CrawlCache crawlCache)
         {
             _SettingsManager = settingsManager ?? throw new ArgumentNullException(nameof(settingsManager));
+            _Persistence = persistence ?? throw new ArgumentNullException(nameof(persistence));
             _CrawlCache = crawlCache ?? throw new ArgumentNullException(nameof(crawlCache));
         }
 
@@ -63,22 +67,14 @@ namespace Tablix.Server.Handlers
 
             filter = req.Http.Request.Query.Elements.Get("filter");
 
-            TablixSettings settings = _SettingsManager.Settings;
-            List<DatabaseEntry> databases = settings.Databases;
-
-            if (!String.IsNullOrEmpty(filter))
+            long totalRecords = await _Persistence.DatabaseConnections.CountAsync(filter, req.CancellationToken).ConfigureAwait(false);
+            List<DatabaseEntry> page = await _Persistence.DatabaseConnections.EnumerateAsync(maxResults, skip, filter, req.CancellationToken).ConfigureAwait(false);
+            List<DatabaseSummary> summaries = new List<DatabaseSummary>();
+            foreach (DatabaseEntry database in page)
             {
-                databases = databases.Where(d =>
-                    (d.Id != null && d.Id.Contains(filter, StringComparison.OrdinalIgnoreCase)) ||
-                    (d.DatabaseName != null && d.DatabaseName.Contains(filter, StringComparison.OrdinalIgnoreCase))
-                ).ToList();
+                DatabaseDetail detail = await GetPersistedOrCachedDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
+                summaries.Add(DatabaseSummary.From(database, detail));
             }
-
-            long totalRecords = databases.Count;
-            List<DatabaseEntry> page = databases.Skip(skip).Take(maxResults).ToList();
-            List<DatabaseSummary> summaries = page
-                .Select(d => DatabaseSummary.From(d, _CrawlCache.Get(d.Id)))
-                .ToList();
             long remaining = Math.Max(0, totalRecords - skip - page.Count);
 
             stopwatch.Stop();
@@ -105,14 +101,14 @@ namespace Tablix.Server.Handlers
         public async Task<object> GetDatabaseAsync(AppRequest req)
         {
             string id = req.Parameters["id"];
-            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
             if (entry == null)
             {
                 req.Http.Response.StatusCode = 404;
                 return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
             }
 
-            DatabaseDetail detail = _CrawlCache.Get(id);
+            DatabaseDetail detail = await GetPersistedOrCachedDetailAsync(id, req.CancellationToken).ConfigureAwait(false);
             if (detail == null)
             {
                 detail = new DatabaseDetail
@@ -155,7 +151,7 @@ namespace Tablix.Server.Handlers
         public async Task<object> ListTablesAsync(AppRequest req)
         {
             string id = req.Parameters["id"];
-            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
             if (entry == null)
             {
                 req.Http.Response.StatusCode = 404;
@@ -180,7 +176,7 @@ namespace Tablix.Server.Handlers
         public async Task<object> ListRelationshipsAsync(AppRequest req)
         {
             string id = req.Parameters["id"];
-            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
             if (entry == null)
             {
                 req.Http.Response.StatusCode = 404;
@@ -206,6 +202,96 @@ namespace Tablix.Server.Handlers
         }
 
         /// <summary>
+        /// GET /v1/database/{id}/table-context - list table contexts for a database.
+        /// </summary>
+        public async Task<object> ListTableContextsAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+            }
+
+            List<TableContextRead> contexts = await _Persistence.TableContexts.EnumerateAsync(id, req.CancellationToken).ConfigureAwait(false);
+            return contexts;
+        }
+
+        /// <summary>
+        /// GET /v1/database/{id}/table-context/{tableId} - read table context.
+        /// </summary>
+        public async Task<object> GetTableContextAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            string tableId = req.Parameters["tableId"];
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+            }
+
+            TableContextRead context = await _Persistence.TableContexts.ReadAsync(id, tableId, req.CancellationToken).ConfigureAwait(false);
+            if (context == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Table context '" + tableId + "' not found.");
+            }
+
+            return context;
+        }
+
+        /// <summary>
+        /// PUT /v1/database/{id}/table-context/{tableId} - update table context.
+        /// </summary>
+        public async Task<object> UpdateTableContextAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            string tableId = req.Parameters["tableId"];
+            TableContextUpdateRequest request = req.GetData<TableContextUpdateRequest>();
+            if (request == null)
+            {
+                req.Http.Response.StatusCode = 400;
+                return new ApiErrorResponse(ApiErrorEnum.BadRequest, "Request body is required.");
+            }
+
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+            }
+
+            DatabaseDetail detail = await GetPersistedOrCachedDetailAsync(id, req.CancellationToken).ConfigureAwait(false);
+            TableDetail table = FindTable(detail, tableId);
+            if (table == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Table '" + tableId + "' not found in persisted crawl metadata.");
+            }
+
+            try
+            {
+                TableContextRead updated = await _Persistence.TableContexts.UpsertAsync(
+                    id,
+                    tableId,
+                    request.Context,
+                    request.Mode,
+                    request.Source,
+                    req.CancellationToken).ConfigureAwait(false);
+
+                table.Context = updated.Context;
+                return updated;
+            }
+            catch (ArgumentException ex)
+            {
+                req.Http.Response.StatusCode = 400;
+                return new ApiErrorResponse(ApiErrorEnum.BadRequest, ex.Message);
+            }
+        }
+
+        /// <summary>
         /// POST /v1/database — add a new database entry.
         /// </summary>
         public async Task<object> AddDatabaseAsync(AppRequest req)
@@ -219,13 +305,13 @@ namespace Tablix.Server.Handlers
 
             try
             {
-                _SettingsManager.AddDatabase(entry);
+                DatabaseEntry created = await _Persistence.DatabaseConnections.CreateAsync(entry, req.CancellationToken).ConfigureAwait(false);
 
                 // Trigger an initial crawl so the database is immediately usable
-                _ = _CrawlCache.CrawlOneAsync(entry);
+                _ = CrawlAndPersistAsync(created, req.CancellationToken);
 
                 req.Http.Response.StatusCode = 201;
-                return DatabaseSummary.From(entry);
+                return DatabaseSummary.From(created);
             }
             catch (InvalidOperationException ex)
             {
@@ -251,7 +337,7 @@ namespace Tablix.Server.Handlers
 
             try
             {
-                DatabaseEntry existing = _SettingsManager.GetDatabase(id);
+                DatabaseEntry existing = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
                 if (existing == null)
                 {
                     req.Http.Response.StatusCode = 404;
@@ -264,18 +350,21 @@ namespace Tablix.Server.Handlers
                 if (String.IsNullOrEmpty(entry.Password))
                     entry.Password = existing.Password;
 
-                _SettingsManager.UpdateDatabase(entry);
+                if (entry.Context == null)
+                    entry.Context = existing.Context;
+
+                DatabaseEntry updated = await _Persistence.DatabaseConnections.UpdateAsync(entry, true, req.CancellationToken).ConfigureAwait(false);
 
                 // Update the cached crawl detail so the dashboard reflects changes immediately
                 DatabaseDetail cached = _CrawlCache.Get(id);
                 if (cached != null)
                 {
-                    cached.Context = entry.Context;
-                    cached.DatabaseName = entry.DatabaseName ?? entry.Filename;
-                    cached.Schema = entry.Schema;
+                    cached.Context = updated.Context;
+                    cached.DatabaseName = updated.DatabaseName ?? updated.Filename;
+                    cached.Schema = updated.Schema;
                 }
 
-                return DatabaseSummary.From(entry, cached);
+                return DatabaseSummary.From(updated, cached);
             }
             catch (KeyNotFoundException ex)
             {
@@ -287,21 +376,21 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database/{id}/context - update only the user-supplied database context.
         /// </summary>
-        public Task<object> UpdateDatabaseContextAsync(AppRequest req)
+        public async Task<object> UpdateDatabaseContextAsync(AppRequest req)
         {
             string id = req.Parameters["id"];
             ContextUpdateRequest request = req.GetData<ContextUpdateRequest>();
             if (request == null)
             {
                 req.Http.Response.StatusCode = 400;
-                return Task.FromResult((object)new ApiErrorResponse(ApiErrorEnum.BadRequest, "Request body is required."));
+                return new ApiErrorResponse(ApiErrorEnum.BadRequest, "Request body is required.");
             }
 
-            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
             if (entry == null)
             {
                 req.Http.Response.StatusCode = 404;
-                return Task.FromResult((object)new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found."));
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
             }
 
             string mode = String.IsNullOrWhiteSpace(request.Mode) ? "replace" : request.Mode.Trim();
@@ -319,16 +408,48 @@ namespace Tablix.Server.Handlers
             else
             {
                 req.Http.Response.StatusCode = 400;
-                return Task.FromResult((object)new ApiErrorResponse(ApiErrorEnum.BadRequest, "Unsupported context update mode '" + request.Mode + "'."));
+                return new ApiErrorResponse(ApiErrorEnum.BadRequest, "Unsupported context update mode '" + request.Mode + "'.");
             }
 
-            _SettingsManager.UpdateDatabase(entry);
+            string context = await _Persistence.DatabaseContexts.UpsertAsync(id, request.Context, mode, "user", req.CancellationToken).ConfigureAwait(false);
+            entry.Context = context;
 
             DatabaseDetail cached = _CrawlCache.Get(id);
             if (cached != null)
-                cached.Context = entry.Context;
+                cached.Context = context;
 
-            return Task.FromResult((object)new { Success = true, DatabaseId = id, Context = entry.Context, Mode = mode.ToLowerInvariant() });
+            return new { Success = true, DatabaseId = id, Context = context, Mode = mode.ToLowerInvariant() };
+        }
+
+        /// <summary>
+        /// POST /v1/database/test - test unsaved database settings.
+        /// </summary>
+        public async Task<object> TestDatabaseRequestAsync(AppRequest req)
+        {
+            DatabaseConnectivityTestRequest request = req.GetData<DatabaseConnectivityTestRequest>();
+            if (request == null || request.Database == null)
+            {
+                req.Http.Response.StatusCode = 400;
+                return new ApiErrorResponse(ApiErrorEnum.BadRequest, "Database settings are required.");
+            }
+
+            return await TestDatabaseAsync(request.Database, req.CancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// POST /v1/database/{id}/test - test saved database settings.
+        /// </summary>
+        public async Task<object> TestSavedDatabaseAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+            }
+
+            return await TestDatabaseAsync(entry, req.CancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -340,7 +461,9 @@ namespace Tablix.Server.Handlers
 
             try
             {
-                _SettingsManager.DeleteDatabase(id);
+                bool deleted = await _Persistence.DatabaseConnections.DeleteAsync(id, req.CancellationToken).ConfigureAwait(false);
+                if (!deleted)
+                    throw new KeyNotFoundException("Database with ID '" + id + "' not found.");
                 _CrawlCache.Remove(id);
                 req.Http.Response.StatusCode = 204;
                 return null;
@@ -358,7 +481,7 @@ namespace Tablix.Server.Handlers
         public async Task<object> CrawlDatabaseAsync(AppRequest req)
         {
             string id = req.Parameters["id"];
-            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
             if (entry == null)
             {
                 req.Http.Response.StatusCode = 404;
@@ -366,6 +489,7 @@ namespace Tablix.Server.Handlers
             }
 
             DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+            await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, req.CancellationToken).ConfigureAwait(false);
             return detail;
         }
 
@@ -375,7 +499,7 @@ namespace Tablix.Server.Handlers
         public async Task<object> CrawlDatabaseStreamAsync(AppRequest req)
         {
             string id = req.Parameters["id"];
-            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
             if (entry == null)
             {
                 req.Http.Response.StatusCode = 404;
@@ -424,6 +548,7 @@ namespace Tablix.Server.Handlers
                 {
                     await SendCrawlEventAsync(req, CreateCrawlProgressEvent(id, update, stopwatch), false).ConfigureAwait(false);
                 }).ConfigureAwait(false);
+                await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, req.CancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
 
                 await SendCrawlEventAsync(req, new CrawlProgressEvent
@@ -466,7 +591,7 @@ namespace Tablix.Server.Handlers
         public async Task<object> ExecuteQueryAsync(AppRequest req)
         {
             string id = req.Parameters["id"];
-            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
             if (entry == null)
             {
                 req.Http.Response.StatusCode = 404;
@@ -505,9 +630,82 @@ namespace Tablix.Server.Handlers
         {
             DatabaseDetail detail = _CrawlCache.Get(entry.Id);
             if (detail == null)
+                detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(entry.Id).ConfigureAwait(false);
+            if (detail == null)
+            {
                 detail = await _CrawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+                await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail).ConfigureAwait(false);
+            }
 
             return detail;
+        }
+
+        private async Task<DatabaseDetail> GetPersistedOrCachedDetailAsync(string databaseId, CancellationToken token)
+        {
+            DatabaseDetail detail = _CrawlCache.Get(databaseId);
+            if (detail != null) return detail;
+            return await _Persistence.DatabaseMetadata.ReadDetailAsync(databaseId, token).ConfigureAwait(false);
+        }
+
+        private async Task CrawlAndPersistAsync(DatabaseEntry entry, CancellationToken token)
+        {
+            DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+            await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, token).ConfigureAwait(false);
+        }
+
+        private static TableDetail FindTable(DatabaseDetail detail, string tableId)
+        {
+            if (detail == null || detail.Tables == null || String.IsNullOrWhiteSpace(tableId)) return null;
+
+            foreach (TableDetail table in detail.Tables)
+            {
+                if (String.Equals(table.TableId, tableId, StringComparison.OrdinalIgnoreCase))
+                    return table;
+            }
+
+            return null;
+        }
+
+        private static async Task<DatabaseConnectivityTestResponse> TestDatabaseAsync(DatabaseEntry entry, System.Threading.CancellationToken token)
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            DatabaseConnectivityTestResponse result = new DatabaseConnectivityTestResponse
+            {
+                DatabaseId = entry.Id
+            };
+
+            try
+            {
+                IDatabaseCrawler crawler = CrawlerFactory.Create(entry.Type);
+                await crawler.TestConnectionAsync(entry, token).ConfigureAwait(false);
+                stopwatch.Stop();
+                result.Success = true;
+                result.TotalMs = stopwatch.Elapsed.TotalMilliseconds;
+                result.Message = "Database connection succeeded.";
+                return result;
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                result.Success = false;
+                result.TotalMs = stopwatch.Elapsed.TotalMilliseconds;
+                result.Error = SanitizeDatabaseError(ex.Message, entry);
+                return result;
+            }
+        }
+
+        private static string SanitizeDatabaseError(string message, DatabaseEntry entry)
+        {
+            string sanitized = message ?? String.Empty;
+            if (entry != null)
+            {
+                if (!String.IsNullOrEmpty(entry.User))
+                    sanitized = sanitized.Replace(entry.User, "[redacted]", StringComparison.Ordinal);
+                if (!String.IsNullOrEmpty(entry.Password))
+                    sanitized = sanitized.Replace(entry.Password, "[redacted]", StringComparison.Ordinal);
+            }
+
+            return sanitized;
         }
 
         private static void ReadEnumerationQuery(

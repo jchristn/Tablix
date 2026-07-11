@@ -5,7 +5,6 @@ namespace Test.Shared
     using System.IO;
     using System.Linq;
     using System.Text.RegularExpressions;
-    using System.Text.Json;
     using System.Threading;
     using System.Threading.Tasks;
     using Microsoft.Data.Sqlite;
@@ -13,6 +12,8 @@ namespace Test.Shared
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
     using Tablix.Core.Models;
+    using Tablix.Core.Persistence;
+    using Tablix.Core.Persistence.Sqlite;
     using Tablix.Core.Settings;
     using Tablix.Server;
     using Tablix.Server.Mcp;
@@ -368,12 +369,13 @@ namespace Test.Shared
                         NotNull(settings.Rest, "Rest should not be null.");
                         return Task.CompletedTask;
                     }),
-                    Case("SettingsClamping", "DatabasesNull", "TablixSettings Databases null defaults to empty list", ct =>
+                    Case("SettingsClamping", "PersistenceNullIgnored", "TablixSettings Persistence null assignment is ignored", ct =>
                     {
                         TablixSettings settings = new TablixSettings();
-                        settings.Databases = null;
-                        NotNull(settings.Databases, "Databases should not be null.");
-                        Equal(0, settings.Databases.Count, "Databases should be empty.");
+                        settings.Persistence = null;
+                        NotNull(settings.Persistence, "Persistence should not be null.");
+                        Equal(TablixPersistenceDatabaseTypeEnum.Sqlite, settings.Persistence.Type, "Persistence type mismatch.");
+                        Equal("tablix.db", settings.Persistence.Filename, "Persistence filename mismatch.");
                         return Task.CompletedTask;
                     }),
                     Case("SettingsClamping", "ApiKeysNull", "TablixSettings ApiKeys null defaults to empty list", ct =>
@@ -435,7 +437,8 @@ namespace Test.Shared
                         Equal(original.Logging.LogFilename, restored.Logging.LogFilename, "Log filename mismatch.");
                         Equal(original.Logging.MinimumSeverity, restored.Logging.MinimumSeverity, "Minimum severity mismatch.");
                         Equal(original.Logging.EnableColors, restored.Logging.EnableColors, "Enable colors mismatch.");
-                        Equal(original.Databases.Count, restored.Databases.Count, "Database count mismatch.");
+                        Equal(original.Persistence.Type, restored.Persistence.Type, "Persistence type mismatch.");
+                        Equal(original.Persistence.Filename, restored.Persistence.Filename, "Persistence filename mismatch.");
                         Equal(original.ApiKeys.Count, restored.ApiKeys.Count, "API key count mismatch.");
                         NotNull(restored.Chat, "Chat settings should not be null.");
                         Equal(original.Chat.Enabled, restored.Chat.Enabled, "Chat enabled mismatch.");
@@ -443,8 +446,8 @@ namespace Test.Shared
                         Equal(original.Chat.DefaultStreaming, restored.Chat.DefaultStreaming, "Default streaming mismatch.");
                         Equal(original.Chat.MaxContextTables, restored.Chat.MaxContextTables, "Max context tables mismatch.");
                         Equal(original.Chat.Tools.MaxToolIterations, restored.Chat.Tools.MaxToolIterations, "Max tool iterations mismatch.");
-                        Equal(original.Chat.Providers.Count, restored.Chat.Providers.Count, "Provider count mismatch.");
-                        Equal(original.Chat.Providers[0].Type, restored.Chat.Providers[0].Type, "Provider type mismatch.");
+                        Equal(original.Chat.PromptProcessing.PreferNativeToolCalls, restored.Chat.PromptProcessing.PreferNativeToolCalls, "Prefer native tools mismatch.");
+                        Equal(original.Chat.PromptProcessing.FallbackWhenNativeToolNotCalled, restored.Chat.PromptProcessing.FallbackWhenNativeToolNotCalled, "Fallback setting mismatch.");
                         return Task.CompletedTask;
                     }),
                     Case("SettingsSerialization", "PascalCaseProperties", "Serialization uses PascalCase property names", ct =>
@@ -452,13 +455,14 @@ namespace Test.Shared
                         string json = Serializer.SerializeJson(new TablixSettings());
                         Contains(json, "Rest", "Expected Rest property.");
                         Contains(json, "Logging", "Expected Logging property.");
+                        Contains(json, "Persistence", "Expected Persistence property.");
                         Contains(json, "Chat", "Expected Chat property.");
-                        Contains(json, "Providers", "Expected Providers property.");
-                        Contains(json, "Databases", "Expected Databases property.");
+                        DoesNotContain(json, "Providers", "Providers should not be serialized in tablix.json.");
+                        DoesNotContain(json, "Databases", "Databases should not be serialized in tablix.json.");
                         Contains(json, "ApiKeys", "Expected ApiKeys property.");
                         return Task.CompletedTask;
                     }),
-                    Case("SettingsSerialization", "DefaultChatProviders", "Default settings include supported chat provider templates", ct =>
+                    Case("SettingsSerialization", "DefaultChatPromptProcessing", "Default settings include chat prompt processing", ct =>
                     {
                         TablixSettings settings = new TablixSettings();
 
@@ -469,12 +473,10 @@ namespace Test.Shared
                         Contains(settings.Chat.SystemPrompt, "one permitted SQL statement", "Default chat prompt should give concise query tool usage guidance.");
                         Contains(settings.Chat.SystemPrompt, "bad or unknown column", "Default chat prompt should handle unknown column failures.");
                         Contains(settings.Chat.SystemPrompt, "column type mismatch", "Default chat prompt should handle column type failures.");
-                        Contains(settings.Chat.SystemPrompt, "update the database context", "Default chat prompt should correct stale saved context.");
-                        True(settings.Chat.Providers.Any(provider => provider.Type == ModelProviderTypeEnum.Ollama), "Expected Ollama provider.");
-                        True(settings.Chat.Providers.Any(provider => provider.Type == ModelProviderTypeEnum.OpenAI), "Expected OpenAI provider.");
-                        True(settings.Chat.Providers.Any(provider => provider.Type == ModelProviderTypeEnum.OpenAICompatible), "Expected OpenAI-compatible provider.");
-                        True(settings.Chat.Providers.Any(provider => provider.Type == ModelProviderTypeEnum.Gemini), "Expected Gemini provider.");
-                        True(settings.Chat.Providers.Any(provider => String.Equals(provider.Id, settings.Chat.DefaultProviderId, StringComparison.OrdinalIgnoreCase)), "Default provider ID should reference a configured provider.");
+                        Contains(settings.Chat.SystemPrompt, "update database context", "Default chat prompt should correct stale database context.");
+                        Contains(settings.Chat.SystemPrompt, "update table context", "Default chat prompt should correct stale table context.");
+                        True(settings.Chat.PromptProcessing.PreferNativeToolCalls, "Prompt processing should prefer native tools by default.");
+                        True(settings.Chat.PromptProcessing.FallbackWhenNativeToolNotCalled, "Prompt processing should enable server fallback by default.");
                         return Task.CompletedTask;
                     }),
                     Case("SettingsSerialization", "NullPropertiesOmitted", "Null properties are omitted from JSON", ct =>
@@ -538,14 +540,14 @@ namespace Test.Shared
         }
 
         /// <summary>
-        /// Settings manager integration tests.
+        /// Settings manager and persistence integration tests.
         /// </summary>
         /// <returns>Suite descriptor.</returns>
         public static TestSuiteDescriptor SettingsManagerSuite()
         {
             return new TestSuiteDescriptor(
-                suiteId: "SettingsManager",
-                displayName: "Settings Manager",
+                suiteId: "Persistence",
+                displayName: "Persistence",
                 cases: new List<TestCaseDescriptor>
                 {
                     Case("SettingsManager", "CreatesDefaultSettings", "Constructor creates default settings", ct =>
@@ -558,96 +560,79 @@ namespace Test.Shared
                         });
                         return Task.CompletedTask;
                     }),
-                    Case("SettingsManager", "AddThenGet", "AddDatabase then GetDatabase returns entry", ct =>
+                    Case("Persistence", "DatabaseCreateRead", "Persistence creates and reads database entries", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        await WithTempPersistenceAsync(async driver =>
                         {
-                            SettingsManager manager = new SettingsManager(filename);
-                            manager.AddDatabase(new DatabaseEntry { Id = "test_db_1" });
-                            DatabaseEntry retrieved = manager.GetDatabase("test_db_1");
+                            DatabaseEntry created = await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "test_db_1" }, ct).ConfigureAwait(false);
+                            DatabaseEntry retrieved = await driver.DatabaseConnections.ReadAsync(created.Id, ct).ConfigureAwait(false);
                             NotNull(retrieved, "Database should be found.");
                             Equal("test_db_1", retrieved.Id, "Database ID mismatch.");
-                        });
-                        return Task.CompletedTask;
+                        }).ConfigureAwait(false);
                     }),
-                    Case("SettingsManager", "UpdateModifies", "UpdateDatabase modifies existing entry", ct =>
+                    Case("Persistence", "DatabaseUpdate", "Persistence updates database entries", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        await WithTempPersistenceAsync(async driver =>
                         {
-                            SettingsManager manager = new SettingsManager(filename);
                             DatabaseEntry entry = new DatabaseEntry { Id = "update_db", DatabaseName = "OriginalName" };
-                            manager.AddDatabase(entry);
+                            await driver.DatabaseConnections.CreateAsync(entry, ct).ConfigureAwait(false);
                             DatabaseEntry updated = new DatabaseEntry { Id = "update_db", DatabaseName = "UpdatedName" };
-                            manager.UpdateDatabase(updated);
-                            DatabaseEntry retrieved = manager.GetDatabase("update_db");
+                            await driver.DatabaseConnections.UpdateAsync(updated, true, ct).ConfigureAwait(false);
+                            DatabaseEntry retrieved = await driver.DatabaseConnections.ReadAsync("update_db", ct).ConfigureAwait(false);
                             Equal("UpdatedName", retrieved.DatabaseName, "DatabaseName mismatch.");
-                        });
-                        return Task.CompletedTask;
+                        }).ConfigureAwait(false);
                     }),
-                    Case("SettingsManager", "DeleteRemoves", "DeleteDatabase removes entry", ct =>
+                    Case("Persistence", "DatabaseDelete", "Persistence deletes database entries", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        await WithTempPersistenceAsync(async driver =>
                         {
-                            SettingsManager manager = new SettingsManager(filename);
-                            manager.AddDatabase(new DatabaseEntry { Id = "delete_db" });
-                            manager.DeleteDatabase("delete_db");
-                            Null(manager.GetDatabase("delete_db"), "Database should be deleted.");
-                        });
-                        return Task.CompletedTask;
+                            await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "delete_db" }, ct).ConfigureAwait(false);
+                            await driver.DatabaseConnections.DeleteAsync("delete_db", ct).ConfigureAwait(false);
+                            Null(await driver.DatabaseConnections.ReadAsync("delete_db", ct).ConfigureAwait(false), "Database should be deleted.");
+                        }).ConfigureAwait(false);
                     }),
-                    Case("SettingsManager", "DuplicateThrows", "Duplicate AddDatabase throws InvalidOperationException", ct =>
+                    Case("Persistence", "DuplicateDatabaseThrows", "Duplicate database create throws", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        await WithTempPersistenceAsync(async driver =>
                         {
-                            SettingsManager manager = new SettingsManager(filename);
-                            manager.AddDatabase(new DatabaseEntry { Id = "dup_db" });
-                            Throws<InvalidOperationException>(() => manager.AddDatabase(new DatabaseEntry { Id = "dup_db" }));
-                        });
-                        return Task.CompletedTask;
+                            await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "dup_db" }, ct).ConfigureAwait(false);
+                            await ThrowsAnyAsync(async () => await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "dup_db" }, ct).ConfigureAwait(false)).ConfigureAwait(false);
+                        }).ConfigureAwait(false);
                     }),
-                    Case("SettingsManager", "DeleteUnknownThrows", "Deleting unknown database throws KeyNotFoundException", ct =>
+                    Case("Persistence", "DeleteUnknownReturnsFalse", "Deleting unknown database returns false", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        await WithTempPersistenceAsync(async driver =>
                         {
-                            SettingsManager manager = new SettingsManager(filename);
-                            Throws<KeyNotFoundException>(() => manager.DeleteDatabase("nonexistent_db"));
-                        });
-                        return Task.CompletedTask;
+                            False(await driver.DatabaseConnections.DeleteAsync("nonexistent_db", ct).ConfigureAwait(false), "Unknown delete should return false.");
+                        }).ConfigureAwait(false);
                     }),
-                    Case("SettingsManager", "GetDatabaseCaseInsensitive", "GetDatabase is case-insensitive", ct =>
+                    Case("Persistence", "DatabaseReadCaseInsensitive", "Database reads are case-insensitive", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        await WithTempPersistenceAsync(async driver =>
                         {
-                            SettingsManager manager = new SettingsManager(filename);
-                            manager.AddDatabase(new DatabaseEntry { Id = "Case_Db" });
-                            NotNull(manager.GetDatabase("case_db"), "Database should be found case-insensitively.");
-                        });
-                        return Task.CompletedTask;
+                            await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "Case_Db" }, ct).ConfigureAwait(false);
+                            NotNull(await driver.DatabaseConnections.ReadAsync("case_db", ct).ConfigureAwait(false), "Database should be found case-insensitively.");
+                        }).ConfigureAwait(false);
                     }),
-                    Case("SettingsManager", "DeleteDatabaseCaseInsensitive", "DeleteDatabase is case-insensitive", ct =>
+                    Case("Persistence", "PersistsAcrossDrivers", "Persisted database is visible to a new driver", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        string filename = GetTempDatabaseFilename();
+                        try
                         {
-                            SettingsManager manager = new SettingsManager(filename);
-                            manager.AddDatabase(new DatabaseEntry { Id = "Delete_Case_Db" });
-                            manager.DeleteDatabase("delete_case_db");
-                            Null(manager.GetDatabase("Delete_Case_Db"), "Database should be deleted case-insensitively.");
-                        });
-                        return Task.CompletedTask;
-                    }),
-                    Case("SettingsManager", "PersistenceAcrossManagers", "Saved settings are visible to a new manager", ct =>
-                    {
-                        WithTempSettingsFile(filename =>
-                        {
-                            SettingsManager first = new SettingsManager(filename);
-                            first.AddDatabase(new DatabaseEntry { Id = "persisted_db", DatabaseName = "Persisted" });
+                            SqliteDatabaseDriver first = new SqliteDatabaseDriver(filename);
+                            await first.InitializeAsync(ct).ConfigureAwait(false);
+                            await first.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "persisted_db", DatabaseName = "Persisted" }, ct).ConfigureAwait(false);
 
-                            SettingsManager second = new SettingsManager(filename);
-                            DatabaseEntry retrieved = second.GetDatabase("persisted_db");
+                            SqliteDatabaseDriver second = new SqliteDatabaseDriver(filename);
+                            await second.InitializeAsync(ct).ConfigureAwait(false);
+                            DatabaseEntry retrieved = await second.DatabaseConnections.ReadAsync("persisted_db", ct).ConfigureAwait(false);
                             NotNull(retrieved, "Persisted database should be found.");
                             Equal("Persisted", retrieved.DatabaseName, "Persisted database name mismatch.");
-                        });
-                        return Task.CompletedTask;
+                        }
+                        finally
+                        {
+                            TryDelete(filename);
+                        }
                     }),
                     Case("SettingsManager", "ReloadReadsDisk", "Reload reads updated settings from disk", ct =>
                     {
@@ -655,49 +640,34 @@ namespace Test.Shared
                         {
                             SettingsManager manager = new SettingsManager(filename);
                             TablixSettings settings = manager.Settings;
-                            settings.Databases.Add(new DatabaseEntry { Id = "disk_db", DatabaseName = "Disk" });
+                            settings.Persistence.Filename = "custom.db";
                             File.WriteAllText(filename, Serializer.SerializeJson(settings), System.Text.Encoding.UTF8);
 
                             manager.Reload();
-                            NotNull(manager.GetDatabase("disk_db"), "Reloaded database should be found.");
+                            Equal("custom.db", manager.Settings.Persistence.Filename, "Reloaded persistence filename mismatch.");
                         });
                         return Task.CompletedTask;
                     }),
-                    Case("SettingsManager", "AddNullThrows", "AddDatabase null throws ArgumentNullException", ct =>
+                    Case("Persistence", "CreateNullThrows", "Create database null throws ArgumentNullException", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        await WithTempPersistenceAsync(async driver =>
                         {
-                            SettingsManager manager = new SettingsManager(filename);
-                            Throws<ArgumentNullException>(() => manager.AddDatabase(null));
-                        });
-                        return Task.CompletedTask;
+                            await ThrowsAsync<ArgumentNullException>(async () => await driver.DatabaseConnections.CreateAsync(null, ct).ConfigureAwait(false)).ConfigureAwait(false);
+                        }).ConfigureAwait(false);
                     }),
-                    Case("SettingsManager", "UpdateNullThrows", "UpdateDatabase null throws ArgumentNullException", ct =>
+                    Case("Persistence", "DeleteNullThrows", "Delete database null throws ArgumentNullException", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        await WithTempPersistenceAsync(async driver =>
                         {
-                            SettingsManager manager = new SettingsManager(filename);
-                            Throws<ArgumentNullException>(() => manager.UpdateDatabase(null));
-                        });
-                        return Task.CompletedTask;
+                            await ThrowsAsync<ArgumentNullException>(async () => await driver.DatabaseConnections.DeleteAsync(null, ct).ConfigureAwait(false)).ConfigureAwait(false);
+                        }).ConfigureAwait(false);
                     }),
-                    Case("SettingsManager", "DeleteNullThrows", "DeleteDatabase null throws ArgumentNullException", ct =>
+                    Case("Persistence", "UpdateUnknownThrows", "Update database unknown ID throws KeyNotFoundException", async ct =>
                     {
-                        WithTempSettingsFile(filename =>
+                        await WithTempPersistenceAsync(async driver =>
                         {
-                            SettingsManager manager = new SettingsManager(filename);
-                            Throws<ArgumentNullException>(() => manager.DeleteDatabase(null));
-                        });
-                        return Task.CompletedTask;
-                    }),
-                    Case("SettingsManager", "UpdateUnknownThrows", "UpdateDatabase unknown ID throws KeyNotFoundException", ct =>
-                    {
-                        WithTempSettingsFile(filename =>
-                        {
-                            SettingsManager manager = new SettingsManager(filename);
-                            Throws<KeyNotFoundException>(() => manager.UpdateDatabase(new DatabaseEntry { Id = "missing_db" }));
-                        });
-                        return Task.CompletedTask;
+                            await ThrowsAsync<KeyNotFoundException>(async () => await driver.DatabaseConnections.UpdateAsync(new DatabaseEntry { Id = "missing_db" }, true, ct).ConfigureAwait(false)).ConfigureAwait(false);
+                        }).ConfigureAwait(false);
                     })
                 });
         }
@@ -1175,12 +1145,20 @@ namespace Test.Shared
                             Endpoint = "https://api.openai.com",
                             ApiKey = "provider-secret-key",
                             Model = "gpt-4o-mini",
-                            Enabled = true
+                            Enabled = true,
+                            SupportsNativeToolCalls = true,
+                            UseNativeToolCalls = true,
+                            SupportsStrictJson = true,
+                            ToolCapabilityNote = "Native tools supported."
                         };
 
                         ModelProviderSummary summary = ModelProviderSummary.From(provider);
                         string json = Serializer.SerializeJson(summary, false);
                         True(summary.HasApiKey, "HasApiKey should indicate configured key.");
+                        True(summary.SupportsNativeToolCalls, "Tool support should be exposed.");
+                        True(summary.UseNativeToolCalls, "Native tool usage should be exposed.");
+                        True(summary.SupportsStrictJson, "Strict JSON support should be exposed.");
+                        Contains(json, "Native tools supported.", "Capability note should serialize.");
                         DoesNotContain(json, "provider-secret-key", "Provider summary should not expose API key.");
                         DoesNotContain(json, "\"ApiKey\"", "Provider summary should not expose ApiKey field.");
                         return Task.CompletedTask;
@@ -1233,12 +1211,15 @@ namespace Test.Shared
                                 {
                                     Id = "tool_1",
                                     Name = "tablix_execute_query",
+                                    Phase = "native",
                                     Arguments = "{\"Query\":\"SELECT COUNT(*) FROM users\"}",
                                     Result = "{\"RowsReturned\":1}",
                                     Success = true,
                                     TotalMs = 12
                                 }
-                            }
+                            },
+                            ExecutionPath = "native_tool_calls",
+                            CapabilityNotice = "Native tool calls are enabled."
                         };
 
                         string json = Serializer.SerializeJson(result, false);
@@ -1248,6 +1229,9 @@ namespace Test.Shared
                         Contains(json, "\"OutputTokens\":20", "Output tokens should serialize.");
                         Contains(json, "\"TotalTokens\":120", "Total tokens should serialize.");
                         Contains(json, "\"ToolCalls\"", "Tool calls should serialize.");
+                        Contains(json, "\"ExecutionPath\":\"native_tool_calls\"", "Execution path should serialize.");
+                        Contains(json, "\"CapabilityNotice\":\"Native tool calls are enabled.\"", "Capability notice should serialize.");
+                        Contains(json, "\"Phase\":\"native\"", "Tool phase should serialize.");
                         Contains(json, "tablix_execute_query", "Tool name should serialize.");
                         return Task.CompletedTask;
                     }),
@@ -1327,6 +1311,47 @@ namespace Test.Shared
                         Contains(requestJson, "\"ProviderId\":\"provider_ollama_local\"", "Provider ID should serialize.");
                         Contains(requestJson, "\"Prompt\":\"Build concise context.\"", "Prompt should serialize.");
                         Contains(responseJson, "\"Context\":\"Generated context.\"", "Context should serialize.");
+                        Contains(responseJson, "\"Telemetry\"", "Telemetry should serialize.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("ModelGuards", "BuildTableContextModelsSerialize", "Build table context request and response serialize", ct =>
+                    {
+                        BuildTableContextRequest request = new BuildTableContextRequest
+                        {
+                            ProviderId = "provider_ollama_local",
+                            Prompt = "Build concise table context.",
+                            TableIds = new List<string> { "tbl_sample_users" }
+                        };
+
+                        BuildTableContextResponse response = new BuildTableContextResponse
+                        {
+                            Success = true,
+                            DatabaseId = "db_sample_sqlite",
+                            ProviderId = "provider_ollama_local",
+                            Model = "gemma3:4b",
+                            Objects = new List<TableContextRead>
+                            {
+                                new TableContextRead
+                                {
+                                    DatabaseId = "db_sample_sqlite",
+                                    TableId = "tbl_sample_users",
+                                    TableName = "users",
+                                    Context = "Generated table context."
+                                }
+                            },
+                            Telemetry = new ChatTelemetry
+                            {
+                                InputTokens = 11,
+                                OutputTokens = 21,
+                                TotalTokens = 32
+                            }
+                        };
+
+                        string requestJson = Serializer.SerializeJson(request, false);
+                        string responseJson = Serializer.SerializeJson(response, false);
+                        Contains(requestJson, "\"TableIds\":[\"tbl_sample_users\"]", "Table IDs should serialize.");
+                        Contains(responseJson, "\"Objects\"", "Generated table contexts should serialize.");
+                        Contains(responseJson, "\"Context\":\"Generated table context.\"", "Table context should serialize.");
                         Contains(responseJson, "\"Telemetry\"", "Telemetry should serialize.");
                         return Task.CompletedTask;
                     }),
@@ -1469,38 +1494,42 @@ namespace Test.Shared
                 {
                     Case("McpToolBehavior", "RegistersExpectedTools", "MCP registers all expected tools", async ct =>
                     {
-                        await WithTempSettingsManagerAsync(async manager =>
+                        await WithTempPersistenceAsync(async persistence =>
                         {
-                            Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                            Equal(7, tools.Count, "Tool count mismatch.");
+                            Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                            Equal(11, tools.Count, "Tool count mismatch.");
                             True(tools.ContainsKey("tablix_discover_databases"), "discover databases missing.");
                             True(tools.ContainsKey("tablix_discover_database"), "discover database missing.");
                             True(tools.ContainsKey("tablix_list_tables"), "list tables missing.");
                             True(tools.ContainsKey("tablix_discover_table"), "discover table missing.");
                             True(tools.ContainsKey("tablix_list_relationships"), "list relationships missing.");
                             True(tools.ContainsKey("tablix_execute_query"), "execute query missing.");
+                            True(tools.ContainsKey("tablix_get_database_context"), "get database context missing.");
+                            True(tools.ContainsKey("tablix_get_table_context"), "get table context missing.");
                             True(tools.ContainsKey("tablix_update_context"), "update context missing.");
+                            True(tools.ContainsKey("tablix_update_database_context"), "update database context missing.");
+                            True(tools.ContainsKey("tablix_update_table_context"), "update table context missing.");
                             await Task.CompletedTask.ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     }),
                     Case("McpToolBehavior", "DiscoverDatabasesPaginates", "MCP discover databases paginates", async ct =>
                     {
-                        await WithTempSettingsManagerAsync(async manager =>
+                        await WithTempPersistenceAsync(async persistence =>
                         {
-                            manager.AddDatabase(new DatabaseEntry { Id = "alpha_db", Name = "Alpha" });
-                            manager.AddDatabase(new DatabaseEntry { Id = "beta_db", Name = "Beta" });
-                            Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                            JsonElement result = ToJsonElement(await tools["tablix_discover_databases"](ParseArgs("{\"maxResults\":2,\"skip\":0}")).ConfigureAwait(false));
-                            Equal(2, result.GetProperty("Objects").GetArrayLength(), "Page count mismatch.");
-                            False(result.GetProperty("EndOfResults").GetBoolean(), "EndOfResults should be false.");
-                            Equal(2, result.GetProperty("NextSkip").GetInt32(), "NextSkip mismatch.");
+                            await persistence.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "alpha_db", Name = "Alpha" }, ct).ConfigureAwait(false);
+                            await persistence.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "beta_db", Name = "Beta" }, ct).ConfigureAwait(false);
+                            Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                            EnumerationResult<DatabaseSummary> result = ConvertObject<EnumerationResult<DatabaseSummary>>(await tools["tablix_discover_databases"](new McpDiscoverDatabasesRequest { MaxResults = 2, Skip = 0 }).ConfigureAwait(false));
+                            Equal(2, result.Objects.Count, "Page count mismatch.");
+                            False(result.EndOfResults, "EndOfResults should be false.");
+                            Equal(2, result.NextSkip.Value, "NextSkip mismatch.");
                         }).ConfigureAwait(false);
                     }),
                     Case("McpToolBehavior", "DiscoverDatabasesRedactsCredentials", "MCP discover databases never returns credentials", async ct =>
                     {
-                        await WithTempSettingsManagerAsync(async manager =>
+                        await WithTempPersistenceAsync(async persistence =>
                         {
-                            manager.AddDatabase(new DatabaseEntry
+                            await persistence.DatabaseConnections.CreateAsync(new DatabaseEntry
                             {
                                 Id = "secret_db",
                                 Type = DatabaseTypeEnum.Postgresql,
@@ -1508,15 +1537,15 @@ namespace Test.Shared
                                 User = "readonly_user",
                                 Password = "plaintext-secret",
                                 DatabaseName = "orders"
-                            });
+                            }, ct).ConfigureAwait(false);
 
-                            Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                            object toolResult = await tools["tablix_discover_databases"](ParseArgs("{\"filter\":\"secret_db\"}")).ConfigureAwait(false);
+                            Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                            object toolResult = await tools["tablix_discover_databases"](new McpDiscoverDatabasesRequest { Filter = "secret_db" }).ConfigureAwait(false);
                             string json = Serializer.SerializeJson(toolResult, false);
-                            JsonElement result = ToJsonElement(toolResult);
-                            JsonElement first = result.GetProperty("Objects")[0];
-                            True(first.GetProperty("HasUser").GetBoolean(), "HasUser should be returned.");
-                            True(first.GetProperty("HasPassword").GetBoolean(), "HasPassword should be returned.");
+                            EnumerationResult<DatabaseSummary> result = ConvertObject<EnumerationResult<DatabaseSummary>>(toolResult);
+                            DatabaseSummary first = result.Objects[0];
+                            True(first.HasUser, "HasUser should be returned.");
+                            True(first.HasPassword, "HasPassword should be returned.");
                             DoesNotContain(json, "\"User\"", "MCP discovery should not expose the User property.");
                             DoesNotContain(json, "\"Password\"", "MCP discovery should not expose the Password property.");
                             DoesNotContain(json, "readonly_user", "MCP discovery should not expose the username value.");
@@ -1527,14 +1556,14 @@ namespace Test.Shared
                     {
                         await WithTempDatabaseAsync(async entry =>
                         {
-                            await WithTempSettingsManagerAsync(async manager =>
+                            await WithTempPersistenceAsync(async persistence =>
                             {
-                                ConfigureOnlyDatabase(manager, entry);
-                                Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                                JsonElement result = ToJsonElement(await tools["tablix_list_tables"](ParseArgs("{\"databaseId\":\"test_sqlite\",\"maxResults\":2,\"skip\":0}")).ConfigureAwait(false));
-                                Equal(2, result.GetProperty("Objects").GetArrayLength(), "Table page count mismatch.");
-                                Equal(3, result.GetProperty("TableCount").GetInt32(), "TableCount mismatch.");
-                                False(result.GetProperty("EndOfResults").GetBoolean(), "EndOfResults should be false.");
+                                await ConfigureOnlyDatabaseAsync(persistence, entry, ct).ConfigureAwait(false);
+                                Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                                DatabaseTableListResult result = ConvertObject<DatabaseTableListResult>(await tools["tablix_list_tables"](new McpListTablesRequest { DatabaseId = "test_sqlite", MaxResults = 2, Skip = 0 }).ConfigureAwait(false));
+                                Equal(2, result.Objects.Count, "Table page count mismatch.");
+                                Equal(3, result.TableCount, "TableCount mismatch.");
+                                False(result.EndOfResults, "EndOfResults should be false.");
                             }).ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     }),
@@ -1542,13 +1571,13 @@ namespace Test.Shared
                     {
                         await WithTempDatabaseAsync(async entry =>
                         {
-                            await WithTempSettingsManagerAsync(async manager =>
+                            await WithTempPersistenceAsync(async persistence =>
                             {
-                                ConfigureOnlyDatabase(manager, entry);
-                                Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                                JsonElement result = ToJsonElement(await tools["tablix_discover_table"](ParseArgs("{\"databaseId\":\"test_sqlite\",\"tableName\":\"users\"}")).ConfigureAwait(false));
-                                Equal("users", result.GetProperty("Table").GetProperty("TableName").GetString(), "TableName mismatch.");
-                                Equal(4, result.GetProperty("Table").GetProperty("Columns").GetArrayLength(), "Column count mismatch.");
+                                await ConfigureOnlyDatabaseAsync(persistence, entry, ct).ConfigureAwait(false);
+                                Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                                McpTableDetailResponse result = ConvertObject<McpTableDetailResponse>(await tools["tablix_discover_table"](new McpDiscoverTableRequest { DatabaseId = "test_sqlite", TableName = "users" }).ConfigureAwait(false));
+                                Equal("users", result.Table.TableName, "TableName mismatch.");
+                                Equal(4, result.Table.Columns.Count, "Column count mismatch.");
                             }).ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     }),
@@ -1556,28 +1585,125 @@ namespace Test.Shared
                     {
                         await WithTempDatabaseAsync(async entry =>
                         {
-                            await WithTempSettingsManagerAsync(async manager =>
+                            await WithTempPersistenceAsync(async persistence =>
                             {
-                                ConfigureOnlyDatabase(manager, entry);
-                                Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                                JsonElement result = ToJsonElement(await tools["tablix_list_relationships"](ParseArgs("{\"databaseId\":\"test_sqlite\",\"maxResults\":10}")).ConfigureAwait(false));
-                                True(result.GetProperty("Objects").EnumerateArray().Any(r => r.GetProperty("ToTable").GetString() == "users"), "Expected relationship to users.");
+                                await ConfigureOnlyDatabaseAsync(persistence, entry, ct).ConfigureAwait(false);
+                                Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                                DatabaseRelationshipListResult result = ConvertObject<DatabaseRelationshipListResult>(await tools["tablix_list_relationships"](new McpListRelationshipsRequest { DatabaseId = "test_sqlite", MaxResults = 10 }).ConfigureAwait(false));
+                                True(result.Objects.Any(relationship => relationship.ToTable == "users"), "Expected relationship to users.");
                             }).ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     }),
                     Case("McpToolBehavior", "UpdateContextReplaceAndAppend", "MCP update context supports replace and append", async ct =>
                     {
-                        await WithTempSettingsManagerAsync(async manager =>
+                        await WithTempPersistenceAsync(async persistence =>
                         {
-                            Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                            JsonElement replace = ToJsonElement(await tools["tablix_update_context"](ParseArgs("{\"databaseId\":\"db_sample_sqlite\",\"context\":\"First\",\"mode\":\"replace\"}")).ConfigureAwait(false));
-                            True(replace.GetProperty("Success").GetBoolean(), "Replace should succeed.");
+                            Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                            McpContextUpdateResponse replace = ConvertObject<McpContextUpdateResponse>(await tools["tablix_update_context"](new McpUpdateContextRequest { DatabaseId = "db_sample_sqlite", Context = "First", Mode = "replace" }).ConfigureAwait(false));
+                            True(replace.Success, "Replace should succeed.");
 
-                            JsonElement append = ToJsonElement(await tools["tablix_update_context"](ParseArgs("{\"databaseId\":\"db_sample_sqlite\",\"context\":\"Second\",\"mode\":\"append\"}")).ConfigureAwait(false));
-                            True(append.GetProperty("Success").GetBoolean(), "Append should succeed.");
-                            string context = manager.GetDatabase("db_sample_sqlite").Context;
+                            McpContextUpdateResponse append = ConvertObject<McpContextUpdateResponse>(await tools["tablix_update_context"](new McpUpdateContextRequest { DatabaseId = "db_sample_sqlite", Context = "Second", Mode = "append" }).ConfigureAwait(false));
+                            True(append.Success, "Append should succeed.");
+                            DatabaseEntry database = await persistence.DatabaseConnections.ReadAsync("db_sample_sqlite", ct).ConfigureAwait(false);
+                            string context = database.Context;
                             Contains(context, "First", "Context should contain original text.");
                             Contains(context, "Second", "Context should contain appended text.");
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("McpToolBehavior", "GetDatabaseContextSupportsSingleAndMultiple", "MCP database context can be read for one or multiple databases", async ct =>
+                    {
+                        await WithTempPersistenceAsync(async persistence =>
+                        {
+                            Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                            await tools["tablix_update_database_context"](new McpUpdateContextRequest { DatabaseId = "db_sample_sqlite", Context = "Sample context", Mode = "replace" }).ConfigureAwait(false);
+
+                            McpDatabaseContextReadResponse single = ConvertObject<McpDatabaseContextReadResponse>(await tools["tablix_get_database_context"](new McpGetDatabaseContextRequest { DatabaseId = "db_sample_sqlite" }).ConfigureAwait(false));
+                            True(single.Success, "Single database context read should succeed.");
+                            Equal(1L, single.TotalRecords, "Single read count mismatch.");
+                            Contains(single.Objects[0].Context, "Sample context", "Single read should return saved context.");
+
+                            McpDatabaseContextReadResponse multiple = ConvertObject<McpDatabaseContextReadResponse>(await tools["tablix_get_database_context"](new McpGetDatabaseContextRequest { DatabaseIds = new List<string> { "db_sample_sqlite", "missing_db" } }).ConfigureAwait(false));
+                            Equal(1, multiple.Objects.Count, "Multiple read should return existing database.");
+                            Equal(1, multiple.MissingDatabaseIds.Count, "Multiple read should report missing database.");
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("McpToolBehavior", "TableContextReadWriteSupportsSingleAndBatch", "MCP table context can be read and written for one or multiple tables", async ct =>
+                    {
+                        await WithTempDatabaseAsync(async entry =>
+                        {
+                            await WithTempPersistenceAsync(async persistence =>
+                            {
+                                await ConfigureOnlyDatabaseAsync(persistence, entry, ct).ConfigureAwait(false);
+                                Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                                DatabaseTableListResult tables = ConvertObject<DatabaseTableListResult>(await tools["tablix_list_tables"](new McpListTablesRequest { DatabaseId = "test_sqlite", MaxResults = 10 }).ConfigureAwait(false));
+                                TableSummary users = tables.Objects.First(table => table.TableName == "users");
+                                TableSummary orders = tables.Objects.First(table => table.TableName == "orders");
+
+                                McpContextUpdateResponse singleUpdate = ConvertObject<McpContextUpdateResponse>(await tools["tablix_update_table_context"](new McpUpdateContextRequest
+                                {
+                                    DatabaseId = "test_sqlite",
+                                    TableId = users.TableId,
+                                    Context = "Users table context",
+                                    Mode = "replace"
+                                }).ConfigureAwait(false));
+                                True(singleUpdate.Success, "Single table context update should succeed.");
+                                Equal(users.TableId, singleUpdate.TableId, "Updated table ID mismatch.");
+
+                                McpTableContextReadResponse singleRead = ConvertObject<McpTableContextReadResponse>(await tools["tablix_get_table_context"](new McpGetTableContextRequest
+                                {
+                                    DatabaseId = "test_sqlite",
+                                    TableId = users.TableId
+                                }).ConfigureAwait(false));
+                                True(singleRead.Success, "Single table context read should succeed.");
+                                Contains(singleRead.Objects[0].Context, "Users table context", "Single table context should be returned.");
+
+                                McpContextUpdateResponse batchUpdate = ConvertObject<McpContextUpdateResponse>(await tools["tablix_update_table_context"](new McpUpdateContextRequest
+                                {
+                                    DatabaseId = "test_sqlite",
+                                    Updates = new List<McpContextUpdateItemRequest>
+                                    {
+                                        new McpContextUpdateItemRequest { TableId = users.TableId, Context = "Users append", Mode = "append" },
+                                        new McpContextUpdateItemRequest { TableId = orders.TableId, Context = "Orders table context", Mode = "replace" }
+                                    }
+                                }).ConfigureAwait(false));
+                                True(batchUpdate.Success, "Batch table context update should succeed.");
+                                Equal(2, batchUpdate.Succeeded, "Batch success count mismatch.");
+
+                                McpTableContextReadResponse batchRead = ConvertObject<McpTableContextReadResponse>(await tools["tablix_get_table_context"](new McpGetTableContextRequest
+                                {
+                                    DatabaseId = "test_sqlite",
+                                    TableIds = new List<string> { users.TableId, orders.TableId }
+                                }).ConfigureAwait(false));
+                                Equal(2, batchRead.Objects.Count, "Batch table context read count mismatch.");
+                                True(batchRead.Objects.Any(context => context.TableId == users.TableId && context.Context.Contains("Users append", StringComparison.OrdinalIgnoreCase)), "Appended users context should be returned.");
+                                True(batchRead.Objects.Any(context => context.TableId == orders.TableId && context.Context.Contains("Orders table context", StringComparison.OrdinalIgnoreCase)), "Orders context should be returned.");
+                            }).ConfigureAwait(false);
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("McpToolBehavior", "GenericContextUpdateUsesScopeDiscriminator", "MCP generic context update supports table scope discriminator", async ct =>
+                    {
+                        await WithTempDatabaseAsync(async entry =>
+                        {
+                            await WithTempPersistenceAsync(async persistence =>
+                            {
+                                await ConfigureOnlyDatabaseAsync(persistence, entry, ct).ConfigureAwait(false);
+                                Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                                DatabaseTableListResult tables = ConvertObject<DatabaseTableListResult>(await tools["tablix_list_tables"](new McpListTablesRequest { DatabaseId = "test_sqlite", MaxResults = 10 }).ConfigureAwait(false));
+                                TableSummary users = tables.Objects.First(table => table.TableName == "users");
+
+                                McpContextUpdateResponse update = ConvertObject<McpContextUpdateResponse>(await tools["tablix_update_context"](new McpUpdateContextRequest
+                                {
+                                    Scope = ContextScopeEnum.Table,
+                                    DatabaseId = "test_sqlite",
+                                    TableId = users.TableId,
+                                    Context = "Generic table context",
+                                    Mode = "replace"
+                                }).ConfigureAwait(false));
+
+                                True(update.Success, "Generic scoped table update should succeed.");
+                                Equal(ContextScopeEnum.Table, update.Scope, "Scope mismatch.");
+                                Equal(users.TableId, update.TableId, "Table ID mismatch.");
+                            }).ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     }),
                     Case("McpToolBehavior", "ExecuteQueryRespectsAllowedQueries", "MCP execute query rejects disallowed statement type", async ct =>
@@ -1585,13 +1711,13 @@ namespace Test.Shared
                         await WithTempDatabaseAsync(async entry =>
                         {
                             entry.AllowedQueries = new List<string> { "SELECT" };
-                            await WithTempSettingsManagerAsync(async manager =>
+                            await WithTempPersistenceAsync(async persistence =>
                             {
-                                ConfigureOnlyDatabase(manager, entry);
-                                Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                                JsonElement result = ToJsonElement(await tools["tablix_execute_query"](ParseArgs("{\"databaseId\":\"test_sqlite\",\"query\":\"DELETE FROM users\"}")).ConfigureAwait(false));
-                                False(result.GetProperty("Success").GetBoolean(), "DELETE should be rejected.");
-                                Contains(result.GetProperty("Error").GetString(), "DELETE", "Error should mention DELETE.");
+                                await ConfigureOnlyDatabaseAsync(persistence, entry, ct).ConfigureAwait(false);
+                                Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                                QueryResult result = ConvertObject<QueryResult>(await tools["tablix_execute_query"](new McpExecuteQueryRequest { DatabaseId = "test_sqlite", Query = "DELETE FROM users" }).ConfigureAwait(false));
+                                False(result.Success, "DELETE should be rejected.");
+                                Contains(result.Error, "DELETE", "Error should mention DELETE.");
                             }).ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     }),
@@ -1600,30 +1726,29 @@ namespace Test.Shared
                         await WithTempDatabaseAsync(async entry =>
                         {
                             entry.AllowedQueries = new List<string> { "SELECT" };
-                            await WithTempSettingsManagerAsync(async manager =>
+                            await WithTempPersistenceAsync(async persistence =>
                             {
-                                ConfigureOnlyDatabase(manager, entry);
-                                Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                                JsonElement result = ToJsonElement(await tools["tablix_execute_query"](ParseArgs("{\"databaseId\":\"test_sqlite\",\"query\":\"SELECT COUNT(*) AS total_users FROM users\"}")).ConfigureAwait(false));
-                                True(result.GetProperty("Success").GetBoolean(), "SELECT count should succeed.");
-                                Equal(1, result.GetProperty("RowsReturned").GetInt32(), "Count query should return one row.");
-                                JsonElement rows = result.GetProperty("Data").GetProperty("Rows");
-                                Equal(1, rows.GetArrayLength(), "Data should contain one row.");
-                                Equal(5, rows[0].GetProperty("total_users").GetInt32(), "Sample users count mismatch.");
+                                await ConfigureOnlyDatabaseAsync(persistence, entry, ct).ConfigureAwait(false);
+                                Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                                QueryResult result = ConvertObject<QueryResult>(await tools["tablix_execute_query"](new McpExecuteQueryRequest { DatabaseId = "test_sqlite", Query = "SELECT COUNT(*) AS total_users FROM users" }).ConfigureAwait(false));
+                                string resultJson = Serializer.SerializeJson(result, false);
+                                True(result.Success, "SELECT count should succeed.");
+                                Equal(1, result.RowsReturned, "Count query should return one row.");
+                                Contains(resultJson, "\"total_users\":5", "Sample users count mismatch.");
                             }).ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     }),
                     Case("McpToolBehavior", "MissingRequiredArgumentsReturnErrors", "MCP tools return useful errors for missing required arguments", async ct =>
                     {
-                        await WithTempSettingsManagerAsync(async manager =>
+                        await WithTempPersistenceAsync(async persistence =>
                         {
-                            Dictionary<string, Func<JsonElement?, Task<object>>> tools = RegisteredTools(manager, new CrawlCache());
-                            JsonElement tableResult = ToJsonElement(await tools["tablix_discover_table"](ParseArgs("{\"databaseId\":\"db_sample_sqlite\"}")).ConfigureAwait(false));
-                            Contains(tableResult.GetProperty("Error").GetString(), "tableName", "Missing tableName should be reported.");
+                            Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
+                            McpErrorResponse tableResult = ConvertObject<McpErrorResponse>(await tools["tablix_discover_table"](new McpDiscoverTableRequest { DatabaseId = "db_sample_sqlite" }).ConfigureAwait(false));
+                            Contains(tableResult.Error, "tableName", "Missing tableName should be reported.");
 
-                            JsonElement queryResult = ToJsonElement(await tools["tablix_execute_query"](ParseArgs("{\"databaseId\":\"db_sample_sqlite\"}")).ConfigureAwait(false));
-                            False(queryResult.GetProperty("Success").GetBoolean(), "Missing query should fail.");
-                            Contains(queryResult.GetProperty("Error").GetString(), "query", "Missing query should be reported.");
+                            QueryResult queryResult = ConvertObject<QueryResult>(await tools["tablix_execute_query"](new McpExecuteQueryRequest { DatabaseId = "db_sample_sqlite" }).ConfigureAwait(false));
+                            False(queryResult.Success, "Missing query should fail.");
+                            Contains(queryResult.Error, "query", "Missing query should be reported.");
                         }).ConfigureAwait(false);
                     })
                 });
@@ -1677,13 +1802,23 @@ namespace Test.Shared
                         Contains(descriptions["tablix_execute_query"], "add, update, or delete", "Query tool should mention permitted write requests.");
                         Contains(descriptions["tablix_execute_query"], "bad or unknown column", "Query tool should explain schema refresh after unknown column errors.");
                         Contains(descriptions["tablix_execute_query"], "column type mismatch", "Query tool should explain schema refresh after type errors.");
-                        Contains(descriptions["tablix_execute_query"], "update Context", "Query tool should direct agents to correct stale context.");
+                        Contains(descriptions["tablix_execute_query"], "update database context", "Query tool should direct agents to correct stale database context.");
+                        Contains(descriptions["tablix_execute_query"], "update that table context", "Query tool should direct agents to correct stale table context.");
                         return Task.CompletedTask;
                     }),
                     Case("McpGuidance", "ContextGuidance", "Context update guidance protects persisted context quality", ct =>
                     {
                         Dictionary<string, string> descriptions = RegisteredToolDescriptions();
-                        Contains(descriptions["tablix_update_context"], "explicit user instruction", "Context update should not be casual.");
+                        Contains(descriptions["tablix_get_database_context"], "one database, multiple databases", "Database context read should describe single and multi-entity reads.");
+                        Contains(descriptions["tablix_get_database_context"], "Context is guidance, not proof", "Database context read should require schema verification.");
+                        Contains(descriptions["tablix_get_table_context"], "one table, multiple tables", "Table context read should describe single and multi-entity reads.");
+                        Contains(descriptions["tablix_get_table_context"], "includeEmpty", "Table context read should explain empty table contexts.");
+                        Contains(descriptions["tablix_get_table_context"], "tablix_discover_table", "Table context read should not replace schema discovery.");
+                        Contains(descriptions["tablix_update_database_context"], "database-level context", "Database context update alias should be explicit.");
+                        Contains(descriptions["tablix_update_table_context"], "table-level context", "Table context update alias should be explicit.");
+                        Contains(descriptions["tablix_update_context"], "scope = Database or Table", "Generic context update should document the scope discriminator.");
+                        Contains(descriptions["tablix_update_context"], "Prefer tablix_update_database_context", "Generic context update should point to explicit aliases.");
+                        Contains(descriptions["tablix_update_context"], "user asks to save/update context", "Context update should not be casual.");
                         Contains(descriptions["tablix_update_context"], "Do not store secrets", "Context update should protect sensitive data.");
                         Contains(descriptions["tablix_update_context"], "separate declared relationships from inferred ones", "Context update should preserve relationship fidelity.");
                         Contains(descriptions["tablix_update_context"], "wrong column names", "Context update should correct stale column names.");
@@ -1755,6 +1890,23 @@ namespace Test.Shared
 
                         return Task.CompletedTask;
                     }),
+                    Case("DashboardApiContract", "OpenApiDocumentsProductRouteGroups", "OpenAPI documents all product route groups", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string serverRoutes = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "TablixServer.cs"));
+
+                        Contains(serverRoutes, "new OpenApiTag(\"Database\"", "OpenAPI should include Database tag.");
+                        Contains(serverRoutes, "new OpenApiTag(\"Metadata\"", "OpenAPI should include Metadata tag.");
+                        Contains(serverRoutes, "new OpenApiTag(\"Models\"", "OpenAPI should include Models tag.");
+                        Contains(serverRoutes, "new OpenApiTag(\"Context\"", "OpenAPI should include Context tag.");
+                        Contains(serverRoutes, "new OpenApiTag(\"Setup\"", "OpenAPI should include Setup tag.");
+                        Contains(serverRoutes, "new OpenApiTag(\"Chat\"", "OpenAPI should include Chat tag.");
+                        Contains(serverRoutes, "new OpenApiTag(\"Settings\"", "OpenAPI should include Settings tag.");
+                        Contains(serverRoutes, "new OpenApiTag(\"Health\"", "OpenAPI should include Health tag.");
+                        Contains(serverRoutes, "OpenApiResponseMetadata.Json<BuildTableContextResponse>", "OpenAPI should document generated table context responses.");
+                        Contains(serverRoutes, "OpenApiRequestBodyMetadata.Json<BuildTableContextRequest>", "OpenAPI should document generated table context requests.");
+                        return Task.CompletedTask;
+                    }),
                     Case("DashboardApiContract", "ApiFetchDoesNotForceJsonOnBodylessRequests", "Dashboard API helper only sends JSON content type with request bodies", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();
@@ -1789,6 +1941,36 @@ namespace Test.Shared
                         Contains(chatPage, "function handleProviderChanged", "Provider selector should use a reset-aware change handler.");
                         Contains(chatPage, "onChange={event => handleDatabaseChanged(event.target.value)}", "Database selector should reset the conversation when changed.");
                         Contains(chatPage, "onChange={event => handleProviderChanged(event.target.value)}", "Provider selector should reset the conversation when changed.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ChatExecutionPathVisible", "Chat page displays tool execution path and capability notices", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ChatPage.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(chatPage, "chat-capability-notice", "Chat page should show provider capability notice.");
+                        Contains(chatPage, "chat-execution-note", "Chat page should show response execution notes.");
+                        Contains(chatPage, "ExecutionPath", "Chat page should consume execution path.");
+                        Contains(chatPage, "CapabilityNotice", "Chat page should consume capability notice.");
+                        Contains(stylesheet, ".chat-capability-notice", "Capability notice should be styled.");
+                        Contains(stylesheet, ".chat-execution-note", "Execution note should be styled.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "SettingsExposePromptProcessing", "Settings page exposes prompt processing and native tool provider settings", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string settingsPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "SettingsPage.tsx"));
+                        string modelsPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ModelsPage.tsx"));
+                        string types = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "types", "index.ts"));
+
+                        Contains(settingsPage, "Prompt Processing", "Settings page should expose prompt processing section.");
+                        Contains(settingsPage, "Prefer native tools", "Settings page should expose native tool preference.");
+                        Contains(settingsPage, "Server fallback", "Settings page should expose fallback setting.");
+                        Contains(modelsPage, "Supports native tools", "Models page should expose native tool support.");
+                        Contains(modelsPage, "Use native tools", "Models page should expose native tool enablement.");
+                        Contains(types, "PromptProcessingSettings", "TypeScript contracts should include prompt processing settings.");
+                        Contains(types, "SupportsNativeToolCalls", "TypeScript contracts should include provider tool capability.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "TopbarHeightIsFixed", "Dashboard topbar keeps a fixed vertical size", ct =>
@@ -1865,6 +2047,11 @@ namespace Test.Shared
             normalized = normalized.Replace("${db.Id}", "{id}", StringComparison.Ordinal);
             normalized = normalized.Replace("${contextTarget.Id}", "{id}", StringComparison.Ordinal);
             normalized = normalized.Replace("${detail.DatabaseId}", "{id}", StringComparison.Ordinal);
+            normalized = normalized.Replace("${database.Id}", "{id}", StringComparison.Ordinal);
+            normalized = normalized.Replace("${detail?.DatabaseId}", "{id}", StringComparison.Ordinal);
+            normalized = normalized.Replace("${provider.Id}", "{id}", StringComparison.Ordinal);
+            normalized = normalized.Replace("${tableId}", "{tableId}", StringComparison.Ordinal);
+            normalized = normalized.Replace("${table.TableId}", "{tableId}", StringComparison.Ordinal);
             return normalized;
         }
 
@@ -1872,11 +2059,27 @@ namespace Test.Shared
         {
             return new List<ApiRouteContract>
             {
+                new ApiRouteContract("GET", "/v1/setup", "rest.Get(\"/v1/setup\"", "apiFetch('/v1/setup')", "/v1/setup"),
+                new ApiRouteContract("PUT", "/v1/setup", "rest.Put<SetupStateUpdateRequest>(\"/v1/setup\"", "apiFetch('/v1/setup'", "/v1/setup"),
+                new ApiRouteContract("POST", "/v1/setup/complete", "rest.Post(\"/v1/setup/complete\"", "/v1/setup/complete", "/v1/setup/complete"),
+                new ApiRouteContract("GET", "/v1/model", "rest.Get(\"/v1/model\"", "/v1/model?", "/v1/model"),
+                new ApiRouteContract("GET", "/v1/model/{id}", "rest.Get(\"/v1/model/{id}\"", "/v1/model/${id}", "/v1/model/{id}"),
+                new ApiRouteContract("POST", "/v1/model", "rest.Post<ModelProviderUpdate>(\"/v1/model\"", "apiFetch('/v1/model'", "/v1/model"),
+                new ApiRouteContract("PUT", "/v1/model/{id}", "rest.Put<ModelProviderUpdate>(\"/v1/model/{id}\"", "method: 'PUT'", "/v1/model/{id}"),
+                new ApiRouteContract("DELETE", "/v1/model/{id}", "rest.Delete(\"/v1/model/{id}\"", "method: 'DELETE'", "/v1/model/{id}"),
+                new ApiRouteContract("POST", "/v1/model/test", "rest.Post<ProviderConnectivityTestRequest>(\"/v1/model/test\"", "/v1/model/test", "/v1/model/test"),
+                new ApiRouteContract("POST", "/v1/model/{id}/test", "rest.Post(\"/v1/model/{id}/test\"", "/v1/model/${id}/test", "/v1/model/{id}/test"),
                 new ApiRouteContract("GET", "/v1/database", "rest.Get(\"/v1/database\"", "/v1/database?", "/v1/database"),
                 new ApiRouteContract("GET", "/v1/database/{id}", "rest.Get(\"/v1/database/{id}\"", "/v1/database/${id}", "/v1/database/{id}"),
                 new ApiRouteContract("POST", "/v1/database", "rest.Post<DatabaseEntry>(\"/v1/database\"", "apiFetch('/v1/database', { method: 'POST'", "/v1/database"),
                 new ApiRouteContract("PUT", "/v1/database/{id}", "rest.Put<DatabaseEntry>(\"/v1/database/{id}\"", "method: 'PUT'", "/v1/database/{id}"),
                 new ApiRouteContract("DELETE", "/v1/database/{id}", "rest.Delete(\"/v1/database/{id}\"", "method: 'DELETE'", "/v1/database/{id}"),
+                new ApiRouteContract("POST", "/v1/database/test", "rest.Post<DatabaseConnectivityTestRequest>(\"/v1/database/test\"", "/v1/database/test", "/v1/database/test"),
+                new ApiRouteContract("POST", "/v1/database/{id}/test", "rest.Post(\"/v1/database/{id}/test\"", "/v1/database/${id}/test", "/v1/database/{id}/test"),
+                new ApiRouteContract("GET", "/v1/database/{id}/table-context", "rest.Get(\"/v1/database/{id}/table-context\"", "/table-context", "/v1/database/{id}/table-context"),
+                new ApiRouteContract("PUT", "/v1/database/{id}/table-context/{tableId}", "rest.Put<TableContextUpdateRequest>(\"/v1/database/{id}/table-context/{tableId}\"", "/table-context/${table.TableId}", "/v1/database/{id}/table-context/{tableId}"),
+                new ApiRouteContract("POST", "/v1/database/{id}/table-context/build", "rest.Post<BuildTableContextRequest>(\"/v1/database/{id}/table-context/build\"", "/table-context/build", "/v1/database/{id}/table-context/build"),
+                new ApiRouteContract("POST", "/v1/database/{id}/table-context/{tableId}/build", "rest.Post<BuildTableContextRequest>(\"/v1/database/{id}/table-context/{tableId}/build\"", "/table-context/${tableId}/build", "/v1/database/{id}/table-context/{tableId}/build"),
                 new ApiRouteContract("POST", "/v1/database/{id}/context", "rest.Post<ContextUpdateRequest>(\"/v1/database/{id}/context\"", "/context`", "/v1/database/{id}/context"),
                 new ApiRouteContract("POST", "/v1/database/{id}/context/build", "rest.Post<BuildContextRequest>(\"/v1/database/{id}/context/build\"", "/context/build", "/v1/database/{id}/context/build"),
                 new ApiRouteContract("POST", "/v1/database/{id}/crawl/stream", "rest.Post(\"/v1/database/{id}/crawl/stream\"", "/crawl/stream", "/v1/database/{id}/crawl/stream"),
@@ -1887,29 +2090,6 @@ namespace Test.Shared
                 new ApiRouteContract("GET", "/v1/settings", "rest.Get(\"/v1/settings\"", "apiFetch('/v1/settings')", "/v1/settings"),
                 new ApiRouteContract("PUT", "/v1/settings", "rest.Put<SettingsUpdateRequest>(\"/v1/settings\"", "method: 'PUT'", "/v1/settings")
             };
-        }
-
-        private class ApiRouteContract
-        {
-            public string Method { get; }
-            public string RouteTemplate { get; }
-            public string ServerRegistrationFragment { get; }
-            public string RequiredDashboardFragment { get; }
-            public string DashboardRoutePrefix { get; }
-
-            public ApiRouteContract(
-                string method,
-                string routeTemplate,
-                string serverRegistrationFragment,
-                string requiredDashboardFragment,
-                string dashboardRoutePrefix)
-            {
-                Method = method;
-                RouteTemplate = routeTemplate;
-                ServerRegistrationFragment = serverRegistrationFragment;
-                RequiredDashboardFragment = requiredDashboardFragment;
-                DashboardRoutePrefix = dashboardRoutePrefix;
-            }
         }
 
         private static DatabaseDetail SampleDetail()
@@ -1966,9 +2146,8 @@ namespace Test.Shared
         {
             Dictionary<string, string> descriptions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            WithTempSettingsFile(filename =>
+            WithTempPersistenceAsync(async persistence =>
             {
-                SettingsManager settingsManager = new SettingsManager(filename);
                 CrawlCache crawlCache = new CrawlCache();
 
                 McpToolRegistrar.RegisterAll(
@@ -1976,56 +2155,46 @@ namespace Test.Shared
                     {
                         descriptions[name] = description;
                     },
-                    settingsManager,
+                    persistence,
                     crawlCache);
-            });
+                await Task.CompletedTask.ConfigureAwait(false);
+            }).GetAwaiter().GetResult();
 
             return descriptions;
         }
 
-        private static Dictionary<string, Func<JsonElement?, Task<object>>> RegisteredTools(
-            SettingsManager settingsManager,
+        private static Dictionary<string, Func<object, Task<object>>> RegisteredTools(
+            DatabaseDriverBase persistence,
             CrawlCache crawlCache)
         {
-            Dictionary<string, Func<JsonElement?, Task<object>>> tools = new Dictionary<string, Func<JsonElement?, Task<object>>>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, Func<object, Task<object>>> tools = new Dictionary<string, Func<object, Task<object>>>(StringComparer.OrdinalIgnoreCase);
 
             McpToolRegistrar.RegisterAll(
                 (name, description, inputSchema, handler) =>
                 {
                     tools[name] = handler;
                 },
-                settingsManager,
+                persistence,
                 crawlCache);
 
             return tools;
         }
 
-        private static JsonElement? ParseArgs(string json)
-        {
-            using (JsonDocument document = JsonDocument.Parse(json))
-            {
-                return document.RootElement.Clone();
-            }
-        }
-
-        private static JsonElement ToJsonElement(object obj)
+        private static T ConvertObject<T>(object obj)
         {
             string json = Serializer.SerializeJson(obj);
-            using (JsonDocument document = JsonDocument.Parse(json))
-            {
-                return document.RootElement.Clone();
-            }
+            return Serializer.DeserializeJson<T>(json);
         }
 
-        private static void ConfigureOnlyDatabase(SettingsManager manager, DatabaseEntry entry)
+        private static async Task ConfigureOnlyDatabaseAsync(DatabaseDriverBase persistence, DatabaseEntry entry, CancellationToken token)
         {
-            List<string> ids = manager.Settings.Databases.Select(db => db.Id).ToList();
-            foreach (string id in ids)
+            List<DatabaseEntry> databases = await persistence.DatabaseConnections.EnumerateAsync(1000, 0, null, token).ConfigureAwait(false);
+            foreach (DatabaseEntry database in databases)
             {
-                manager.DeleteDatabase(id);
+                await persistence.DatabaseConnections.DeleteAsync(database.Id, token).ConfigureAwait(false);
             }
 
-            manager.AddDatabase(entry);
+            await persistence.DatabaseConnections.CreateAsync(entry, token).ConfigureAwait(false);
         }
 
         private static async Task WithTempSettingsManagerAsync(Func<SettingsManager, Task> action)
@@ -2041,6 +2210,29 @@ namespace Test.Shared
             {
                 TryDelete(tempFile);
             }
+        }
+
+        private static async Task WithTempPersistenceAsync(Func<DatabaseDriverBase, Task> action)
+        {
+            string filename = GetTempDatabaseFilename();
+
+            try
+            {
+                SqliteDatabaseDriver driver = new SqliteDatabaseDriver(filename);
+                await driver.InitializeAsync(CancellationToken.None).ConfigureAwait(false);
+                await action(driver).ConfigureAwait(false);
+            }
+            finally
+            {
+                TryDelete(filename);
+                TryDelete(filename + "-wal");
+                TryDelete(filename + "-shm");
+            }
+        }
+
+        private static string GetTempDatabaseFilename()
+        {
+            return Path.Combine(Path.GetTempPath(), "tablix_persistence_" + Guid.NewGuid().ToString("N") + ".db");
         }
 
         private static async Task WithCustomSqliteDatabaseAsync(string setupSql, Func<DatabaseEntry, Task> action)

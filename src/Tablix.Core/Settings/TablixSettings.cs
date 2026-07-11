@@ -1,7 +1,6 @@
 namespace Tablix.Core.Settings
 {
     using System.Collections.Generic;
-    using Tablix.Core.Enums;
 
     /// <summary>
     /// Root settings object for Tablix, serialized to/from tablix.json.
@@ -29,12 +28,12 @@ namespace Tablix.Core.Settings
         }
 
         /// <summary>
-        /// Configured database connections.
+        /// Product-state persistence database settings.
         /// </summary>
-        public List<DatabaseEntry> Databases
+        public PersistenceDatabaseSettings Persistence
         {
-            get { return _Databases; }
-            set { _Databases = value ?? new List<DatabaseEntry>(); }
+            get { return _Persistence; }
+            set { if (value != null) _Persistence = value; }
         }
 
         /// <summary>
@@ -61,21 +60,8 @@ namespace Tablix.Core.Settings
 
         private RestSettings _Rest = new RestSettings();
         private LoggingSettings _Logging = new LoggingSettings();
+        private PersistenceDatabaseSettings _Persistence = new PersistenceDatabaseSettings();
         private ChatSettings _Chat = new ChatSettings();
-        private List<DatabaseEntry> _Databases = new List<DatabaseEntry>
-        {
-            new DatabaseEntry
-            {
-                Id = "db_sample_sqlite",
-                Name = "Sample E-Commerce",
-                Type = DatabaseTypeEnum.Sqlite,
-                Filename = "./database.db",
-                DatabaseName = "sample",
-                Schema = "main",
-                AllowedQueries = new List<string> { "SELECT", "INSERT", "UPDATE", "DELETE" },
-                Context = "Sample e-commerce database with three tables. The 'users' table stores customer information (Name, Email, CreatedUtc). The 'orders' table tracks purchases with a foreign key to users (UserId) and includes OrderDate, Total, and Status fields. The 'line_items' table holds individual order items with a foreign key to orders (OrderId) and includes ProductName, Quantity, and UnitPrice. Typical queries: find orders by user, calculate order totals, list products purchased."
-            }
-        };
         private List<string> _ApiKeys = new List<string> { "tablixadmin" };
 
         #endregion

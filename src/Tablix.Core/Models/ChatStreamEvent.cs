@@ -48,6 +48,16 @@ namespace Tablix.Core.Models
         public ChatToolCall ToolCall { get; set; } = null;
 
         /// <summary>
+        /// Execution path used for this response.
+        /// </summary>
+        public string ExecutionPath { get; set; } = null;
+
+        /// <summary>
+        /// Provider/tool capability notice for the UI.
+        /// </summary>
+        public string CapabilityNotice { get; set; } = null;
+
+        /// <summary>
         /// Whether this event terminates the stream.
         /// </summary>
         public bool Done { get; set; } = false;

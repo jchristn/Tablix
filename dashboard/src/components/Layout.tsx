@@ -1,5 +1,6 @@
 import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './Navbar';
+import SetupWizard from './SetupWizard';
 
 export default function Layout() {
   const apiKey = sessionStorage.getItem('tablix_api_key');
@@ -14,6 +15,7 @@ export default function Layout() {
       <main className={mainClassName}>
         <Outlet />
       </main>
+      <SetupWizard />
     </div>
   );
 }

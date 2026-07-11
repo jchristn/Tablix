@@ -16,8 +16,12 @@ namespace Tablix.Server.Handlers
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
     using Tablix.Core.Models;
+    using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
+    using CoreChatMessage = Tablix.Core.Models.ChatMessage;
+    using PromptChatMessage = PolyPrompt.Models.ChatMessage;
+    using PromptToolCall = PolyPrompt.Models.ToolCall;
 
     /// <summary>
     /// REST handlers for model-backed database chat.
@@ -27,8 +31,10 @@ namespace Tablix.Server.Handlers
         #region Private-Members
 
         private readonly SettingsManager _SettingsManager;
+        private readonly DatabaseDriverBase _Persistence;
         private readonly CrawlCache _CrawlCache;
         private readonly LoggingModule _Logging;
+        private readonly ChatQueryExecutionService _QueryExecution;
 
         #endregion
 
@@ -38,13 +44,16 @@ namespace Tablix.Server.Handlers
         /// Instantiate.
         /// </summary>
         /// <param name="settingsManager">Settings manager.</param>
+        /// <param name="persistence">Persistence driver.</param>
         /// <param name="crawlCache">Crawl cache.</param>
         /// <param name="logging">Logging module.</param>
-        public ChatHandler(SettingsManager settingsManager, CrawlCache crawlCache, LoggingModule logging)
+        public ChatHandler(SettingsManager settingsManager, DatabaseDriverBase persistence, CrawlCache crawlCache, LoggingModule logging)
         {
             _SettingsManager = settingsManager ?? throw new ArgumentNullException(nameof(settingsManager));
+            _Persistence = persistence ?? throw new ArgumentNullException(nameof(persistence));
             _CrawlCache = crawlCache ?? throw new ArgumentNullException(nameof(crawlCache));
             _Logging = logging ?? new LoggingModule();
+            _QueryExecution = new ChatQueryExecutionService(_CrawlCache);
         }
 
         #endregion
@@ -54,23 +63,33 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/chat/options - get chat database and provider options.
         /// </summary>
-        public Task<object> GetOptionsAsync(AppRequest req)
+        public async Task<object> GetOptionsAsync(AppRequest req)
         {
             TablixSettings settings = _SettingsManager.Settings;
+            List<DatabaseEntry> databases = await _Persistence.DatabaseConnections.EnumerateAsync(1000, 0, null, req.CancellationToken).ConfigureAwait(false);
+            List<ModelProviderSettings> providers = await _Persistence.ModelProviders.EnumerateAsync(1000, 0, null, true, req.CancellationToken).ConfigureAwait(false);
+            List<DatabaseSummary> databaseSummaries = new List<DatabaseSummary>();
+            foreach (DatabaseEntry database in databases)
+            {
+                DatabaseDetail detail = _CrawlCache.Get(database.Id);
+                if (detail == null)
+                    detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
+                databaseSummaries.Add(DatabaseSummary.From(database, detail));
+            }
+
             ChatOptionsResponse response = new ChatOptionsResponse
             {
                 Enabled = settings.Chat.Enabled,
                 DefaultProviderId = settings.Chat.DefaultProviderId,
                 DefaultStreaming = settings.Chat.DefaultStreaming,
-                Databases = settings.Databases.Select(database => DatabaseSummary.From(database, _CrawlCache.Get(database.Id))).ToList(),
-                Providers = settings.Chat.Providers
-                    .Where(provider => provider.Enabled)
+                Databases = databaseSummaries,
+                Providers = providers
                     .Select(provider => ModelProviderSummary.From(provider))
                     .Where(provider => provider != null)
                     .ToList()
             };
 
-            return Task.FromResult((object)response);
+            return response;
         }
 
         /// <summary>
@@ -93,7 +112,7 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.Forbidden, "Chat is disabled in server settings.");
             }
 
-            DatabaseEntry database = _SettingsManager.GetDatabase(id);
+            DatabaseEntry database = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
             if (database == null)
             {
                 req.Http.Response.StatusCode = 404;
@@ -102,13 +121,15 @@ namespace Tablix.Server.Handlers
 
             DatabaseDetail detail = _CrawlCache.Get(database.Id);
             if (detail == null || !detail.IsCrawled)
+                detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
+            if (detail == null || !detail.IsCrawled)
             {
                 req.Http.Response.StatusCode = 409;
                 return new ApiErrorResponse(ApiErrorEnum.Conflict, "A successful crawl is required before building context.");
             }
 
             string providerId = String.IsNullOrWhiteSpace(request.ProviderId) ? settings.Chat.DefaultProviderId : request.ProviderId;
-            ModelProviderSettings provider = settings.Chat.Providers.FirstOrDefault(candidate => String.Equals(candidate.Id, providerId, StringComparison.OrdinalIgnoreCase));
+            ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(providerId, req.CancellationToken).ConfigureAwait(false);
             if (provider == null || !provider.Enabled)
             {
                 req.Http.Response.StatusCode = 404;
@@ -138,8 +159,7 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.InternalError, "Provider returned empty context.");
             }
 
-            database.Context = context;
-            _SettingsManager.UpdateDatabase(database);
+            database.Context = await _Persistence.DatabaseContexts.UpsertAsync(database.Id, context, "replace", "model", req.CancellationToken).ConfigureAwait(false);
             detail.Context = context;
 
             ChatTelemetry telemetry = CreateTelemetry(
@@ -161,6 +181,60 @@ namespace Tablix.Server.Handlers
         }
 
         /// <summary>
+        /// POST /v1/database/{id}/table-context/build - generate and persist table context for every selected table.
+        /// </summary>
+        public async Task<object> BuildAllTableContextsAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            BuildTableContextRequest request = req.GetData<BuildTableContextRequest>();
+            if (request == null)
+            {
+                req.Http.Response.StatusCode = 400;
+                return new ApiErrorResponse(ApiErrorEnum.BadRequest, "Request body is required.");
+            }
+
+            ChatPreparation preparation = await PrepareContextBuildAsync(req, id, request.ProviderId).ConfigureAwait(false);
+            if (preparation.Error != null) return preparation.Error;
+
+            List<TableDetail> selectedTables = SelectTables(preparation.Detail, request.TableIds);
+            if (selectedTables.Count == 0)
+            {
+                req.Http.Response.StatusCode = 409;
+                return new ApiErrorResponse(ApiErrorEnum.Conflict, "No persisted table metadata was found for context generation.");
+            }
+
+            return await GenerateTableContextsAsync(req, preparation, request, selectedTables).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// POST /v1/database/{id}/table-context/{tableId}/build - generate and persist context for one table.
+        /// </summary>
+        public async Task<object> BuildTableContextAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            string tableId = req.Parameters["tableId"];
+            BuildTableContextRequest request = req.GetData<BuildTableContextRequest>();
+            if (request == null)
+            {
+                req.Http.Response.StatusCode = 400;
+                return new ApiErrorResponse(ApiErrorEnum.BadRequest, "Request body is required.");
+            }
+
+            ChatPreparation preparation = await PrepareContextBuildAsync(req, id, request.ProviderId).ConfigureAwait(false);
+            if (preparation.Error != null) return preparation.Error;
+
+            TableDetail table = FindTable(preparation.Detail, tableId);
+            if (table == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Table metadata '" + tableId + "' not found.");
+            }
+
+            List<TableDetail> selectedTables = new List<TableDetail> { table };
+            return await GenerateTableContextsAsync(req, preparation, request, selectedTables).ConfigureAwait(false);
+        }
+
+        /// <summary>
         /// POST /v1/chat - non-streaming chat.
         /// </summary>
         public async Task<object> ChatAsync(AppRequest req)
@@ -170,58 +244,30 @@ namespace Tablix.Server.Handlers
             if (preparation.Error != null) return preparation.Error;
 
             using CompletionClientBase client = CreateClient(preparation.Provider);
-            ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            ChatResponse response = await client.ChatAsync(preparation.Prompt, options, req.CancellationToken).ConfigureAwait(false);
-            stopwatch.Stop();
-            List<ChatToolCall> toolCalls = new List<ChatToolCall>();
-
-            if (!response.Success)
-            {
-                req.Http.Response.StatusCode = 502;
-                return new ApiErrorResponse(ApiErrorEnum.InternalError, response.Error ?? "Provider chat request failed.");
-            }
-
-            string message = response.Text;
-            ChatToolExecution execution = await TryExecuteQueryFromAssistantAsync(
+            ChatExecutionResult execution = await ExecuteChatResponseAsync(
+                client,
                 preparation,
                 request,
-                response.Text,
                 req.CancellationToken,
                 null).ConfigureAwait(false);
 
-            if (execution.ToolCall != null)
+            if (!execution.Success)
             {
-                toolCalls.Add(execution.ToolCall);
-                string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, response.Text, execution.ToolCall);
-                ChatResponse finalResponse = await client.ChatAsync(followupPrompt, options, req.CancellationToken).ConfigureAwait(false);
-                if (finalResponse.Success)
-                {
-                    response = finalResponse;
-                    message = finalResponse.Text;
-                }
-                else if (!String.IsNullOrEmpty(execution.ToolCall.Error))
-                {
-                    message = "The query could not be executed: " + execution.ToolCall.Error;
-                }
+                req.Http.Response.StatusCode = 502;
+                return new ApiErrorResponse(ApiErrorEnum.InternalError, execution.Error ?? "Provider chat request failed.");
             }
-
-            ChatTelemetry telemetry = CreateTelemetry(
-                response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds,
-                response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds,
-                preparation.Prompt,
-                message,
-                null);
 
             return new ChatResponseResult
             {
                 Success = true,
                 DatabaseId = preparation.Database.Id,
                 ProviderId = preparation.Provider.Id,
-                Model = response.Model,
-                Message = message,
-                Telemetry = telemetry,
-                ToolCalls = toolCalls
+                Model = execution.Model,
+                Message = execution.Message,
+                Telemetry = execution.Telemetry,
+                ToolCalls = execution.ToolCalls,
+                ExecutionPath = execution.ExecutionPath,
+                CapabilityNotice = execution.CapabilityNotice
             };
         }
 
@@ -245,16 +291,20 @@ namespace Tablix.Server.Handlers
                 EventType = "started",
                 DatabaseId = preparation.Database.Id,
                 ProviderId = preparation.Provider.Id,
-                Model = preparation.Provider.Model
+                Model = preparation.Provider.Model,
+                ExecutionPath = DetermineInitialExecutionPath(preparation, request),
+                CapabilityNotice = BuildCapabilityNotice(preparation, request)
             }, false).ConfigureAwait(false);
 
             using CompletionClientBase client = CreateClient(preparation.Provider);
-            ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
-            Stopwatch planningStopwatch = Stopwatch.StartNew();
-            ChatResponse planningResponse = await client.ChatAsync(preparation.Prompt, options, req.CancellationToken).ConfigureAwait(false);
-            planningStopwatch.Stop();
+            ChatExecutionResult execution = await ExecuteChatResponseAsync(
+                client,
+                preparation,
+                request,
+                req.CancellationToken,
+                async (evt) => await SendChatEventAsync(req, evt, false).ConfigureAwait(false)).ConfigureAwait(false);
 
-            if (!planningResponse.Success)
+            if (!execution.Success)
             {
                 await SendChatEventAsync(req, new ChatStreamEvent
                 {
@@ -263,104 +313,37 @@ namespace Tablix.Server.Handlers
                     ProviderId = preparation.Provider.Id,
                     Model = preparation.Provider.Model,
                     Done = true,
-                    Error = planningResponse.Error ?? "Provider chat request failed."
+                    Error = execution.Error ?? "Provider chat request failed.",
+                    ExecutionPath = execution.ExecutionPath,
+                    CapabilityNotice = execution.CapabilityNotice
                 }, true).ConfigureAwait(false);
                 return null;
             }
 
-            ChatToolExecution execution = await TryExecuteQueryFromAssistantAsync(
-                preparation,
-                request,
-                planningResponse.Text,
-                req.CancellationToken,
-                async (evt) => await SendChatEventAsync(req, evt, false).ConfigureAwait(false)).ConfigureAwait(false);
-
-            if (execution.ToolCall == null)
+            if (!String.IsNullOrEmpty(execution.Message))
             {
                 await SendChatEventAsync(req, new ChatStreamEvent
                 {
                     EventType = "token",
                     DatabaseId = preparation.Database.Id,
                     ProviderId = preparation.Provider.Id,
-                    Model = planningResponse.Model,
-                    Delta = planningResponse.Text
+                    Model = execution.Model,
+                    Delta = execution.Message,
+                    ExecutionPath = execution.ExecutionPath,
+                    CapabilityNotice = execution.CapabilityNotice
                 }, false).ConfigureAwait(false);
-
-                ChatTelemetry planningTelemetry = CreateTelemetry(
-                    planningResponse.OverallRuntimeMs > 0 ? planningResponse.OverallRuntimeMs : planningStopwatch.ElapsedMilliseconds,
-                    planningResponse.OverallRuntimeMs > 0 ? planningResponse.OverallRuntimeMs : planningStopwatch.ElapsedMilliseconds,
-                    preparation.Prompt,
-                    planningResponse.Text,
-                    null);
-
-                await SendChatEventAsync(req, new ChatStreamEvent
-                {
-                    EventType = "completed",
-                    DatabaseId = preparation.Database.Id,
-                    ProviderId = preparation.Provider.Id,
-                    Model = planningResponse.Model,
-                    Message = planningResponse.Text,
-                    Telemetry = planningTelemetry,
-                    Done = true
-                }, true).ConfigureAwait(false);
-                return null;
             }
-
-            string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, planningResponse.Text, execution.ToolCall);
-            ChatStreamingResponse response = await client.ChatStreamingAsync(followupPrompt, options, req.CancellationToken).ConfigureAwait(false);
-
-            if (!response.Success)
-            {
-                await SendChatEventAsync(req, new ChatStreamEvent
-                {
-                    EventType = "error",
-                    DatabaseId = preparation.Database.Id,
-                    ProviderId = preparation.Provider.Id,
-                    Model = preparation.Provider.Model,
-                    Done = true,
-                    Error = response.Error ?? "Provider streaming request failed."
-                }, true).ConfigureAwait(false);
-                return null;
-            }
-
-            StringBuilder assistant = new StringBuilder();
-            ChatStreamingUsage usage = null;
-
-            await foreach (ChatStreamingChunk chunk in response.Chunks.WithCancellation(req.CancellationToken).ConfigureAwait(false))
-            {
-                if (!String.IsNullOrEmpty(chunk.Text))
-                {
-                    assistant.Append(chunk.Text);
-                    await SendChatEventAsync(req, new ChatStreamEvent
-                    {
-                        EventType = "token",
-                        DatabaseId = preparation.Database.Id,
-                        ProviderId = preparation.Provider.Id,
-                        Model = chunk.Model ?? response.Model,
-                        Delta = chunk.Text
-                    }, false).ConfigureAwait(false);
-                }
-
-                if (chunk.Usage != null)
-                    usage = chunk.Usage;
-            }
-
-            string message = assistant.ToString();
-            ChatTelemetry telemetry = CreateTelemetry(
-                response.TimeToFirstTokenMs >= 0 ? response.TimeToFirstTokenMs : response.OverallRuntimeMs,
-                response.OverallRuntimeMs,
-                preparation.Prompt,
-                message,
-                usage);
 
             await SendChatEventAsync(req, new ChatStreamEvent
             {
                 EventType = "completed",
                 DatabaseId = preparation.Database.Id,
                 ProviderId = preparation.Provider.Id,
-                Model = response.Model,
-                Message = message,
-                Telemetry = telemetry,
+                Model = execution.Model,
+                Message = execution.Message,
+                Telemetry = execution.Telemetry,
+                ExecutionPath = execution.ExecutionPath,
+                CapabilityNotice = execution.CapabilityNotice,
                 Done = true
             }, true).ConfigureAwait(false);
 
@@ -398,7 +381,7 @@ namespace Tablix.Server.Handlers
                 return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.Forbidden, "Chat is disabled in server settings."));
             }
 
-            DatabaseEntry database = _SettingsManager.GetDatabase(request.DatabaseId);
+            DatabaseEntry database = await _Persistence.DatabaseConnections.ReadAsync(request.DatabaseId, req.CancellationToken).ConfigureAwait(false);
             if (database == null)
             {
                 req.Http.Response.StatusCode = 404;
@@ -406,7 +389,7 @@ namespace Tablix.Server.Handlers
             }
 
             string providerId = String.IsNullOrWhiteSpace(request.ProviderId) ? settings.Chat.DefaultProviderId : request.ProviderId;
-            ModelProviderSettings provider = settings.Chat.Providers.FirstOrDefault(candidate => String.Equals(candidate.Id, providerId, StringComparison.OrdinalIgnoreCase));
+            ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(providerId, req.CancellationToken).ConfigureAwait(false);
             if (provider == null || !provider.Enabled)
             {
                 req.Http.Response.StatusCode = 404;
@@ -415,7 +398,12 @@ namespace Tablix.Server.Handlers
 
             DatabaseDetail detail = _CrawlCache.Get(database.Id);
             if (detail == null)
+                detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
+            if (detail == null)
+            {
                 detail = await _CrawlCache.CrawlOneAsync(database).ConfigureAwait(false);
+                await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, req.CancellationToken).ConfigureAwait(false);
+            }
 
             string systemPrompt = String.IsNullOrWhiteSpace(provider.SystemPrompt) ? settings.Chat.SystemPrompt : provider.SystemPrompt;
             string prompt = BuildPrompt(settings, database, detail, request.Messages);
@@ -429,6 +417,144 @@ namespace Tablix.Server.Handlers
                 SystemPrompt = systemPrompt,
                 Prompt = prompt
             };
+        }
+
+        private async Task<ChatPreparation> PrepareContextBuildAsync(AppRequest req, string databaseId, string providerId)
+        {
+            TablixSettings settings = _SettingsManager.Settings;
+            if (!settings.Chat.Enabled)
+            {
+                req.Http.Response.StatusCode = 403;
+                return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.Forbidden, "Chat is disabled in server settings."));
+            }
+
+            DatabaseEntry database = await _Persistence.DatabaseConnections.ReadAsync(databaseId, req.CancellationToken).ConfigureAwait(false);
+            if (database == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + databaseId + "' not found."));
+            }
+
+            DatabaseDetail detail = _CrawlCache.Get(database.Id);
+            if (detail == null || !detail.IsCrawled)
+                detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
+            if (detail == null || !detail.IsCrawled)
+            {
+                req.Http.Response.StatusCode = 409;
+                return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.Conflict, "A successful crawl is required before building context."));
+            }
+
+            string selectedProviderId = String.IsNullOrWhiteSpace(providerId) ? settings.Chat.DefaultProviderId : providerId;
+            ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(selectedProviderId, req.CancellationToken).ConfigureAwait(false);
+            if (provider == null || !provider.Enabled)
+            {
+                req.Http.Response.StatusCode = 404;
+                return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.NotFound, "Provider '" + selectedProviderId + "' not found or disabled."));
+            }
+
+            return new ChatPreparation
+            {
+                Database = database,
+                Provider = provider,
+                Detail = detail,
+                Settings = settings
+            };
+        }
+
+        private async Task<object> GenerateTableContextsAsync(AppRequest req, ChatPreparation preparation, BuildTableContextRequest request, List<TableDetail> selectedTables)
+        {
+            string instructions = String.IsNullOrWhiteSpace(request.Prompt) ? DefaultTableContextBuildInstructions() : request.Prompt.Trim();
+            string systemPrompt = "You generate concise, durable table context for Tablix. Restrict output to the selected database, selected table, its structure, contents, and relationships. Do not include credentials, secrets, raw result rows, or speculative facts.";
+            List<TableContextRead> contexts = new List<TableContextRead>();
+            StringBuilder promptTranscript = new StringBuilder();
+            StringBuilder responseTranscript = new StringBuilder();
+
+            using CompletionClientBase client = CreateClient(preparation.Provider);
+            ChatCompletionOptions options = CreateOptions(preparation.Provider, systemPrompt);
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            string model = preparation.Provider.Model;
+
+            foreach (TableDetail table in selectedTables)
+            {
+                string prompt = BuildTableContextPrompt(preparation.Database, preparation.Detail, table, instructions);
+                promptTranscript.AppendLine(prompt);
+                ChatResponse response = await client.ChatAsync(prompt, options, req.CancellationToken).ConfigureAwait(false);
+                if (!response.Success)
+                {
+                    stopwatch.Stop();
+                    req.Http.Response.StatusCode = 502;
+                    return new ApiErrorResponse(ApiErrorEnum.InternalError, response.Error ?? "Provider table context generation failed.");
+                }
+
+                string context = NormalizeGeneratedContext(response.Text);
+                if (String.IsNullOrWhiteSpace(context))
+                {
+                    stopwatch.Stop();
+                    req.Http.Response.StatusCode = 502;
+                    return new ApiErrorResponse(ApiErrorEnum.InternalError, "Provider returned empty table context for " + table.SchemaName + "." + table.TableName + ".");
+                }
+
+                TableContextRead saved = await _Persistence.TableContexts.UpsertAsync(
+                    preparation.Database.Id,
+                    table.TableId,
+                    context,
+                    "replace",
+                    "model",
+                    req.CancellationToken).ConfigureAwait(false);
+
+                table.Context = saved.Context;
+                contexts.Add(saved);
+                responseTranscript.AppendLine(context);
+                if (!String.IsNullOrWhiteSpace(response.Model)) model = response.Model;
+            }
+
+            stopwatch.Stop();
+            ChatTelemetry telemetry = CreateTelemetry(
+                stopwatch.ElapsedMilliseconds,
+                stopwatch.ElapsedMilliseconds,
+                promptTranscript.ToString(),
+                responseTranscript.ToString(),
+                null);
+
+            return new BuildTableContextResponse
+            {
+                Success = true,
+                DatabaseId = preparation.Database.Id,
+                ProviderId = preparation.Provider.Id,
+                Model = model,
+                Objects = contexts,
+                Telemetry = telemetry
+            };
+        }
+
+        private static List<TableDetail> SelectTables(DatabaseDetail detail, List<string> tableIds)
+        {
+            List<TableDetail> tables = new List<TableDetail>();
+            if (detail == null || detail.Tables == null) return tables;
+
+            if (tableIds == null || tableIds.Count == 0)
+            {
+                foreach (TableDetail table in detail.Tables)
+                {
+                    if (!String.IsNullOrWhiteSpace(table.TableId)) tables.Add(table);
+                }
+
+                return tables;
+            }
+
+            foreach (string tableId in tableIds)
+            {
+                TableDetail table = FindTable(detail, tableId);
+                if (table != null) tables.Add(table);
+            }
+
+            return tables;
+        }
+
+        private static TableDetail FindTable(DatabaseDetail detail, string tableId)
+        {
+            if (detail == null || detail.Tables == null || String.IsNullOrWhiteSpace(tableId)) return null;
+            return detail.Tables.FirstOrDefault(table => String.Equals(table.TableId, tableId, StringComparison.OrdinalIgnoreCase));
         }
 
         private CompletionClientBase CreateClient(ModelProviderSettings provider)
@@ -462,7 +588,7 @@ namespace Tablix.Server.Handlers
             return options;
         }
 
-        private static string BuildPrompt(TablixSettings settings, DatabaseEntry database, DatabaseDetail detail, List<ChatMessage> messages)
+        private static string BuildPrompt(TablixSettings settings, DatabaseEntry database, DatabaseDetail detail, List<CoreChatMessage> messages)
         {
             StringBuilder builder = new StringBuilder();
             builder.AppendLine("You are answering questions about a configured Tablix database.");
@@ -497,6 +623,8 @@ namespace Tablix.Server.Handlers
             foreach (TableDetail table in tables)
             {
                 builder.AppendLine("- " + table.SchemaName + "." + table.TableName);
+                if (!String.IsNullOrWhiteSpace(table.Context))
+                    builder.AppendLine("  Table context: " + table.Context);
                 builder.AppendLine("  Columns: " + String.Join(", ", table.Columns.Select(column => column.ColumnName + " " + column.DataType + (column.IsPrimaryKey ? " primary key" : "") + (column.IsNullable ? " nullable" : " not null"))));
                 if (table.ForeignKeys.Count > 0)
                     builder.AppendLine("  Declared FKs: " + String.Join("; ", table.ForeignKeys.Select(foreignKey => foreignKey.ColumnName + " -> " + foreignKey.ReferencedTable + "." + foreignKey.ReferencedColumn)));
@@ -507,7 +635,7 @@ namespace Tablix.Server.Handlers
 
             builder.AppendLine();
             builder.AppendLine("Conversation:");
-            foreach (ChatMessage message in messages)
+            foreach (CoreChatMessage message in messages)
             {
                 if (String.IsNullOrWhiteSpace(message.Content)) continue;
                 string role = String.IsNullOrWhiteSpace(message.Role) ? "user" : message.Role.Trim().ToLowerInvariant();
@@ -520,6 +648,11 @@ namespace Tablix.Server.Handlers
         private static string DefaultContextBuildInstructions()
         {
             return "Analyze the crawled schema and produce durable Tablix database context. Include the database purpose when inferable, major entities, important relationships, workflow groupings, naming conventions, and safe query guidance. Clearly label inferred relationships. Keep the result concise enough to use in future model prompts.";
+        }
+
+        private static string DefaultTableContextBuildInstructions()
+        {
+            return "Analyze each selected table from the crawled schema and produce concise durable table context. Include the table purpose, key columns, primary key, important foreign keys or inferred join paths, common filters, write-safety caveats, and how the table relates to the database. Clearly label inferred relationships and avoid secrets or raw data.";
         }
 
         private static string BuildContextPrompt(DatabaseEntry database, DatabaseDetail detail, string instructions, int maxContextTables)
@@ -566,6 +699,51 @@ namespace Tablix.Server.Handlers
             return builder.ToString();
         }
 
+        private static string BuildTableContextPrompt(DatabaseEntry database, DatabaseDetail detail, TableDetail table, string instructions)
+        {
+            StringBuilder builder = new StringBuilder();
+            builder.AppendLine("Build persisted context for exactly one table in the selected Tablix database using only the last crawl below and the user's instructions.");
+            builder.AppendLine("Output only the table context text to save. Do not wrap it in markdown fences. Do not include credentials, secrets, raw rows, or unrelated commentary.");
+            builder.AppendLine();
+            builder.AppendLine("User instructions:");
+            builder.AppendLine(instructions);
+            builder.AppendLine();
+            builder.AppendLine("Database:");
+            builder.AppendLine("- Id: " + database.Id);
+            builder.AppendLine("- Name: " + (database.Name ?? database.DatabaseName ?? database.Filename ?? database.Id));
+            builder.AppendLine("- Type: " + database.Type);
+            builder.AppendLine("- Schema: " + (database.Schema ?? detail.Schema ?? "(default)"));
+            builder.AppendLine();
+            builder.AppendLine("Database context:");
+            builder.AppendLine(String.IsNullOrWhiteSpace(database.Context) ? "(none)" : database.Context);
+            builder.AppendLine();
+            builder.AppendLine("Selected table:");
+            builder.AppendLine("- Table id: " + table.TableId);
+            builder.AppendLine("- Name: " + table.SchemaName + "." + table.TableName);
+            builder.AppendLine("- Existing table context: " + (String.IsNullOrWhiteSpace(table.Context) ? "(none)" : table.Context));
+            builder.AppendLine("- Columns: " + String.Join(", ", table.Columns.Select(column => column.ColumnName + " " + column.DataType + (column.IsPrimaryKey ? " primary key" : "") + (column.IsNullable ? " nullable" : " not null"))));
+            if (table.ForeignKeys.Count > 0)
+                builder.AppendLine("- Declared FKs: " + String.Join("; ", table.ForeignKeys.Select(foreignKey => foreignKey.ColumnName + " -> " + foreignKey.ReferencedTable + "." + foreignKey.ReferencedColumn)));
+            if (table.Indexes.Count > 0)
+                builder.AppendLine("- Indexes: " + String.Join("; ", table.Indexes.Select(index => index.IndexName + "(" + String.Join(", ", index.Columns) + ")" + (index.IsUnique ? " unique" : ""))));
+            builder.AppendLine();
+            builder.AppendLine("Other tables for relationship context:");
+
+            List<TableDetail> relatedTables = detail.Tables
+                .Where(candidate => !String.Equals(candidate.TableId, table.TableId, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(candidate => candidate.SchemaName)
+                .ThenBy(candidate => candidate.TableName)
+                .Take(100)
+                .ToList();
+
+            foreach (TableDetail related in relatedTables)
+            {
+                builder.AppendLine("- " + related.SchemaName + "." + related.TableName + ": " + String.Join(", ", related.Columns.Select(column => column.ColumnName)));
+            }
+
+            return builder.ToString();
+        }
+
         private static string NormalizeGeneratedContext(string context)
         {
             if (String.IsNullOrWhiteSpace(context)) return null;
@@ -580,89 +758,451 @@ namespace Tablix.Server.Handlers
             return normalized.Trim();
         }
 
-        private async Task<ChatToolExecution> TryExecuteQueryFromAssistantAsync(
+        private async Task<ChatExecutionResult> ExecuteChatResponseAsync(
+            CompletionClientBase client,
             ChatPreparation preparation,
             ChatRequest request,
-            string assistantText,
             CancellationToken token,
             Func<ChatStreamEvent, Task> sendEventAsync)
         {
-            string sql = ExtractSql(assistantText);
-            if (String.IsNullOrWhiteSpace(sql))
-                return new ChatToolExecution();
+            ChatExecutionPolicy policy = BuildExecutionPolicy(preparation, request);
+            if (!policy.ToolsEnabled)
+            {
+                return await ExecutePlainChatAsync(client, preparation, "execution_disabled", policy.CapabilityNotice, token).ConfigureAwait(false);
+            }
 
-            if (!ShouldExecuteSql(request, assistantText, sql))
-                return new ChatToolExecution();
+            if (policy.UseNativeTools)
+            {
+                ChatExecutionResult nativeResult = await ExecuteNativeToolChatAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
+                if (nativeResult.Success && nativeResult.ToolCalls.Count > 0)
+                    return nativeResult;
 
+                if (!nativeResult.Success && !policy.FallbackEnabled)
+                    return nativeResult;
+
+                if (!policy.UserAskedForData || policy.UserAskedOnlyForSql || !policy.FallbackEnabled)
+                    return nativeResult.Success ? nativeResult : await ExecutePlainChatAsync(client, preparation, "native_failed_plain", nativeResult.CapabilityNotice, token).ConfigureAwait(false);
+
+                ChatExecutionResult fallbackResult = await ExecuteFallbackPlanningAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
+                fallbackResult.CapabilityNotice = "The model did not request a native tool for this data question. Tablix used server-side fallback execution.";
+                return fallbackResult;
+            }
+
+            if (policy.UserAskedForData && !policy.UserAskedOnlyForSql && policy.FallbackEnabled)
+                return await ExecuteFallbackPlanningAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
+
+            return await ExecutePlainChatAsync(client, preparation, "plain", policy.CapabilityNotice, token).ConfigureAwait(false);
+        }
+
+        private async Task<ChatExecutionResult> ExecuteNativeToolChatAsync(
+            CompletionClientBase client,
+            ChatPreparation preparation,
+            ChatExecutionPolicy policy,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            List<PromptChatMessage> messages = BuildPromptMessages(preparation);
+            List<ChatToolCall> executedTools = new List<ChatToolCall>();
+            ToolChatResponse response = null;
+
+            for (int iteration = 0; iteration < policy.MaxNativeToolIterations; iteration++)
+            {
+                ToolChatRequest toolRequest = new ToolChatRequest
+                {
+                    Model = preparation.Provider.Model,
+                    Messages = messages,
+                    Tools = TablixChatToolDefinitions.Build(),
+                    ToolChoice = "auto",
+                    Temperature = preparation.Provider.Temperature,
+                    TopP = preparation.Provider.TopP,
+                    MaxTokens = preparation.Provider.MaxTokens
+                };
+
+                response = await client.ToolChatAsync(toolRequest, token).ConfigureAwait(false);
+                if (!response.Success)
+                {
+                    stopwatch.Stop();
+                    return new ChatExecutionResult
+                    {
+                        Success = false,
+                        Error = response.Error,
+                        Model = response.Model ?? preparation.Provider.Model,
+                        ExecutionPath = "native_tool_call_failed",
+                        CapabilityNotice = policy.CapabilityNotice,
+                        ToolCalls = executedTools
+                    };
+                }
+
+                if (response.ToolCalls == null || response.ToolCalls.Count == 0)
+                    break;
+
+                messages.Add(response.ToAssistantMessage());
+
+                foreach (PromptToolCall toolCall in response.ToolCalls)
+                {
+                    ChatToolCall executed = await ExecutePromptToolCallAsync(preparation, toolCall, "native", token, sendEventAsync).ConfigureAwait(false);
+                    executedTools.Add(executed);
+                    string toolResultContent = BuildToolResultContent(executed);
+                    messages.Add(PromptChatMessage.ToolResult(toolCall.Id, toolCall.Name, toolResultContent));
+                }
+            }
+
+            if (executedTools.Count > 0)
+            {
+                ToolChatRequest finalRequest = new ToolChatRequest
+                {
+                    Model = preparation.Provider.Model,
+                    Messages = messages,
+                    Tools = new List<ToolDefinition>(),
+                    ToolChoice = "none",
+                    Temperature = preparation.Provider.Temperature,
+                    TopP = preparation.Provider.TopP,
+                    MaxTokens = preparation.Provider.MaxTokens
+                };
+
+                response = await client.ToolChatAsync(finalRequest, token).ConfigureAwait(false);
+            }
+
+            stopwatch.Stop();
+
+            if (response == null)
+            {
+                return new ChatExecutionResult
+                {
+                    Success = false,
+                    Error = "Provider returned no response.",
+                    Model = preparation.Provider.Model,
+                    ExecutionPath = "native_no_response",
+                    CapabilityNotice = policy.CapabilityNotice,
+                    ToolCalls = executedTools
+                };
+            }
+
+            if (!response.Success)
+            {
+                return new ChatExecutionResult
+                {
+                    Success = false,
+                    Error = response.Error,
+                    Model = response.Model ?? preparation.Provider.Model,
+                    ExecutionPath = "native_final_failed",
+                    CapabilityNotice = policy.CapabilityNotice,
+                    ToolCalls = executedTools
+                };
+            }
+
+            string message = response.Text ?? String.Empty;
+            return new ChatExecutionResult
+            {
+                Success = true,
+                Message = message,
+                Model = response.Model ?? preparation.Provider.Model,
+                ExecutionPath = executedTools.Count > 0 ? "native_tool_calls" : "native_no_tool_call",
+                CapabilityNotice = policy.CapabilityNotice,
+                ToolCalls = executedTools,
+                Telemetry = CreateTelemetry(response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, preparation.Prompt, message, null)
+            };
+        }
+
+        private async Task<ChatExecutionResult> ExecuteFallbackPlanningAsync(
+            CompletionClientBase client,
+            ChatPreparation preparation,
+            ChatExecutionPolicy policy,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            ChatCompletionOptions plannerOptions = CreateOptions(preparation.Provider, BuildFallbackPlannerSystemPrompt(preparation));
+            plannerOptions.Temperature = preparation.Settings.Chat.PromptProcessing.PlannerTemperature;
+            string plannerPrompt = BuildFallbackPlannerPrompt(preparation);
+            ChatResponse planResponse = null;
+            FallbackQueryPlan plan = null;
+
+            for (int attempt = 0; attempt < policy.MaxPlanningAttempts; attempt++)
+            {
+                planResponse = await client.ChatAsync(plannerPrompt, plannerOptions, token).ConfigureAwait(false);
+                if (!planResponse.Success)
+                    break;
+
+                plan = ParseFallbackPlan(planResponse.Text);
+                if (plan != null && plan.Execute && !String.IsNullOrWhiteSpace(plan.Query))
+                    break;
+
+                plannerPrompt = plannerPrompt + Environment.NewLine + "Return only valid JSON matching {\"Execute\":true,\"Query\":\"...\",\"Reason\":\"...\"}.";
+            }
+
+            if (planResponse == null || !planResponse.Success)
+            {
+                stopwatch.Stop();
+                return new ChatExecutionResult
+                {
+                    Success = false,
+                    Error = planResponse == null ? "Fallback planner returned no response." : planResponse.Error,
+                    Model = preparation.Provider.Model,
+                    ExecutionPath = "fallback_planner_failed",
+                    CapabilityNotice = policy.CapabilityNotice
+                };
+            }
+
+            if (plan == null || !plan.Execute || String.IsNullOrWhiteSpace(plan.Query))
+            {
+                stopwatch.Stop();
+                return await ExecutePlainChatAsync(client, preparation, "fallback_no_plan", policy.CapabilityNotice, token).ConfigureAwait(false);
+            }
+
+            ChatToolCall toolCall = await ExecutePlannedQueryAsync(preparation, plan.Query, "fallback", token, sendEventAsync).ConfigureAwait(false);
+            string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, planResponse.Text, toolCall);
+            ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
+            ChatResponse finalResponse = await client.ChatAsync(followupPrompt, options, token).ConfigureAwait(false);
+            stopwatch.Stop();
+
+            string message = finalResponse.Success ? finalResponse.Text : "The query could not be executed: " + (toolCall.Error ?? finalResponse.Error);
+            return new ChatExecutionResult
+            {
+                Success = true,
+                Message = message,
+                Model = finalResponse.Success ? finalResponse.Model : preparation.Provider.Model,
+                ExecutionPath = "server_fallback",
+                CapabilityNotice = policy.CapabilityNotice,
+                ToolCalls = new List<ChatToolCall> { toolCall },
+                Telemetry = CreateTelemetry(stopwatch.ElapsedMilliseconds, stopwatch.ElapsedMilliseconds, preparation.Prompt, message, null)
+            };
+        }
+
+        private async Task<ChatExecutionResult> ExecutePlainChatAsync(CompletionClientBase client, ChatPreparation preparation, string executionPath, string capabilityNotice, CancellationToken token)
+        {
+            ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            ChatResponse response = await client.ChatAsync(preparation.Prompt, options, token).ConfigureAwait(false);
+            stopwatch.Stop();
+
+            if (!response.Success)
+            {
+                return new ChatExecutionResult
+                {
+                    Success = false,
+                    Error = response.Error,
+                    Model = response.Model ?? preparation.Provider.Model,
+                    ExecutionPath = executionPath,
+                    CapabilityNotice = capabilityNotice
+                };
+            }
+
+            return new ChatExecutionResult
+            {
+                Success = true,
+                Message = response.Text,
+                Model = response.Model ?? preparation.Provider.Model,
+                ExecutionPath = executionPath,
+                CapabilityNotice = capabilityNotice,
+                Telemetry = CreateTelemetry(response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, preparation.Prompt, response.Text, null)
+            };
+        }
+
+        private async Task<ChatToolCall> ExecutePromptToolCallAsync(ChatPreparation preparation, PromptToolCall promptToolCall, string phase, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync)
+        {
             ChatToolCall toolCall = new ChatToolCall
             {
-                Id = Guid.NewGuid().ToString("n"),
-                Name = "tablix_execute_query",
-                Arguments = Serializer.SerializeJson(new Dictionary<string, string>
-                {
-                    { "DatabaseId", preparation.Database.Id },
-                    { "Query", sql }
-                }, false)
+                Id = String.IsNullOrWhiteSpace(promptToolCall.Id) ? Guid.NewGuid().ToString("n") : promptToolCall.Id,
+                Name = promptToolCall.Name,
+                Arguments = promptToolCall.ArgumentsJson,
+                Phase = phase
             };
 
-            if (sendEventAsync != null)
+            if (!String.Equals(promptToolCall.Name, TablixChatToolDefinitions.ExecuteQueryToolName, StringComparison.Ordinal))
             {
-                await sendEventAsync(new ChatStreamEvent
-                {
-                    EventType = "tool_started",
-                    DatabaseId = preparation.Database.Id,
-                    ProviderId = preparation.Provider.Id,
-                    Model = preparation.Provider.Model,
-                    ToolCall = toolCall
-                }).ConfigureAwait(false);
-            }
-
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            string validationError = QueryValidator.Validate(sql, preparation.Database.AllowedQueries);
-            if (validationError != null)
-            {
-                stopwatch.Stop();
+                toolCall.Error = "Unknown tool '" + promptToolCall.Name + "'.";
                 toolCall.Success = false;
-                toolCall.TotalMs = stopwatch.Elapsed.TotalMilliseconds;
-                toolCall.Error = validationError;
-                await SendToolCompletedIfNeededAsync(sendEventAsync, preparation, toolCall).ConfigureAwait(false);
-                return new ChatToolExecution { ToolCall = toolCall };
+                await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
+                return toolCall;
             }
 
+            TablixExecuteQueryArguments arguments = null;
             try
             {
-                IDatabaseCrawler crawler = CrawlerFactory.Create(preparation.Database.Type);
-                QueryResult result = await crawler.ExecuteQueryAsync(preparation.Database, sql, token).ConfigureAwait(false);
-                stopwatch.Stop();
-                toolCall.Success = result.Success;
-                toolCall.TotalMs = stopwatch.Elapsed.TotalMilliseconds;
-                toolCall.Result = TruncateToolResult(Serializer.SerializeJson(result, false), preparation.Settings.Chat.Tools.MaxToolOutputCharacters);
-                toolCall.Error = result.Error;
+                arguments = Serializer.DeserializeJson<TablixExecuteQueryArguments>(promptToolCall.ArgumentsJson);
             }
             catch (Exception ex)
             {
-                stopwatch.Stop();
+                toolCall.Error = "Tool arguments could not be parsed: " + ex.Message;
                 toolCall.Success = false;
-                toolCall.TotalMs = stopwatch.Elapsed.TotalMilliseconds;
-                toolCall.Error = ex.Message;
+                await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
+                return toolCall;
             }
 
-            await SendToolCompletedIfNeededAsync(sendEventAsync, preparation, toolCall).ConfigureAwait(false);
-            return new ChatToolExecution { ToolCall = toolCall };
+            if (arguments == null)
+                arguments = new TablixExecuteQueryArguments();
+
+            if (!String.Equals(arguments.DatabaseId, preparation.Database.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                toolCall.Error = "Tool call attempted to use database '" + arguments.DatabaseId + "' but chat is restricted to selected database '" + preparation.Database.Id + "'.";
+                toolCall.Success = false;
+                await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
+                return toolCall;
+            }
+
+            return await ExecutePlannedQueryAsync(preparation, arguments.Query, phase, token, sendEventAsync, toolCall).ConfigureAwait(false);
         }
 
-        private static async Task SendToolCompletedIfNeededAsync(Func<ChatStreamEvent, Task> sendEventAsync, ChatPreparation preparation, ChatToolCall toolCall)
+        private async Task<ChatToolCall> ExecutePlannedQueryAsync(ChatPreparation preparation, string query, string phase, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync, ChatToolCall existingToolCall = null)
+        {
+            ChatToolCall toolCall = existingToolCall ?? new ChatToolCall
+            {
+                Id = Guid.NewGuid().ToString("n"),
+                Name = TablixChatToolDefinitions.ExecuteQueryToolName,
+                Arguments = Serializer.SerializeJson(new TablixExecuteQueryArguments { DatabaseId = preparation.Database.Id, Query = query }, false),
+                Phase = phase
+            };
+
+            await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_started").ConfigureAwait(false);
+
+            ChatQueryExecutionResult executionResult = await _QueryExecution.ExecuteAsync(
+                preparation.Database,
+                query,
+                preparation.Settings.Chat.PromptProcessing.RetryAfterSchemaRefresh,
+                token).ConfigureAwait(false);
+
+            toolCall.Success = executionResult.Success;
+            toolCall.TotalMs = executionResult.TotalMs + executionResult.SchemaRefreshMs;
+            toolCall.Error = executionResult.Error;
+            toolCall.Result = TruncateToolResult(Serializer.SerializeJson(ChatQueryToolResult.From(executionResult), false), preparation.Settings.Chat.Tools.MaxToolOutputCharacters);
+
+            await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
+            return toolCall;
+        }
+
+        private static async Task SendToolLifecycleEventAsync(Func<ChatStreamEvent, Task> sendEventAsync, ChatPreparation preparation, ChatToolCall toolCall, string eventType)
         {
             if (sendEventAsync == null) return;
 
             await sendEventAsync(new ChatStreamEvent
             {
-                EventType = "tool_completed",
+                EventType = eventType,
                 DatabaseId = preparation.Database.Id,
                 ProviderId = preparation.Provider.Id,
                 Model = preparation.Provider.Model,
                 ToolCall = toolCall
             }).ConfigureAwait(false);
+        }
+
+        private static List<PromptChatMessage> BuildPromptMessages(ChatPreparation preparation)
+        {
+            return new List<PromptChatMessage>
+            {
+                PromptChatMessage.System(preparation.SystemPrompt),
+                PromptChatMessage.User(preparation.Prompt)
+            };
+        }
+
+        private static string BuildToolResultContent(ChatToolCall toolCall)
+        {
+            ToolResultEnvelope envelope = new ToolResultEnvelope
+            {
+                Success = toolCall.Success,
+                Result = toolCall.Result,
+                Error = toolCall.Error
+            };
+
+            return Serializer.SerializeJson(envelope, false);
+        }
+
+        private static ChatExecutionPolicy BuildExecutionPolicy(ChatPreparation preparation, ChatRequest request)
+        {
+            PromptProcessingSettings promptProcessing = preparation.Settings.Chat.PromptProcessing;
+            bool toolsEnabled = preparation.Settings.Chat.Tools.Enabled && promptProcessing.Enabled;
+            bool preferNativeTools = request.PreferNativeToolCalls ?? promptProcessing.PreferNativeToolCalls;
+            bool fallbackEnabled = request.FallbackWhenNativeToolNotCalled ?? promptProcessing.FallbackWhenNativeToolNotCalled;
+            bool useNativeTools = toolsEnabled && preferNativeTools && preparation.Provider.SupportsNativeToolCalls && preparation.Provider.UseNativeToolCalls;
+            string userMessage = LastUserMessage(request);
+            string normalizedUser = userMessage.ToLowerInvariant();
+
+            return new ChatExecutionPolicy
+            {
+                ToolsEnabled = toolsEnabled,
+                PreferNativeTools = preferNativeTools,
+                FallbackEnabled = fallbackEnabled,
+                UseNativeTools = useNativeTools,
+                UserAskedForData = UserAskedForData(normalizedUser),
+                UserAskedOnlyForSql = UserAskedOnlyForSql(normalizedUser),
+                MaxNativeToolIterations = promptProcessing.MaxNativeToolIterations,
+                MaxPlanningAttempts = promptProcessing.MaxPlanningAttempts,
+                CapabilityNotice = BuildCapabilityNotice(preparation, request)
+            };
+        }
+
+        private static string DetermineInitialExecutionPath(ChatPreparation preparation, ChatRequest request)
+        {
+            ChatExecutionPolicy policy = BuildExecutionPolicy(preparation, request);
+            if (!policy.ToolsEnabled) return "execution_disabled";
+            if (policy.UseNativeTools) return "native_tool_calls";
+            if (policy.FallbackEnabled) return "server_fallback";
+            return "plain";
+        }
+
+        private static string BuildCapabilityNotice(ChatPreparation preparation, ChatRequest request)
+        {
+            PromptProcessingSettings promptProcessing = preparation.Settings.Chat.PromptProcessing;
+            if (!preparation.Settings.Chat.Tools.Enabled || !promptProcessing.Enabled)
+                return "Database query execution is disabled for chat. The assistant can discuss schema and draft SQL, but it cannot run queries.";
+
+            bool preferNativeTools = request.PreferNativeToolCalls ?? promptProcessing.PreferNativeToolCalls;
+            bool fallbackEnabled = request.FallbackWhenNativeToolNotCalled ?? promptProcessing.FallbackWhenNativeToolNotCalled;
+
+            if (preferNativeTools && preparation.Provider.SupportsNativeToolCalls && preparation.Provider.UseNativeToolCalls)
+                return "Native tool calls are enabled for this provider. Tablix still validates every database query before execution.";
+
+            if (fallbackEnabled)
+                return "This provider is not configured for native tool calls. Tablix will use server-side query planning and execution for database data requests.";
+
+            return "This provider is not configured for native tool calls and server-side fallback execution is disabled.";
+        }
+
+        private static string BuildFallbackPlannerSystemPrompt(ChatPreparation preparation)
+        {
+            return preparation.SystemPrompt + " You are now planning a Tablix tool call. Return only JSON matching the FallbackQueryPlan schema. Do not include markdown.";
+        }
+
+        private static string BuildFallbackPlannerPrompt(ChatPreparation preparation)
+        {
+            StringBuilder builder = new StringBuilder();
+            builder.AppendLine(preparation.Prompt);
+            builder.AppendLine();
+            builder.AppendLine("The latest user message asks for database data. Build one executable query if a permitted query can answer it.");
+            builder.AppendLine("Return only compact JSON with properties Execute, Query, and Reason.");
+            builder.AppendLine("Use the selected database ID only. Do not include semicolons.");
+            builder.AppendLine("Example: {\"Execute\":true,\"Query\":\"SELECT COUNT(*) AS UserCount FROM users\",\"Reason\":\"The user asked for a user count.\"}");
+            return builder.ToString();
+        }
+
+        private static FallbackQueryPlan ParseFallbackPlan(string text)
+        {
+            if (String.IsNullOrWhiteSpace(text)) return null;
+
+            string json = ExtractJsonPayload(text);
+            if (String.IsNullOrWhiteSpace(json)) return null;
+
+            try
+            {
+                return Serializer.DeserializeJson<FallbackQueryPlan>(json);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string ExtractJsonPayload(string text)
+        {
+            string normalized = text.Trim();
+            Match fenced = Regex.Match(normalized, "```(?:json)?\\s*(?<json>[\\s\\S]*?)```", RegexOptions.IgnoreCase);
+            if (fenced.Success)
+                normalized = fenced.Groups["json"].Value.Trim();
+
+            int start = normalized.IndexOf('{');
+            int end = normalized.LastIndexOf('}');
+            if (start < 0 || end <= start) return null;
+            return normalized.Substring(start, end - start + 1);
         }
 
         private static string BuildToolFollowupPrompt(string originalPrompt, string assistantDraft, ChatToolCall toolCall)
@@ -686,80 +1226,18 @@ namespace Tablix.Server.Handlers
             return builder.ToString();
         }
 
-        private static string ExtractSql(string text)
-        {
-            if (String.IsNullOrWhiteSpace(text)) return null;
-
-            Match fenced = Regex.Match(text, "```(?:sql)?\\s*(?<sql>[\\s\\S]*?)```", RegexOptions.IgnoreCase);
-            if (fenced.Success)
-                return NormalizeSql(fenced.Groups["sql"].Value);
-
-            Match statement = Regex.Match(text, "\\b(?<sql>(SELECT|WITH|INSERT|UPDATE|DELETE)\\b[\\s\\S]*?)(?:;|$)", RegexOptions.IgnoreCase);
-            if (statement.Success)
-                return NormalizeSql(statement.Groups["sql"].Value);
-
-            return null;
-        }
-
-        private static string NormalizeSql(string sql)
-        {
-            if (String.IsNullOrWhiteSpace(sql)) return null;
-
-            string normalized = sql.Trim();
-            int semicolon = normalized.IndexOf(';');
-            if (semicolon >= 0)
-            {
-                string remainder = normalized.Substring(semicolon + 1).Trim();
-                if (!String.IsNullOrEmpty(remainder))
-                    return null;
-
-                normalized = normalized.Substring(0, semicolon).Trim();
-            }
-
-            return String.IsNullOrWhiteSpace(normalized) ? null : normalized;
-        }
-
-        private static bool ShouldExecuteSql(ChatRequest request, string assistantText, string sql)
-        {
-            string userMessage = LastUserMessage(request);
-            string user = userMessage.ToLowerInvariant();
-            string assistant = (assistantText ?? String.Empty).ToLowerInvariant();
-            string statementType = FirstStatementKeyword(sql);
-
-            if (UserAskedOnlyForSql(user))
-                return false;
-
-            if (IsWriteStatement(statementType))
-                return UserAskedForWrite(user, statementType);
-
-            if (UserAskedForData(user))
-                return true;
-
-            return assistant.Contains("you can run") ||
-                   assistant.Contains("running this") ||
-                   assistant.Contains("executing this") ||
-                   assistant.Contains("will return");
-        }
-
         private static string LastUserMessage(ChatRequest request)
         {
             if (request == null || request.Messages == null) return String.Empty;
 
             for (int i = request.Messages.Count - 1; i >= 0; i--)
             {
-                ChatMessage message = request.Messages[i];
+                CoreChatMessage message = request.Messages[i];
                 if (message != null && String.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
                     return message.Content ?? String.Empty;
             }
 
             return String.Empty;
-        }
-
-        private static string FirstStatementKeyword(string sql)
-        {
-            if (String.IsNullOrWhiteSpace(sql)) return String.Empty;
-            Match match = Regex.Match(sql, "^\\s*(?<keyword>[A-Za-z]+)", RegexOptions.IgnoreCase);
-            return match.Success ? match.Groups["keyword"].Value.ToUpperInvariant() : String.Empty;
         }
 
         private static bool UserAskedOnlyForSql(string user)
@@ -789,27 +1267,6 @@ namespace Tablix.Server.Handlers
                    user.Contains("summarize") ||
                    user.Contains("what is") ||
                    user.Contains("what are");
-        }
-
-        private static bool UserAskedForWrite(string user, string statementType)
-        {
-            if (String.Equals(statementType, "INSERT", StringComparison.OrdinalIgnoreCase))
-                return user.Contains("insert") || user.Contains("add") || user.Contains("create");
-
-            if (String.Equals(statementType, "UPDATE", StringComparison.OrdinalIgnoreCase))
-                return user.Contains("update") || user.Contains("change") || user.Contains("set ");
-
-            if (String.Equals(statementType, "DELETE", StringComparison.OrdinalIgnoreCase))
-                return user.Contains("delete") || user.Contains("remove");
-
-            return false;
-        }
-
-        private static bool IsWriteStatement(string statementType)
-        {
-            return String.Equals(statementType, "INSERT", StringComparison.OrdinalIgnoreCase) ||
-                   String.Equals(statementType, "UPDATE", StringComparison.OrdinalIgnoreCase) ||
-                   String.Equals(statementType, "DELETE", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string TruncateToolResult(string result, int maxCharacters)
@@ -864,29 +1321,5 @@ namespace Tablix.Server.Handlers
 
         #endregion
 
-        #region Private-Classes
-
-        private class ChatPreparation
-        {
-            public DatabaseEntry Database { get; set; } = null;
-            public ModelProviderSettings Provider { get; set; } = null;
-            public DatabaseDetail Detail { get; set; } = null;
-            public TablixSettings Settings { get; set; } = null;
-            public string SystemPrompt { get; set; } = null;
-            public string Prompt { get; set; } = null;
-            public object Error { get; set; } = null;
-
-            public static ChatPreparation Fail(object error)
-            {
-                return new ChatPreparation { Error = error };
-            }
-        }
-
-        private class ChatToolExecution
-        {
-            public ChatToolCall ToolCall { get; set; } = null;
-        }
-
-        #endregion
     }
 }

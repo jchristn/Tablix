@@ -50,6 +50,26 @@ namespace Tablix.Core.Models
         /// </summary>
         public bool HasApiKey { get; set; } = false;
 
+        /// <summary>
+        /// Whether this provider/model is expected to support native PolyPrompt tool calls.
+        /// </summary>
+        public bool SupportsNativeToolCalls { get; set; } = false;
+
+        /// <summary>
+        /// Whether native tool calls are enabled for this provider.
+        /// </summary>
+        public bool UseNativeToolCalls { get; set; } = false;
+
+        /// <summary>
+        /// Whether this provider/model is expected to reliably return strict JSON for fallback planning.
+        /// </summary>
+        public bool SupportsStrictJson { get; set; } = false;
+
+        /// <summary>
+        /// Human-readable note describing provider/model tool capability.
+        /// </summary>
+        public string ToolCapabilityNote { get; set; } = null;
+
         #endregion
 
         #region Constructors-and-Factories
@@ -79,7 +99,11 @@ namespace Tablix.Core.Models
                 Model = provider.Model,
                 Enabled = provider.Enabled,
                 DefaultStreaming = provider.DefaultStreaming,
-                HasApiKey = !System.String.IsNullOrEmpty(provider.ApiKey)
+                HasApiKey = !System.String.IsNullOrEmpty(provider.ApiKey),
+                SupportsNativeToolCalls = provider.SupportsNativeToolCalls,
+                UseNativeToolCalls = provider.UseNativeToolCalls,
+                SupportsStrictJson = provider.SupportsStrictJson,
+                ToolCapabilityNote = provider.ToolCapabilityNote
             };
         }
 

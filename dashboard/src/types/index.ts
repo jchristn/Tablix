@@ -38,8 +38,10 @@ export interface IndexDetail {
 }
 
 export interface TableDetail {
+  TableId: string | null;
   TableName: string;
   SchemaName: string;
+  Context: string | null;
   Columns: ColumnDetail[];
   ForeignKeys: ForeignKeyDetail[];
   Indexes: IndexDetail[];
@@ -107,6 +109,22 @@ export interface BuildContextResponse {
   Error: string | null;
 }
 
+export interface BuildTableContextRequest {
+  ProviderId: string | null;
+  Prompt: string | null;
+  TableIds: string[];
+}
+
+export interface BuildTableContextResponse {
+  Success: boolean;
+  DatabaseId: string;
+  ProviderId: string;
+  Model: string | null;
+  Objects: TableContextRead[];
+  Telemetry: ChatTelemetry | null;
+  Error: string | null;
+}
+
 export interface ModelProviderSummary {
   Id: string;
   Name: string | null;
@@ -116,6 +134,10 @@ export interface ModelProviderSummary {
   Enabled: boolean;
   DefaultStreaming: boolean;
   HasApiKey: boolean;
+  SupportsNativeToolCalls: boolean;
+  UseNativeToolCalls: boolean;
+  SupportsStrictJson: boolean;
+  ToolCapabilityNote: string | null;
 }
 
 export interface ChatOptionsResponse {
@@ -151,6 +173,8 @@ export interface ChatRequest {
   ProviderId: string;
   Messages: ChatMessageRequest[];
   Streaming: boolean | null;
+  PreferNativeToolCalls?: boolean | null;
+  FallbackWhenNativeToolNotCalled?: boolean | null;
 }
 
 export interface ChatTelemetry {
@@ -170,6 +194,7 @@ export interface ChatToolCall {
   Error: string | null;
   Success: boolean;
   TotalMs: number;
+  Phase: string | null;
 }
 
 export interface ChatResponseResult {
@@ -180,6 +205,8 @@ export interface ChatResponseResult {
   Message: string | null;
   Telemetry: ChatTelemetry | null;
   ToolCalls: ChatToolCall[];
+  ExecutionPath: string | null;
+  CapabilityNotice: string | null;
   Error: string | null;
 }
 
@@ -192,6 +219,8 @@ export interface ChatStreamEvent {
   Model: string | null;
   Telemetry: ChatTelemetry | null;
   ToolCall: ChatToolCall | null;
+  ExecutionPath: string | null;
+  CapabilityNotice: string | null;
   Done: boolean;
   Error: string | null;
 }
@@ -228,6 +257,18 @@ export interface ChatToolSettings {
   MaxToolOutputCharacters: number;
 }
 
+export interface PromptProcessingSettings {
+  Enabled: boolean;
+  PreferNativeToolCalls: boolean;
+  RequireExecutionForDataRequests: boolean;
+  AllowSqlOnlyByExplicitRequest: boolean;
+  FallbackWhenNativeToolNotCalled: boolean;
+  RetryAfterSchemaRefresh: boolean;
+  MaxNativeToolIterations: number;
+  MaxPlanningAttempts: number;
+  PlannerTemperature: number;
+}
+
 export interface ModelProviderRead {
   Id: string;
   Name: string | null;
@@ -239,6 +280,10 @@ export interface ModelProviderRead {
   SystemPrompt: string | null;
   Enabled: boolean;
   DefaultStreaming: boolean;
+  SupportsNativeToolCalls: boolean;
+  UseNativeToolCalls: boolean;
+  SupportsStrictJson: boolean;
+  ToolCapabilityNote: string | null;
   Temperature: number | null;
   TopP: number | null;
   MaxTokens: number | null;
@@ -249,6 +294,80 @@ export interface ModelProviderUpdate extends ModelProviderRead {
   ClearApiKey: boolean;
 }
 
+export interface ProviderConnectivityTestRequest {
+  Provider: ModelProviderUpdate;
+}
+
+export interface ProviderConnectivityTestResponse {
+  Success: boolean;
+  ProviderId: string | null;
+  Model: string | null;
+  Message: string | null;
+  Error: string | null;
+  TotalMs: number;
+}
+
+export interface DatabaseConnectivityTestRequest {
+  Database: DatabaseEntry;
+}
+
+export interface DatabaseConnectivityTestResponse {
+  Success: boolean;
+  DatabaseId: string | null;
+  Message: string | null;
+  Error: string | null;
+  TotalMs: number;
+}
+
+export interface TableContextRead {
+  Id: string | null;
+  DatabaseId: string | null;
+  TableId: string | null;
+  SchemaName: string | null;
+  TableName: string | null;
+  Context: string | null;
+  Source: string | null;
+  UpdatedUtc: string;
+}
+
+export interface TableContextUpdateRequest {
+  Context: string | null;
+  Mode: 'replace' | 'append';
+  Source: string | null;
+}
+
+export interface PersistenceDatabaseSettings {
+  Type: string;
+  Filename: string;
+}
+
+export interface PersistenceHealthRead {
+  Type: string;
+  Filename: string | null;
+  ResolvedFilename: string | null;
+  Exists: boolean;
+  CanOpen: boolean;
+  Error: string | null;
+}
+
+export interface SetupStateRead {
+  Id: string;
+  Status: string;
+  CurrentStep: string | null;
+  SelectedProviderId: string | null;
+  SelectedDatabaseId: string | null;
+  CompletedUtc: string | null;
+  UpdatedUtc: string;
+  ShouldShowWizard: boolean;
+}
+
+export interface SetupStateUpdateRequest {
+  Status: string;
+  CurrentStep: string | null;
+  SelectedProviderId: string | null;
+  SelectedDatabaseId: string | null;
+}
+
 export interface ChatSettingsRead {
   Enabled: boolean;
   DefaultProviderId: string | null;
@@ -256,14 +375,14 @@ export interface ChatSettingsRead {
   SystemPrompt: string | null;
   MaxContextTables: number;
   Tools: ChatToolSettings;
-  Providers: ModelProviderRead[];
+  PromptProcessing: PromptProcessingSettings;
 }
 
-export interface ChatSettingsUpdate extends Omit<ChatSettingsRead, 'Providers'> {
-  Providers: ModelProviderUpdate[];
-}
+export interface ChatSettingsUpdate extends ChatSettingsRead {}
 
 export interface SettingsReadResponse {
+  Persistence: PersistenceDatabaseSettings;
+  PersistenceHealth: PersistenceHealthRead;
   Rest: RestSettings;
   Logging: LoggingSettings;
   ApiKeys: string[];
@@ -272,6 +391,7 @@ export interface SettingsReadResponse {
 }
 
 export interface SettingsUpdateRequest {
+  Persistence: PersistenceDatabaseSettings;
   Rest: RestSettings;
   Logging: LoggingSettings;
   ApiKeys: string[];

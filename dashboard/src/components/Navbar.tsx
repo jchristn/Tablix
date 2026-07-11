@@ -61,6 +61,7 @@ export default function Navbar() {
         <Link to="/" title="View and manage configured databases" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Databases</Link>
         <Link to="/query" title="Execute SQL queries against a database" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Query</Link>
         <Link to="/chat" title="Chat with a configured database" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Chat</Link>
+        <Link to="/models" title="Manage configured model providers" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Models</Link>
         <Link to="/settings" title="View and edit server settings" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Settings</Link>
       </div>
 

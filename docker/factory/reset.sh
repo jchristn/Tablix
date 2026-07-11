@@ -28,6 +28,8 @@ fi
 echo ""
 echo "Restoring factory database..."
 cp -f "${factory_dir}/database.db" "${docker_dir}/database.db"
+cp -f "${factory_dir}/tablix.db" "${docker_dir}/tablix.db"
+rm -f "${docker_dir}/tablix.db-wal" "${docker_dir}/tablix.db-shm"
 
 echo ""
 echo "Restoring factory configuration..."

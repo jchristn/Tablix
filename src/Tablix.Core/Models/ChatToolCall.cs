@@ -42,6 +42,11 @@ namespace Tablix.Core.Models
         /// </summary>
         public double TotalMs { get; set; } = 0;
 
+        /// <summary>
+        /// Tool execution phase: native, fallback, validation, execution, or schema_refresh.
+        /// </summary>
+        public string Phase { get; set; } = null;
+
         #endregion
 
         #region Constructors-and-Factories

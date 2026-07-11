@@ -19,9 +19,11 @@ Credential redaction is enforced on discovery tools:
 - `HasUser` indicates whether a username is configured.
 - `HasPassword` indicates whether a password is configured.
 
-Model provider credentials are configured in `tablix.json` under `Chat.Providers[].ApiKey`. These provider keys are not part of the current MCP tool response surface and must not be stored in database context.
+Model provider credentials are stored in `tablix.db` and managed through the REST Models API or dashboard Models page. These provider keys are not part of the MCP tool response surface and must not be stored in database context.
 
-Do not save secrets, raw query result data, access tokens, connection strings, or passwords into database context with `tablix_update_context`.
+Dashboard Chat uses PolyPrompt `1.5.0` native tool chat when a selected provider is configured for native tool calls. That provider-facing tool loop is internal to REST chat. MCP clients continue to use the explicit MCP tools documented here; `tablix_execute_query` follows the same validation and `AllowedQueries` enforcement used by REST chat native-tool and fallback execution.
+
+Do not save secrets, raw query result data, access tokens, connection strings, or passwords into database or table context with any context update tool.
 
 ## Tool Inventory
 
@@ -32,7 +34,11 @@ Do not save secrets, raw query result data, access tokens, connection strings, o
 | `tablix_list_relationships` | Page through compact declared foreign-key relationship edges |
 | `tablix_discover_table` | Retrieve full geometry for one table |
 | `tablix_execute_query` | Execute one SQL statement against a database |
-| `tablix_update_context` | Persist curated database context back to settings |
+| `tablix_get_database_context` | Read database-level context for one database, multiple databases, or a paged set |
+| `tablix_get_table_context` | Read table-level context for one table, multiple tables, or a paged set |
+| `tablix_update_context` | General database/table context update tool with a `scope` discriminator |
+| `tablix_update_database_context` | Persist curated database-level context |
+| `tablix_update_table_context` | Persist curated table-level context |
 | `tablix_discover_database` | Retrieve full database geometry, optionally paged by table |
 
 ## Recommended Agent Workflow
@@ -42,15 +48,41 @@ Restrict conversation to the selected database, its structure, its contents, and
 1. Call `tablix_discover_databases`.
 2. Select a database by `Id`.
 3. Read `Context`, `AllowedQueries`, `IsCrawled`, and `CrawlError`.
-4. For unknown or large schemas, call `tablix_list_tables` with a conservative `maxResults`, such as `50`.
-5. Continue paging by passing the previous response's `NextSkip` as `skip` until `EndOfResults` is `true`.
-6. Call `tablix_list_relationships` the same way to collect declared foreign-key edges.
-7. Call `tablix_discover_table` for every table needed for SQL generation.
-8. Run `tablix_execute_query` after confirming the statement type is listed in `AllowedQueries` when the user asks for actual data, counts, lists, totals, computed answers, or an explicit database change.
-9. If a query fails because of a bad or unknown column, missing column, or column type mismatch, refresh schema by re-discovering the relevant table or database before retrying.
-10. Use `tablix_update_context` when the user explicitly asks to save context, the workflow clearly requires persisted analysis, or refreshed schema proves saved context has stale column names, stale column types, or stale relationship guidance.
+4. When context quality matters, call `tablix_get_database_context` for the selected database to retrieve the current durable database-level context explicitly.
+5. For unknown or large schemas, call `tablix_list_tables` with a conservative `maxResults`, such as `50`.
+6. Continue paging by passing the previous response's `NextSkip` as `skip` until `EndOfResults` is `true`.
+7. Call `tablix_list_relationships` the same way to collect declared foreign-key edges.
+8. Before using specific tables, call `tablix_get_table_context` for those table IDs or names to retrieve durable table-specific guidance. Use `includeEmpty: true` when you need to know which selected tables have no table context yet.
+9. Call `tablix_discover_table` for every table needed for SQL generation; table context does not replace column/key/index discovery.
+10. Run `tablix_execute_query` after confirming the statement type is listed in `AllowedQueries` when the user asks for actual data, counts, lists, totals, computed answers, or an explicit database change.
+11. If a query fails because of a bad or unknown column, missing column, or column type mismatch, refresh schema by re-discovering the relevant table or database before retrying.
+12. Use `tablix_update_database_context` or `tablix_update_table_context` when the user explicitly asks to save context, the workflow clearly requires persisted analysis, or refreshed schema proves saved context has stale column names, stale column types, or stale relationship guidance.
 
 Use `tablix_discover_database` only for small databases, explicit full-schema requests, or carefully paged full-geometry retrieval.
+
+## Context Management Model
+
+Tablix stores context records in `tablix.db` with two scopes:
+
+- **Database context** describes the selected database as a whole: business purpose, major domains, important tables, declared relationships, inferred relationships clearly labeled as inferred, common query patterns, and global caveats.
+- **Table context** describes one table: table purpose, important columns, business meanings, join paths, filters, row caveats, and table-specific query patterns.
+
+Use the most specific context that applies. Database context is useful for overall orientation. Table context is more precise when generating SQL for known tables. Context is durable guidance, not proof: verify table and column names with `tablix_discover_table` before executing a query.
+
+Context read tools:
+
+- Use `tablix_get_database_context` for one or more database context records.
+- Use `tablix_get_table_context` for one or more table context records.
+- Use `includeEmpty: true` on `tablix_get_table_context` when you need selected crawled tables returned even if no table context exists yet.
+
+Context write tools:
+
+- Prefer `tablix_update_database_context` for database-level context.
+- Prefer `tablix_update_table_context` for table-level context.
+- `tablix_update_context` remains as a general tool and accepts `scope: "Database"` or `scope: "Table"` for compatibility and generic workflows.
+- All update tools accept a single top-level update or an `updates` array for batch updates.
+
+Only write context when the user asked you to save/update it, the workflow explicitly requires persisted analysis, or refreshed schema proves saved context is stale. Never store credentials, API keys, connection strings, raw query result rows, sensitive personal data copied from tables, or unsupported guesses.
 
 ## Common Response Fields
 
@@ -91,17 +123,44 @@ Returned by `tablix_discover_databases`.
 | `IsCrawled` | boolean | Whether cached schema crawl succeeded |
 | `CrawlError` | string or null | Last crawl error, if any |
 
+### DatabaseContextRead
+
+Returned by `tablix_get_database_context`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `DatabaseId` | string | Database entry ID |
+| `Name` | string or null | Database display name |
+| `Type` | string | Database engine type |
+| `Context` | string or null | Saved database-level context |
+
 ### TableSummary
 
 Returned by `tablix_list_tables`.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `TableId` | string or null | Persisted table metadata ID used by REST table-context APIs |
 | `SchemaName` | string or null | Schema name |
 | `TableName` | string | Table name |
 | `Columns` | integer | Number of discovered columns |
 | `ForeignKeys` | integer | Number of declared foreign keys from the table |
 | `Indexes` | integer | Number of discovered indexes |
+
+### TableContextRead
+
+Returned by `tablix_get_table_context` and table-context REST APIs.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Id` | string or null | Context record ID when a persisted context row exists |
+| `DatabaseId` | string | Database entry ID |
+| `TableId` | string | Persisted table metadata ID |
+| `SchemaName` | string or null | Schema name |
+| `TableName` | string | Table name |
+| `Context` | string or null | Saved table-level context, or null when `includeEmpty` returned an empty table |
+| `Source` | string or null | Context source, such as `user`, `model`, or `mcp` |
+| `UpdatedUtc` | string | Last update timestamp when persisted |
 
 ### RelationshipDetail
 
@@ -125,8 +184,10 @@ Returned by `tablix_discover_table` and `tablix_discover_database`.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `TableId` | string or null | Persisted table metadata ID |
 | `TableName` | string | Table name |
 | `SchemaName` | string or null | Schema name |
+| `Context` | string or null | Persisted table-level context, when present |
 | `Columns` | `ColumnDetail[]` | Column geometry |
 | `ForeignKeys` | `ForeignKeyDetail[]` | Declared foreign keys |
 | `Indexes` | `IndexDetail[]` | Index metadata |
@@ -263,6 +324,7 @@ Returns `DatabaseTableListResult`, which extends `EnumerationResult<TableSummary
   "TotalMs": 0.6,
   "Objects": [
     {
+      "TableId": "tbl_db_orders_public_invoice",
       "SchemaName": "public",
       "TableName": "invoice",
       "Columns": 12,
@@ -376,8 +438,10 @@ Retrieves full geometry for one table.
   "DatabaseId": "db_orders",
   "Context": "Orders database for reporting.",
   "Table": {
+    "TableId": "tbl_db_orders_public_orders",
     "TableName": "orders",
     "SchemaName": "public",
+    "Context": "Stores customer orders and links to customers through CustomerId.",
     "Columns": [
       {
         "ColumnName": "Id",
@@ -505,27 +569,92 @@ Validation and execution failures are returned as `QueryResult` with `Success: f
 - Do not run write statements unless the user explicitly asks and `AllowedQueries` permits the statement type.
 - Validate table and column names with `tablix_discover_table` first.
 - If execution fails because of a bad or unknown column, missing column, or column type mismatch, refresh schema by re-discovering the relevant table or database before retrying.
-- If refreshed schema proves saved context has wrong column names, wrong column types, or stale relationship guidance, call `tablix_update_context` with corrected context.
+- If refreshed schema proves saved database context has wrong column names, wrong column types, or stale relationship guidance, call `tablix_update_database_context` with corrected context.
+- If refreshed schema proves saved table context is stale for one or more specific tables, call `tablix_update_table_context` with corrected table-level context.
 
-### `tablix_update_context`
+### `tablix_get_database_context`
 
-Persists database context back to `tablix.json`.
+Reads database-level context for one database, multiple databases, or a paged set of configured databases.
+
+#### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `databaseId` | string | No | null | Single database entry ID |
+| `databaseIds` | string[] | No | `[]` | Multiple database entry IDs |
+| `maxResults` | integer | No | `100` | Maximum contexts to return when listing |
+| `skip` | integer | No | `0` | Records to skip when listing |
+| `filter` | string | No | null | Case-insensitive filter by database ID or name |
+
+If `databaseId` or `databaseIds` is supplied, Tablix returns the requested databases and reports missing IDs in `MissingDatabaseIds`. If neither is supplied, Tablix returns a paged list.
+
+#### Example Request
+
+```json
+{
+  "databaseIds": ["db_orders", "db_billing"]
+}
+```
+
+#### Response
+
+```json
+{
+  "Success": true,
+  "MaxResults": 100,
+  "Skip": 0,
+  "TotalRecords": 2,
+  "RecordsRemaining": 0,
+  "EndOfResults": true,
+  "NextSkip": null,
+  "TotalMs": 0.4,
+  "MissingDatabaseIds": [],
+  "Error": null,
+  "Objects": [
+    {
+      "DatabaseId": "db_orders",
+      "Name": "Orders",
+      "Type": "Postgresql",
+      "Context": "Orders database for reporting."
+    }
+  ]
+}
+```
+
+#### Guidance
+
+- Use before SQL generation when durable database-level business context may affect table choice, relationship interpretation, or answer wording.
+- Treat context as guidance, not proof. Verify table and column names with schema tools.
+- Use `tablix_update_database_context` if refreshed schema proves database-level context is stale.
+
+### `tablix_get_table_context`
+
+Reads table-level context for one table, multiple tables, or a paged set of table contexts in one database.
 
 #### Input
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `databaseId` | string | Yes | n/a | Database entry ID |
-| `context` | string | Yes | n/a | Context text to save |
-| `mode` | string | No | `replace` | `replace` or `append` |
+| `tableId` | string | No | null | Single persisted table metadata ID |
+| `tableIds` | string[] | No | `[]` | Multiple persisted table metadata IDs |
+| `tableName` | string | No | null | Single table name, optionally `schema.table` |
+| `tableNames` | string[] | No | `[]` | Multiple table names |
+| `includeEmpty` | boolean | No | `false` | Include crawled tables without persisted table context |
+| `maxResults` | integer | No | `100` | Maximum contexts to return when listing |
+| `skip` | integer | No | `0` | Records to skip when listing |
+| `filter` | string | No | null | Case-insensitive filter by table, schema, or context |
+| `schema` | string | No | null | Exact schema filter |
+
+If table selectors are supplied, Tablix returns those tables. If no table selectors are supplied, Tablix lists persisted table contexts. Set `includeEmpty` to `true` to list crawled tables even when their `Context` is null.
 
 #### Example Request
 
 ```json
 {
   "databaseId": "db_orders",
-  "context": "Orders database. Declared relationship: orders.CustomerId -> customers.Id. Common query: recent orders by customer.",
-  "mode": "append"
+  "tableIds": ["tbl_db_orders_public_orders", "tbl_db_orders_public_customers"],
+  "includeEmpty": true
 }
 ```
 
@@ -535,34 +664,229 @@ Persists database context back to `tablix.json`.
 {
   "Success": true,
   "DatabaseId": "db_orders",
-  "Context": "Orders database. Declared relationship: orders.CustomerId -> customers.Id. Common query: recent orders by customer.",
-  "Mode": "append"
-}
-```
-
-#### Errors
-
-```json
-{ "Success": false, "Error": "databaseId is required" }
-```
-
-```json
-{
-  "Success": false,
-  "DatabaseId": "db_orders",
-  "Error": "Unsupported context update mode 'merge'"
+  "MaxResults": 100,
+  "Skip": 0,
+  "TotalRecords": 2,
+  "RecordsRemaining": 0,
+  "EndOfResults": true,
+  "NextSkip": null,
+  "TotalMs": 0.5,
+  "MissingTableIds": [],
+  "MissingTableNames": [],
+  "Error": null,
+  "Objects": [
+    {
+      "Id": "ctx_012345",
+      "DatabaseId": "db_orders",
+      "TableId": "tbl_db_orders_public_orders",
+      "SchemaName": "public",
+      "TableName": "orders",
+      "Context": "Stores customer orders and links to customers through CustomerId.",
+      "Source": "mcp",
+      "UpdatedUtc": "2026-07-11T12:00:00Z"
+    }
+  ]
 }
 ```
 
 #### Guidance
 
-- Use when the user asks to save/update context, the workflow explicitly requires persisted analysis, or refreshed schema proves saved context has stale column names, stale column types, or stale relationship guidance.
-- Preserve human-provided facts.
-- Separate declared relationships from inferred relationships.
-- Label inferred relationships clearly.
-- Do not store secrets, credentials, raw query output, or guesses as facts.
-- Prefer `append` for incremental notes.
-- Use `replace` only when writing a complete curated context.
+- Use table context for table-specific meaning, caveats, common filters, and join guidance.
+- Prefer `tableId` values from `tablix_list_tables`; use `tableName` only when IDs are not known.
+- Table context does not replace schema discovery. Call `tablix_discover_table` for columns, keys, indexes, and data types before executing SQL.
+- Use `tablix_update_table_context` if refreshed schema proves table-level context is stale.
+
+### `tablix_update_database_context`
+
+Persists database-level context for one database or multiple databases.
+
+#### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `databaseId` | string | No | null | Database entry ID for a single update |
+| `context` | string | No | null | Context text for a single update |
+| `mode` | string | No | `replace` | `replace` or `append` |
+| `updates` | object[] | No | `[]` | Batch updates; each item may include `databaseId`, `context`, and `mode` |
+
+#### Single Update
+
+```json
+{
+  "databaseId": "db_orders",
+  "context": "Orders database. Declared relationship: orders.CustomerId -> customers.Id.",
+  "mode": "append"
+}
+```
+
+#### Batch Update
+
+```json
+{
+  "updates": [
+    {
+      "databaseId": "db_orders",
+      "context": "Orders database context.",
+      "mode": "replace"
+    },
+    {
+      "databaseId": "db_billing",
+      "context": "Billing database context.",
+      "mode": "replace"
+    }
+  ]
+}
+```
+
+#### Response
+
+```json
+{
+  "Success": true,
+  "DatabaseId": "db_orders",
+  "Scope": "Database",
+  "Context": "Orders database. Declared relationship: orders.CustomerId -> customers.Id.",
+  "Mode": "append",
+  "TotalRecords": 1,
+  "Succeeded": 1,
+  "Failed": 0,
+  "Objects": [
+    {
+      "Success": true,
+      "Scope": "Database",
+      "DatabaseId": "db_orders",
+      "Context": "Orders database. Declared relationship: orders.CustomerId -> customers.Id.",
+      "Mode": "append",
+      "Error": null
+    }
+  ],
+  "Error": null
+}
+```
+
+#### Guidance
+
+- Save database context only when asked, when the workflow requires durable context, or when refreshed schema proves current database context is stale.
+- Put global database guidance here; put table-specific facts in `tablix_update_table_context`.
+- Preserve human-provided facts and label inferred relationships clearly.
+- Do not store secrets, credentials, raw query output, sensitive table data, or guesses as facts.
+
+### `tablix_update_table_context`
+
+Persists table-level context for one table or multiple tables in one database.
+
+#### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `databaseId` | string | Yes unless supplied per item | null | Database entry ID |
+| `tableId` | string | No | null | Table metadata ID for a single update |
+| `tableName` | string | No | null | Table name for a single update when `tableId` is unknown |
+| `context` | string | No | null | Context text for a single update |
+| `mode` | string | No | `replace` | `replace` or `append` |
+| `updates` | object[] | No | `[]` | Batch updates; each item may include `databaseId`, `tableId`, `tableName`, `context`, and `mode` |
+
+#### Single Update
+
+```json
+{
+  "databaseId": "db_orders",
+  "tableId": "tbl_db_orders_public_orders",
+  "context": "Orders table. Important columns: Id, CustomerId, OrderDate, Status, Total.",
+  "mode": "replace"
+}
+```
+
+#### Batch Update
+
+```json
+{
+  "databaseId": "db_orders",
+  "updates": [
+    {
+      "tableId": "tbl_db_orders_public_orders",
+      "context": "Orders table context.",
+      "mode": "replace"
+    },
+    {
+      "tableName": "customers",
+      "context": "Customers table context.",
+      "mode": "replace"
+    }
+  ]
+}
+```
+
+#### Response
+
+```json
+{
+  "Success": true,
+  "Scope": "Table",
+  "DatabaseId": "db_orders",
+  "TableId": "tbl_db_orders_public_orders",
+  "TableName": "orders",
+  "Context": "Orders table. Important columns: Id, CustomerId, OrderDate, Status, Total.",
+  "Mode": "replace",
+  "TotalRecords": 1,
+  "Succeeded": 1,
+  "Failed": 0,
+  "Objects": [
+    {
+      "Success": true,
+      "Scope": "Table",
+      "DatabaseId": "db_orders",
+      "TableId": "tbl_db_orders_public_orders",
+      "TableName": "orders",
+      "Context": "Orders table. Important columns: Id, CustomerId, OrderDate, Status, Total.",
+      "Mode": "replace",
+      "Error": null
+    }
+  ],
+  "Error": null
+}
+```
+
+#### Guidance
+
+- Save table context for durable table-specific facts: table purpose, important columns, business meanings, common joins, filters, row caveats, and query patterns.
+- Prefer table IDs from `tablix_list_tables`.
+- Use `append` for incremental notes; use `replace` for complete curated context.
+- Do not store raw row data or unsupported guesses.
+
+### `tablix_update_context`
+
+General context update tool retained for compatibility. Prefer the explicit aliases above when possible.
+
+#### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `scope` | string | No | `Database` | `Database` or `Table` |
+| `databaseId` | string | No | null | Database entry ID |
+| `tableId` | string | No | null | Table metadata ID when `scope` is `Table` |
+| `tableName` | string | No | null | Table name when `scope` is `Table` and `tableId` is unknown |
+| `context` | string | No | null | Context text |
+| `mode` | string | No | `replace` | `replace` or `append` |
+| `updates` | object[] | No | `[]` | Batch updates; each item may include `scope`, `databaseId`, `tableId`, `tableName`, `context`, and `mode` |
+
+#### Example Request
+
+```json
+{
+  "scope": "Table",
+  "databaseId": "db_orders",
+  "tableName": "orders",
+  "context": "Orders table context.",
+  "mode": "append"
+}
+```
+
+#### Guidance
+
+- Use this tool when a generic workflow needs a discriminator-based update path.
+- Prefer `tablix_update_database_context` and `tablix_update_table_context` for clearer model behavior.
+- The same context quality and safety rules apply.
 
 ### `tablix_discover_database`
 

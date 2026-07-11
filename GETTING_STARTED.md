@@ -85,11 +85,15 @@ The Chat and Build Context features require an enabled model provider.
 In the dashboard:
 
 1. Open **Settings**.
-2. Scroll to **Model Providers**.
+2. Open **Models**.
 3. Either edit an existing provider or click **Add Provider**.
 4. Fill in the provider fields.
 5. Ensure **Enabled** is checked.
-6. Click **Save Settings**.
+6. Review provider tool settings:
+   - Leave **Use native tools** off for local Ollama models until you have verified the model emits tool calls reliably.
+   - Enable **Use native tools** for OpenAI or Gemini models that support tool/function calling.
+   - Keep **Server fallback** enabled under **Prompt Processing** so Tablix can still execute permitted data queries when a model does not call a native tool.
+7. Click **Save Settings**.
 
 ### Option A: Ollama on Your Host Machine
 
@@ -157,7 +161,7 @@ Tablix includes a sample SQLite database named **Sample E-Commerce**. You can us
 
 ### Use the Included Sample Database
 
-The sample is already configured in `docker/tablix.json`:
+The sample is already seeded in `docker/tablix.db`:
 
 | Field | Value |
 | --- | --- |
@@ -275,7 +279,7 @@ If crawl fails:
 
 ## Step 6: Build Database Context
 
-Database context is saved in Tablix settings and used by Chat and MCP tools to understand the database more reliably. Build Context uses the selected model provider and the last successful crawl.
+Database context is saved as a database-scope record in `tablix.db` and used by Chat and MCP tools to understand the database more reliably. Build Context uses the selected model provider and the last successful crawl.
 
 In the dashboard:
 
@@ -310,7 +314,22 @@ You can also edit context manually:
 3. Change the text.
 4. Click **Save Context**.
 
-## Step 7: Chat with the Database
+## Step 7: Build Table Context
+
+Table context is saved as table-scope records in `tablix.db`. It gives Chat and MCP workflows more specific guidance about individual tables, important columns, join paths, and caveats. MCP clients can read table context with `tablix_get_table_context` and write curated table context with `tablix_update_table_context`.
+
+In the dashboard:
+
+1. Open **Databases**.
+2. Click the database row.
+3. Scroll to **Tables**.
+4. For each important table, click **Build** in the **Table Context** editor.
+5. Review or edit the generated text.
+6. Click **Save** if you make manual changes.
+
+During first-run setup, the wizard can generate table context for all crawled tables in one step after database context is generated.
+
+## Step 8: Chat with the Database
 
 In the dashboard:
 
@@ -318,7 +337,8 @@ In the dashboard:
 2. Select a **Database**.
 3. Select a **Provider**.
 4. Choose whether **Streaming** is enabled.
-5. Ask a question.
+5. Check the provider notice under the toolbar. It indicates whether native tools or server fallback are expected.
+6. Ask a question.
 
 Example prompts for the sample database:
 
@@ -346,9 +366,9 @@ The chat page supports:
 - Query execution for permitted query types.
 - Per-message telemetry.
 
-When the assistant executes a query, the message shows the tool call, arguments, result, runtime, and any errors.
+When the assistant executes a query, Tablix prefers PolyPrompt native tool calls when the provider is configured for them. If native tools are unavailable or the model does not call one for a clear data request, Tablix can use server-side fallback planning. The message shows the tool call, phase, arguments, result, runtime, and any errors.
 
-## Step 8: Verify with the Query Page
+## Step 9: Verify with the Query Page
 
 The **Query** page is useful for direct SQL validation.
 
@@ -368,7 +388,7 @@ The result panel can:
 - Copy the full JSON result.
 - Download rows as CSV.
 
-## Step 9: Stop or Reset the Docker Deployment
+## Step 10: Stop or Reset the Docker Deployment
 
 To stop containers while keeping data and settings:
 
@@ -400,6 +420,7 @@ cd docker/factory
 Factory reset restores:
 
 - `docker/database.db`
+- `docker/tablix.db`
 - `docker/tablix.json`
 - Docker logs under `docker/logs`
 
@@ -448,7 +469,9 @@ Check:
 2. The database context is accurate.
 3. The requested SQL operation is listed in `AllowedQueries`.
 4. The prompt asks for data, not only for SQL text.
-5. The model provider is capable enough to follow tool-use instructions.
+5. **Chat Tools** and **Prompt Processing** are enabled in Settings.
+6. If the provider does not support native tools, **Server fallback** is enabled.
+7. The model provider is capable enough to follow tool-use instructions or produce SQL for fallback planning.
 
 ### Chat reports a bad or unknown column
 

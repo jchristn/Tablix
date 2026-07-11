@@ -44,6 +44,7 @@ namespace Tablix.Server
 
             TablixServer server = new TablixServer(settingsFilename);
             _ServerTask = server.StartAsync(_TokenSource.Token);
+            await _ServerTask.ConfigureAwait(false);
 
             EventWaitHandle waitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
             AssemblyLoadContext.Default.Unloading += (ctx) => waitHandle.Set();

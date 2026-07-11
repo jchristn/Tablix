@@ -11,6 +11,8 @@ interface ChatUiMessage {
   Content: string;
   Telemetry: ChatTelemetry | null;
   ToolCalls: ChatToolCall[];
+  ExecutionPath: string | null;
+  CapabilityNotice: string | null;
 }
 
 interface ParsedSseFrame {
@@ -98,6 +100,8 @@ export default function ChatPage() {
       Content: trimmed,
       Telemetry: null,
       ToolCalls: [],
+      ExecutionPath: null,
+      CapabilityNotice: null,
     };
     const assistantId = crypto.randomUUID();
     const assistantMessage: ChatUiMessage = {
@@ -106,6 +110,8 @@ export default function ChatPage() {
       Content: '',
       Telemetry: null,
       ToolCalls: [],
+      ExecutionPath: null,
+      CapabilityNotice: null,
     };
 
     const nextMessages = [...messages, userMessage, assistantMessage];
@@ -146,7 +152,7 @@ export default function ChatPage() {
 
       const result: ChatResponseResult = await response.json();
       setMessages(previous => previous.map(message => message.Id === assistantId
-        ? { ...message, Content: result.Message || '', Telemetry: result.Telemetry, ToolCalls: result.ToolCalls || [] }
+        ? { ...message, Content: result.Message || '', Telemetry: result.Telemetry, ToolCalls: result.ToolCalls || [], ExecutionPath: result.ExecutionPath, CapabilityNotice: result.CapabilityNotice }
         : message));
     } catch {
       failAssistant(assistantId, 'Could not connect to server.');
@@ -202,11 +208,11 @@ export default function ChatPage() {
         : message));
     } else if (event.EventType === 'completed') {
       setMessages(previous => previous.map(message => message.Id === assistantId
-        ? { ...message, Content: event.Message || message.Content, Telemetry: event.Telemetry }
+        ? { ...message, Content: event.Message || message.Content, Telemetry: event.Telemetry, ExecutionPath: event.ExecutionPath || message.ExecutionPath, CapabilityNotice: event.CapabilityNotice || message.CapabilityNotice }
         : message));
     } else if ((event.EventType === 'tool_started' || event.EventType === 'tool_completed') && event.ToolCall) {
       setMessages(previous => previous.map(message => message.Id === assistantId
-        ? { ...message, ToolCalls: mergeToolCall(message.ToolCalls, event.ToolCall as ChatToolCall) }
+        ? { ...message, ToolCalls: mergeToolCall(message.ToolCalls, event.ToolCall as ChatToolCall), ExecutionPath: event.ExecutionPath || message.ExecutionPath, CapabilityNotice: event.CapabilityNotice || message.CapabilityNotice }
         : message));
     } else if (event.EventType === 'error') {
       failAssistant(assistantId, event.Error || 'Chat stream failed.');
@@ -365,6 +371,16 @@ export default function ChatPage() {
             <span>{selectedProvider.Type}</span>
             <span>{selectedProvider.Endpoint}</span>
             <span>{selectedProvider.HasApiKey ? 'API key configured' : 'No API key'}</span>
+            <span>{selectedProvider.UseNativeToolCalls ? 'Native tools' : 'Server fallback'}</span>
+          </div>
+        )}
+
+        {selectedProvider && (
+          <div className="chat-capability-notice">
+            {selectedProvider.UseNativeToolCalls && selectedProvider.SupportsNativeToolCalls
+              ? 'Native tool calls are enabled for this provider. Tablix validates every database query before execution.'
+              : 'This provider is not configured for native tool calls. Tablix can use server-side fallback execution for database data requests.'}
+            {selectedProvider.ToolCapabilityNote ? ' ' + selectedProvider.ToolCapabilityNote : ''}
           </div>
         )}
 
@@ -394,6 +410,12 @@ export default function ChatPage() {
                       onToolCallToggleStart={captureTranscriptStickiness}
                       onToolCallToggled={handleTranscriptContentToggled}
                     />
+                  )}
+                  {message.Role === 'assistant' && (message.ExecutionPath || message.CapabilityNotice) && (
+                    <div className="chat-execution-note">
+                      {message.ExecutionPath && <span>{formatExecutionPath(message.ExecutionPath)}</span>}
+                      {message.CapabilityNotice && <span>{message.CapabilityNotice}</span>}
+                    </div>
                   )}
                   {message.Telemetry && <TelemetryIcon telemetry={message.Telemetry} />}
                 </div>
@@ -451,6 +473,7 @@ function ToolCallList({
             }}
           >
             <span>{toolCall.Name}</span>
+            {toolCall.Phase && <span>{toolCall.Phase}</span>}
             <span>{toolCall.Error ? 'Failed' : toolCall.Result ? 'Complete' : 'Running'}</span>
             {toolCall.TotalMs > 0 && <span>{toolCall.TotalMs.toFixed(0)} ms</span>}
           </summary>
@@ -494,6 +517,10 @@ function formatJsonish(value: string) {
   } catch {
     return value;
   }
+}
+
+function formatExecutionPath(value: string) {
+  return value.replace(/_/g, ' ');
 }
 
 function TelemetryIcon({ telemetry }: { telemetry: ChatTelemetry }) {

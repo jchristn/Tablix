@@ -10,6 +10,11 @@ namespace Tablix.Core.Models
         #region Public-Members
 
         /// <summary>
+        /// Persisted table metadata identifier.
+        /// </summary>
+        public string TableId { get; set; } = null;
+
+        /// <summary>
         /// Table name.
         /// </summary>
         public string TableName { get; set; } = null;
@@ -18,6 +23,11 @@ namespace Tablix.Core.Models
         /// Schema name.
         /// </summary>
         public string SchemaName { get; set; } = null;
+
+        /// <summary>
+        /// Persisted table-level context.
+        /// </summary>
+        public string Context { get; set; } = null;
 
         /// <summary>
         /// Columns in the table.

@@ -6,6 +6,7 @@ import DatabaseDetailPage from './pages/DatabaseDetailPage';
 import DatabaseFormPage from './pages/DatabaseFormPage';
 import QueryPage from './pages/QueryPage';
 import ChatPage from './pages/ChatPage';
+import ModelsPage from './pages/ModelsPage';
 import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/databases/:id/edit" element={<DatabaseFormPage />} />
           <Route path="/query" element={<QueryPage />} />
           <Route path="/chat" element={<ChatPage />} />
+          <Route path="/models" element={<ModelsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

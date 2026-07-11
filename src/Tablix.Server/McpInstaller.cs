@@ -3,8 +3,7 @@ namespace Tablix.Server
     using System;
     using System.Collections.Generic;
     using System.IO;
-    using System.Text.Json;
-    using System.Text.Json.Nodes;
+    using Tablix.Core.Helpers;
 
     /// <summary>
     /// Auto-installs Tablix MCP configuration into supported AI client config files.
@@ -80,67 +79,26 @@ namespace Tablix.Server
             }
 
             string json = File.ReadAllText(foundPath);
-            JsonNode root = JsonNode.Parse(json) ?? new JsonObject();
-
-            JsonObject rootObj = root.AsObject();
-
-            if (!rootObj.ContainsKey("mcpServers"))
+            ClientMcpConfig config = null;
+            if (!String.IsNullOrWhiteSpace(json))
             {
-                rootObj["mcpServers"] = new JsonObject();
+                config = Serializer.DeserializeJson<ClientMcpConfig>(json);
             }
 
-            JsonObject mcpServers = rootObj["mcpServers"].AsObject();
+            if (config == null)
+                config = new ClientMcpConfig();
 
-            JsonObject tablixEntry = new JsonObject
+            config.McpServers["tablix"] = new ClientMcpServerConfig
             {
-                ["type"] = "http",
-                ["url"] = url
+                Type = "http",
+                Url = url
             };
 
-            mcpServers["tablix"] = tablixEntry;
-
-            JsonSerializerOptions options = new JsonSerializerOptions
-            {
-                WriteIndented = true
-            };
-
-            string output = rootObj.ToJsonString(options);
+            string output = Serializer.SerializeJson(config, true);
             File.WriteAllText(foundPath, output);
 
             Console.WriteLine("  Installed MCP for " + client.Name + " at " + foundPath);
         }
-
-        #endregion
-
-        #region Private-Classes
-
-        /// <summary>
-        /// Describes an AI client and its candidate config file paths.
-        /// </summary>
-        private class ClientConfig
-        {
-            /// <summary>
-            /// Display name of the client.
-            /// </summary>
-            public string Name;
-
-            /// <summary>
-            /// Candidate config file paths, checked in order.
-            /// </summary>
-            public string[] ConfigPaths;
-
-            /// <summary>
-            /// Instantiate.
-            /// </summary>
-            /// <param name="name">Display name.</param>
-            /// <param name="configPaths">Candidate config file paths.</param>
-            public ClientConfig(string name, string[] configPaths)
-            {
-                Name = name;
-                ConfigPaths = configPaths;
-            }
-        }
-
         #endregion
     }
 }

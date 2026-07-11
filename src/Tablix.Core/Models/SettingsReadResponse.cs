@@ -21,6 +21,16 @@ namespace Tablix.Core.Models
         public LoggingSettings Logging { get; set; } = null;
 
         /// <summary>
+        /// Product-state persistence database settings.
+        /// </summary>
+        public PersistenceDatabaseSettings Persistence { get; set; } = null;
+
+        /// <summary>
+        /// Persistence database health details.
+        /// </summary>
+        public PersistenceHealthRead PersistenceHealth { get; set; } = null;
+
+        /// <summary>
         /// API keys for dashboard and REST authentication.
         /// </summary>
         public List<string> ApiKeys

@@ -41,6 +41,7 @@ namespace Tablix.Core.Helpers
             List<TableSummary> tables = detail.Tables
                 .Select(t => new TableSummary
                 {
+                    TableId = t.TableId,
                     SchemaName = t.SchemaName,
                     TableName = t.TableName,
                     Columns = t.Columns.Count,
