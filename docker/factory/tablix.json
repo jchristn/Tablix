@@ -14,6 +14,76 @@
     "MinimumSeverity": 0,
     "EnableColors": true
   },
+  "Chat": {
+    "Enabled": true,
+    "DefaultProviderId": "provider_ollama_local",
+    "DefaultStreaming": true,
+    "SystemPrompt": "You are Tablix, a database assistant. Restrict your conversation to only the selected database, its structure, its contents, and their relationships. Use configured database context first, inspect schema before writing SQL, run only allowed query types, clearly label inferred relationships, and never reveal credentials or secret settings.",
+    "MaxContextTables": 100,
+    "Tools": {
+      "Enabled": true,
+      "AllowReadOnlyQueries": true,
+      "AllowContextUpdates": true,
+      "MaxToolIterations": 8,
+      "MaxToolCalls": 20,
+      "ToolTimeoutMs": 30000,
+      "MaxToolOutputCharacters": 12000
+    },
+    "Providers": [
+      {
+        "Id": "provider_ollama_local",
+        "Name": "Local Ollama",
+        "Type": "Ollama",
+        "Endpoint": "http://ollama:11434",
+        "ApiKey": "",
+        "Model": "gemma3:4b",
+        "Enabled": true,
+        "DefaultStreaming": true,
+        "Temperature": 0.2,
+        "MaxTokens": 4096,
+        "RequestTimeoutMs": 120000
+      },
+      {
+        "Id": "provider_openai",
+        "Name": "OpenAI",
+        "Type": "OpenAI",
+        "Endpoint": "https://api.openai.com",
+        "ApiKey": "",
+        "Model": "gpt-4o-mini",
+        "Enabled": false,
+        "DefaultStreaming": true,
+        "Temperature": 0.2,
+        "MaxTokens": 4096,
+        "RequestTimeoutMs": 120000
+      },
+      {
+        "Id": "provider_openai_compatible",
+        "Name": "OpenAI Compatible",
+        "Type": "OpenAICompatible",
+        "Endpoint": "http://localhost:1234",
+        "ApiKey": "",
+        "Model": "local-model",
+        "Enabled": false,
+        "DefaultStreaming": true,
+        "Temperature": 0.2,
+        "MaxTokens": 4096,
+        "RequestTimeoutMs": 120000
+      },
+      {
+        "Id": "provider_gemini",
+        "Name": "Gemini",
+        "Type": "Gemini",
+        "Endpoint": "https://generativelanguage.googleapis.com",
+        "ApiKey": "",
+        "Model": "gemini-2.5-flash",
+        "Enabled": false,
+        "DefaultStreaming": true,
+        "Temperature": 0.2,
+        "MaxTokens": 4096,
+        "RequestTimeoutMs": 120000
+      }
+    ]
+  },
   "Databases": [
     {
       "Id": "db_sample_sqlite",

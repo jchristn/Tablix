@@ -16,6 +16,10 @@
 		{
 			"key": "databaseId",
 			"value": "db_sample_sqlite"
+		},
+		{
+			"key": "providerId",
+			"value": "provider_ollama_local"
 		}
 	],
 	"auth": {
@@ -39,8 +43,12 @@
 						"header": [],
 						"url": {
 							"raw": "{{baseUrl}}/",
-							"host": ["{{baseUrl}}"],
-							"path": [""]
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								""
+							]
 						},
 						"auth": {
 							"type": "noauth"
@@ -55,8 +63,12 @@
 						"header": [],
 						"url": {
 							"raw": "{{baseUrl}}/",
-							"host": ["{{baseUrl}}"],
-							"path": [""]
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								""
+							]
 						},
 						"auth": {
 							"type": "noauth"
@@ -76,8 +88,13 @@
 						"header": [],
 						"url": {
 							"raw": "{{baseUrl}}/v1/database?maxResults=100&skip=0",
-							"host": ["{{baseUrl}}"],
-							"path": ["v1", "database"],
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database"
+							],
 							"query": [
 								{
 									"key": "maxResults",
@@ -107,8 +124,14 @@
 						"header": [],
 						"url": {
 							"raw": "{{baseUrl}}/v1/database/{{databaseId}}",
-							"host": ["{{baseUrl}}"],
-							"path": ["v1", "database", "{{databaseId}}"]
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}"
+							]
 						},
 						"description": "Get database details including connection settings, schema geometry (tables, columns, PKs, FKs, indexes), and crawl status."
 					}
@@ -129,8 +152,13 @@
 						},
 						"url": {
 							"raw": "{{baseUrl}}/v1/database",
-							"host": ["{{baseUrl}}"],
-							"path": ["v1", "database"]
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database"
+							]
 						},
 						"description": "Add a new database entry. An initial schema crawl is triggered automatically. Returns 201 Created on success, 409 Conflict if the ID already exists."
 					}
@@ -151,10 +179,80 @@
 						},
 						"url": {
 							"raw": "{{baseUrl}}/v1/database/{{databaseId}}",
-							"host": ["{{baseUrl}}"],
-							"path": ["v1", "database", "{{databaseId}}"]
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}"
+							]
 						},
 						"description": "Update an existing database entry. The ID in the path is used; any ID in the body is ignored. The crawl cache is updated immediately."
+					}
+				},
+				{
+					"name": "Update Database Context",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"Context\": \"Analyzed database context for AI agents...\",\n  \"Mode\": \"replace\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}/context",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}",
+								"context"
+							]
+						},
+						"description": "Update only the user-supplied database context. Mode may be replace or append."
+					}
+				},
+				{
+					"name": "Build Database Context",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"ProviderId\": \"{{providerId}}\",\n  \"Prompt\": \"Analyze the last successful crawl and produce concise durable context for future database chat and MCP usage. Include major entities, relationships, naming conventions, join paths, and safe query guidance. Do not include credentials, secrets, or raw result rows.\"\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}/context/build",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}",
+								"context",
+								"build"
+							]
+						},
+						"description": "Generate database context from the last successful crawl using a configured chat provider, persist it to tablix.json, and update running settings."
 					}
 				},
 				{
@@ -164,8 +262,14 @@
 						"header": [],
 						"url": {
 							"raw": "{{baseUrl}}/v1/database/{{databaseId}}",
-							"host": ["{{baseUrl}}"],
-							"path": ["v1", "database", "{{databaseId}}"]
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}"
+							]
 						},
 						"description": "Delete a database entry and remove it from the crawl cache. Returns 204 No Content on success."
 					}
@@ -182,10 +286,137 @@
 						"header": [],
 						"url": {
 							"raw": "{{baseUrl}}/v1/database/{{databaseId}}/crawl",
-							"host": ["{{baseUrl}}"],
-							"path": ["v1", "database", "{{databaseId}}", "crawl"]
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}",
+								"crawl"
+							]
 						},
 						"description": "Re-crawl the database schema. Discovers tables, columns, primary keys, foreign keys, and indexes. Returns the updated DatabaseDetail. If the crawl fails (unreachable host, bad credentials), the response still returns 200 with IsCrawled: false and a CrawlError message."
+					}
+				},
+				{
+					"name": "Re-Crawl Database (Stream)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Accept",
+								"value": "text/event-stream"
+							}
+						],
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}/crawl/stream",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}",
+								"crawl",
+								"stream"
+							]
+						},
+						"description": "Re-crawl the database schema and stream status as server-sent events. Emits started, progress, and one terminal completed or failed event. Terminal events include table counts and the final DatabaseDetail."
+					}
+				},
+				{
+					"name": "List Tables",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}/tables?maxResults=100&skip=0",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}",
+								"tables"
+							],
+							"query": [
+								{
+									"key": "maxResults",
+									"value": "100",
+									"description": "Maximum tables to return (1-1000, default 100)"
+								},
+								{
+									"key": "skip",
+									"value": "0",
+									"description": "Number of tables to skip (default 0)"
+								},
+								{
+									"key": "filter",
+									"value": "",
+									"description": "Filter by table or schema name",
+									"disabled": true
+								},
+								{
+									"key": "schema",
+									"value": "",
+									"description": "Filter by schema name",
+									"disabled": true
+								}
+							]
+						},
+						"description": "List crawled database tables with pagination. Use NextSkip while EndOfResults is false."
+					}
+				},
+				{
+					"name": "List Relationships",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/v1/database/{{databaseId}}/relationships?maxResults=100&skip=0",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}",
+								"relationships"
+							],
+							"query": [
+								{
+									"key": "maxResults",
+									"value": "100",
+									"description": "Maximum relationships to return (1-1000, default 100)"
+								},
+								{
+									"key": "skip",
+									"value": "0",
+									"description": "Number of relationships to skip (default 0)"
+								},
+								{
+									"key": "filter",
+									"value": "",
+									"description": "Filter by table, column, schema, or constraint name",
+									"disabled": true
+								},
+								{
+									"key": "schema",
+									"value": "",
+									"description": "Filter by source or target schema",
+									"disabled": true
+								},
+								{
+									"key": "includeInferred",
+									"value": "false",
+									"description": "Reserved for inferred relationships; currently returns declared FKs only",
+									"disabled": true
+								}
+							]
+						},
+						"description": "List compact declared relationship edges with pagination."
 					}
 				}
 			]
@@ -209,10 +440,161 @@
 						},
 						"url": {
 							"raw": "{{baseUrl}}/v1/database/{{databaseId}}/query",
-							"host": ["{{baseUrl}}"],
-							"path": ["v1", "database", "{{databaseId}}", "query"]
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"database",
+								"{{databaseId}}",
+								"query"
+							]
 						},
 						"description": "Execute a SQL query against a database. The query must be a single statement (no semicolons) and the statement type must be in the database's AllowedQueries list. Returns 403 if the statement type is not allowed, 500 if execution fails (with the error in the Description field)."
+					}
+				}
+			]
+		},
+		{
+			"name": "Chat",
+			"item": [
+				{
+					"name": "Get Chat Options",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/v1/chat/options",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"chat",
+								"options"
+							]
+						},
+						"description": "Returns enabled chat providers and configured databases for the dashboard Chat page. Provider API keys are redacted."
+					}
+				},
+				{
+					"name": "Chat Non-Streaming",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"DatabaseId\": \"{{databaseId}}\",\n  \"ProviderId\": \"{{providerId}}\",\n  \"Streaming\": false,\n  \"Messages\": [\n    { \"Role\": \"user\", \"Content\": \"Show me SQL for total revenue by month.\" }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/v1/chat",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"chat"
+							]
+						},
+						"description": "Sends a non-streaming database-aware chat request through the selected PolyPrompt provider."
+					}
+				},
+				{
+					"name": "Chat Streaming (SSE)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"DatabaseId\": \"{{databaseId}}\",\n  \"ProviderId\": \"{{providerId}}\",\n  \"Streaming\": true,\n  \"Messages\": [\n    { \"Role\": \"user\", \"Content\": \"Summarize the schema and suggest useful queries.\" }\n  ]\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/v1/chat/stream",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"chat",
+								"stream"
+							]
+						},
+						"description": "Streams chat tokens and final telemetry as server-sent events."
+					}
+				}
+			]
+		},
+		{
+			"name": "Settings",
+			"item": [
+				{
+					"name": "Get Settings",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/v1/settings",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"settings"
+							]
+						},
+						"description": "Returns redacted form-editable server settings. Provider API keys are represented by HasApiKey only."
+					}
+				},
+				{
+					"name": "Update Settings",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"Rest\": {\n    \"Hostname\": \"*\",\n    \"Port\": 9100,\n    \"Ssl\": false,\n    \"McpPort\": 9102\n  },\n  \"Logging\": {\n    \"Servers\": [],\n    \"ConsoleLogging\": true,\n    \"FileLogging\": true,\n    \"LogDirectory\": \"./logs/\",\n    \"LogFilename\": \"tablix.log\",\n    \"MinimumSeverity\": 0,\n    \"EnableColors\": true\n  },\n  \"ApiKeys\": [\n    \"tablixadmin\"\n  ],\n  \"Chat\": {\n    \"Enabled\": true,\n    \"DefaultProviderId\": \"provider_ollama_local\",\n    \"DefaultStreaming\": true,\n    \"SystemPrompt\": \"You are Tablix, a database assistant. Restrict your conversation to only the selected database, its structure, its contents, and their relationships. Use configured database context first, inspect schema before writing SQL, run only allowed query types, clearly label inferred relationships, and never reveal credentials or secret settings.\",\n    \"MaxContextTables\": 100,\n    \"Tools\": {\n      \"Enabled\": true,\n      \"AllowReadOnlyQueries\": true,\n      \"AllowContextUpdates\": true,\n      \"MaxToolIterations\": 8,\n      \"MaxToolCalls\": 20,\n      \"ToolTimeoutMs\": 30000,\n      \"MaxToolOutputCharacters\": 12000\n    },\n    \"Providers\": [\n      {\n        \"Id\": \"provider_ollama_local\",\n        \"Name\": \"Local Ollama\",\n        \"Type\": \"Ollama\",\n        \"Endpoint\": \"http://ollama:11434\",\n        \"ApiKey\": null,\n        \"ClearApiKey\": false,\n        \"Model\": \"gemma3:4b\",\n        \"SystemPrompt\": null,\n        \"Enabled\": true,\n        \"DefaultStreaming\": true,\n        \"Temperature\": 0.2,\n        \"TopP\": null,\n        \"MaxTokens\": 4096,\n        \"RequestTimeoutMs\": 120000\n      }\n    ]\n  }\n}",
+							"options": {
+								"raw": {
+									"language": "json"
+								}
+							}
+						},
+						"url": {
+							"raw": "{{baseUrl}}/v1/settings",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"v1",
+								"settings"
+							]
+						},
+						"description": "Updates running settings and persists tablix.json. Leave provider ApiKey null/empty to preserve it; ClearApiKey removes it."
 					}
 				}
 			]

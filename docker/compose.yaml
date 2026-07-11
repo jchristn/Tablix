@@ -1,7 +1,7 @@
 services:
 
   tablix-server:
-    image: jchristn77/tablix-server:v0.1.1
+    image: jchristn77/tablix-server:v0.2.0
     container_name: tablix-server
     ports:
       - "9100:9100"
@@ -13,12 +13,12 @@ services:
     restart: unless-stopped
 
   tablix-ui:
-    image: jchristn77/tablix-ui:v0.1.1
+    image: jchristn77/tablix-ui:v0.2.0
     container_name: tablix-ui
     ports:
       - "9101:9101"
     environment:
-      - TABLIX_SERVER_URL=http:/tablix-server:9100
+      - TABLIX_SERVER_URL=http://tablix-server:9100
     depends_on:
       - tablix-server
     restart: unless-stopped

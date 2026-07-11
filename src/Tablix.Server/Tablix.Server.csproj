@@ -6,6 +6,7 @@
 
   <ItemGroup>
     <PackageReference Include="SerializableDataTable" Version="1.0.6" />
+    <PackageReference Include="PolyPrompt" Version="0.2.0" />
     <PackageReference Include="SwiftStack" Version="0.4.8" />
     <PackageReference Include="SyslogLogging" Version="2.0.13" />
     <PackageReference Include="Voltaic" Version="0.2.0" />
@@ -16,7 +17,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
-    <Version>0.1.1</Version>
+    <Version>0.2.0</Version>
   </PropertyGroup>
 
   <ItemGroup Condition="Exists('..\..\docker\database.db')">

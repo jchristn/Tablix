@@ -4,6 +4,7 @@ namespace Tablix.Server.Handlers
     using System.Collections.Generic;
     using System.Diagnostics;
     using System.Linq;
+    using System.Text;
     using System.Threading.Tasks;
     using Tablix.Core.DatabaseDrivers;
     using Tablix.Core.Enums;
@@ -22,8 +23,6 @@ namespace Tablix.Server.Handlers
 
         private readonly SettingsManager _SettingsManager;
         private readonly CrawlCache _CrawlCache;
-        private readonly string _Header = "[DatabaseHandler] ";
-
         #endregion
 
         #region Constructors-and-Factories
@@ -77,11 +76,14 @@ namespace Tablix.Server.Handlers
 
             long totalRecords = databases.Count;
             List<DatabaseEntry> page = databases.Skip(skip).Take(maxResults).ToList();
+            List<DatabaseSummary> summaries = page
+                .Select(d => DatabaseSummary.From(d, _CrawlCache.Get(d.Id)))
+                .ToList();
             long remaining = Math.Max(0, totalRecords - skip - page.Count);
 
             stopwatch.Stop();
 
-            EnumerationResult<DatabaseEntry> result = new EnumerationResult<DatabaseEntry>
+            EnumerationResult<DatabaseSummary> result = new EnumerationResult<DatabaseSummary>
             {
                 Success = true,
                 MaxResults = maxResults,
@@ -89,8 +91,9 @@ namespace Tablix.Server.Handlers
                 TotalRecords = totalRecords,
                 RecordsRemaining = remaining,
                 EndOfResults = remaining == 0,
+                NextSkip = remaining == 0 ? null : (int?)(skip + page.Count),
                 TotalMs = stopwatch.Elapsed.TotalMilliseconds,
-                Objects = page
+                Objects = summaries
             };
 
             return result;
@@ -124,27 +127,82 @@ namespace Tablix.Server.Handlers
                 };
             }
 
-            // Merge connection fields from the settings entry so the dashboard
-            // edit form can populate them (DatabaseDetail doesn't carry these).
-            return new
+            // Merge non-secret settings fields for dashboard display/edit flows.
+            return new DatabaseReadDetail
             {
-                detail.DatabaseId,
-                detail.Type,
-                detail.DatabaseName,
-                detail.Schema,
-                detail.Context,
-                detail.Tables,
-                detail.CrawledUtc,
-                detail.IsCrawled,
-                detail.CrawlError,
-                entry.Name,
-                entry.Hostname,
-                entry.Port,
-                entry.User,
-                entry.Password,
-                entry.Filename,
-                entry.AllowedQueries
+                DatabaseId = detail.DatabaseId,
+                Type = detail.Type,
+                DatabaseName = detail.DatabaseName,
+                Schema = detail.Schema,
+                Context = entry.Context,
+                Tables = detail.Tables,
+                CrawledUtc = detail.CrawledUtc,
+                IsCrawled = detail.IsCrawled,
+                CrawlError = detail.CrawlError,
+                Name = entry.Name,
+                Hostname = entry.Hostname,
+                Port = entry.Port,
+                HasUser = !String.IsNullOrEmpty(entry.User),
+                HasPassword = !String.IsNullOrEmpty(entry.Password),
+                Filename = entry.Filename,
+                AllowedQueries = new List<string>(entry.AllowedQueries)
             };
+        }
+
+        /// <summary>
+        /// GET /v1/database/{id}/tables - list crawled tables, paginated.
+        /// </summary>
+        public async Task<object> ListTablesAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+            }
+
+            DatabaseDetail detail = await GetOrCrawlDetailAsync(entry).ConfigureAwait(false);
+            ReadEnumerationQuery(req, out int maxResults, out int skip, out string filter, out string schema);
+
+            return SchemaProjection.CreateTableListResult(
+                id,
+                detail,
+                maxResults,
+                skip,
+                filter,
+                schema);
+        }
+
+        /// <summary>
+        /// GET /v1/database/{id}/relationships - list compact relationship edges, paginated.
+        /// </summary>
+        public async Task<object> ListRelationshipsAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+            }
+
+            DatabaseDetail detail = await GetOrCrawlDetailAsync(entry).ConfigureAwait(false);
+            ReadEnumerationQuery(req, out int maxResults, out int skip, out string filter, out string schema);
+
+            bool includeInferred = false;
+            string includeInferredStr = req.Http.Request.Query.Elements.Get("includeInferred");
+            if (!String.IsNullOrEmpty(includeInferredStr) && Boolean.TryParse(includeInferredStr, out bool parsedIncludeInferred))
+                includeInferred = parsedIncludeInferred;
+
+            return SchemaProjection.CreateRelationshipListResult(
+                id,
+                detail,
+                maxResults,
+                skip,
+                filter,
+                schema,
+                includeInferred);
         }
 
         /// <summary>
@@ -167,7 +225,7 @@ namespace Tablix.Server.Handlers
                 _ = _CrawlCache.CrawlOneAsync(entry);
 
                 req.Http.Response.StatusCode = 201;
-                return entry;
+                return DatabaseSummary.From(entry);
             }
             catch (InvalidOperationException ex)
             {
@@ -193,6 +251,19 @@ namespace Tablix.Server.Handlers
 
             try
             {
+                DatabaseEntry existing = _SettingsManager.GetDatabase(id);
+                if (existing == null)
+                {
+                    req.Http.Response.StatusCode = 404;
+                    return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+                }
+
+                if (String.IsNullOrEmpty(entry.User))
+                    entry.User = existing.User;
+
+                if (String.IsNullOrEmpty(entry.Password))
+                    entry.Password = existing.Password;
+
                 _SettingsManager.UpdateDatabase(entry);
 
                 // Update the cached crawl detail so the dashboard reflects changes immediately
@@ -204,13 +275,60 @@ namespace Tablix.Server.Handlers
                     cached.Schema = entry.Schema;
                 }
 
-                return entry;
+                return DatabaseSummary.From(entry, cached);
             }
             catch (KeyNotFoundException ex)
             {
                 req.Http.Response.StatusCode = 404;
                 return new ApiErrorResponse(ApiErrorEnum.NotFound, ex.Message);
             }
+        }
+
+        /// <summary>
+        /// POST /v1/database/{id}/context - update only the user-supplied database context.
+        /// </summary>
+        public Task<object> UpdateDatabaseContextAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            ContextUpdateRequest request = req.GetData<ContextUpdateRequest>();
+            if (request == null)
+            {
+                req.Http.Response.StatusCode = 400;
+                return Task.FromResult((object)new ApiErrorResponse(ApiErrorEnum.BadRequest, "Request body is required."));
+            }
+
+            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return Task.FromResult((object)new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found."));
+            }
+
+            string mode = String.IsNullOrWhiteSpace(request.Mode) ? "replace" : request.Mode.Trim();
+            if (String.Equals(mode, "append", StringComparison.OrdinalIgnoreCase))
+            {
+                if (String.IsNullOrEmpty(entry.Context))
+                    entry.Context = request.Context;
+                else if (!String.IsNullOrEmpty(request.Context))
+                    entry.Context = entry.Context.TrimEnd() + Environment.NewLine + Environment.NewLine + request.Context;
+            }
+            else if (String.Equals(mode, "replace", StringComparison.OrdinalIgnoreCase))
+            {
+                entry.Context = request.Context;
+            }
+            else
+            {
+                req.Http.Response.StatusCode = 400;
+                return Task.FromResult((object)new ApiErrorResponse(ApiErrorEnum.BadRequest, "Unsupported context update mode '" + request.Mode + "'."));
+            }
+
+            _SettingsManager.UpdateDatabase(entry);
+
+            DatabaseDetail cached = _CrawlCache.Get(id);
+            if (cached != null)
+                cached.Context = entry.Context;
+
+            return Task.FromResult((object)new { Success = true, DatabaseId = id, Context = entry.Context, Mode = mode.ToLowerInvariant() });
         }
 
         /// <summary>
@@ -252,6 +370,97 @@ namespace Tablix.Server.Handlers
         }
 
         /// <summary>
+        /// POST /v1/database/{id}/crawl/stream - re-crawl the database schema and stream status events.
+        /// </summary>
+        public async Task<object> CrawlDatabaseStreamAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            DatabaseEntry entry = _SettingsManager.GetDatabase(id);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+            }
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            req.Http.Response.StatusCode = 200;
+            req.Http.Response.ContentType = "text/event-stream";
+            req.Http.Response.ChunkedTransfer = true;
+            req.Http.Response.Headers.Add("Cache-Control", "no-cache");
+            req.Http.Response.Headers.Add("X-Accel-Buffering", "no");
+
+            await SendCrawlEventAsync(req, new CrawlProgressEvent
+            {
+                EventType = "started",
+                Stage = "queued",
+                DatabaseId = id,
+                Message = "Crawl request accepted.",
+                Percent = 0
+            }, false).ConfigureAwait(false);
+
+            await SendCrawlEventAsync(req, new CrawlProgressEvent
+            {
+                EventType = "progress",
+                Stage = "loading_configuration",
+                DatabaseId = id,
+                Message = "Loaded database configuration.",
+                Percent = 8,
+                TotalMs = stopwatch.Elapsed.TotalMilliseconds
+            }, false).ConfigureAwait(false);
+
+            await SendCrawlEventAsync(req, new CrawlProgressEvent
+            {
+                EventType = "progress",
+                Stage = "discovering_schema",
+                DatabaseId = id,
+                Message = "Discovering tables, columns, keys, and indexes.",
+                Percent = 15,
+                TotalMs = stopwatch.Elapsed.TotalMilliseconds
+            }, false).ConfigureAwait(false);
+
+            try
+            {
+                DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(entry, async (update) =>
+                {
+                    await SendCrawlEventAsync(req, CreateCrawlProgressEvent(id, update, stopwatch), false).ConfigureAwait(false);
+                }).ConfigureAwait(false);
+                stopwatch.Stop();
+
+                await SendCrawlEventAsync(req, new CrawlProgressEvent
+                {
+                    EventType = detail.IsCrawled ? "completed" : "failed",
+                    Stage = detail.IsCrawled ? "completed" : "degraded",
+                    DatabaseId = id,
+                    Message = detail.IsCrawled ? "Crawl completed." : "Crawl completed in degraded state.",
+                    Percent = 100,
+                    Terminal = true,
+                    TotalMs = stopwatch.Elapsed.TotalMilliseconds,
+                    TableCount = detail.Tables.Count,
+                    RelationshipCount = CountRelationships(detail),
+                    Error = detail.CrawlError,
+                    Detail = detail
+                }, true).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                await SendCrawlEventAsync(req, new CrawlProgressEvent
+                {
+                    EventType = "failed",
+                    Stage = "failed",
+                    DatabaseId = id,
+                    Message = "Crawl failed.",
+                    Percent = 100,
+                    Terminal = true,
+                    TotalMs = stopwatch.Elapsed.TotalMilliseconds,
+                    Error = ex.Message
+                }, true).ConfigureAwait(false);
+            }
+
+            return null;
+        }
+
+        /// <summary>
         /// POST /v1/database/{id}/query — execute a SQL query.
         /// </summary>
         public async Task<object> ExecuteQueryAsync(AppRequest req)
@@ -290,6 +499,103 @@ namespace Tablix.Server.Handlers
                 req.Http.Response.StatusCode = 500;
                 return new ApiErrorResponse(ApiErrorEnum.InternalError, ex.Message);
             }
+        }
+
+        private async Task<DatabaseDetail> GetOrCrawlDetailAsync(DatabaseEntry entry)
+        {
+            DatabaseDetail detail = _CrawlCache.Get(entry.Id);
+            if (detail == null)
+                detail = await _CrawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+
+            return detail;
+        }
+
+        private static void ReadEnumerationQuery(
+            AppRequest req,
+            out int maxResults,
+            out int skip,
+            out string filter,
+            out string schema)
+        {
+            maxResults = 100;
+            skip = 0;
+
+            string maxResultsStr = req.Http.Request.Query.Elements.Get("maxResults");
+            if (!String.IsNullOrEmpty(maxResultsStr) && Int32.TryParse(maxResultsStr, out int parsedMax))
+                maxResults = Math.Clamp(parsedMax, 1, 1000);
+
+            string skipStr = req.Http.Request.Query.Elements.Get("skip");
+            if (!String.IsNullOrEmpty(skipStr) && Int32.TryParse(skipStr, out int parsedSkip))
+                skip = Math.Max(parsedSkip, 0);
+
+            filter = req.Http.Request.Query.Elements.Get("filter");
+            schema = req.Http.Request.Query.Elements.Get("schema");
+        }
+
+        private static int CountRelationships(DatabaseDetail detail)
+        {
+            if (detail == null || detail.Tables == null) return 0;
+
+            int count = 0;
+            foreach (TableDetail table in detail.Tables)
+            {
+                if (table != null && table.ForeignKeys != null)
+                    count += table.ForeignKeys.Count;
+            }
+
+            return count;
+        }
+
+        private static CrawlProgressEvent CreateCrawlProgressEvent(string databaseId, CrawlProgressUpdate update, Stopwatch stopwatch)
+        {
+            int percent = CalculateCrawlPercent(update);
+            return new CrawlProgressEvent
+            {
+                EventType = "progress",
+                Stage = update.Stage,
+                DatabaseId = databaseId,
+                Message = update.Message,
+                Percent = percent,
+                TotalMs = stopwatch.Elapsed.TotalMilliseconds,
+                TableName = update.TableName,
+                TableIndex = update.TableIndex,
+                TableCount = update.TableCount,
+                RelationshipCount = update.RelationshipCount
+            };
+        }
+
+        private static int CalculateCrawlPercent(CrawlProgressUpdate update)
+        {
+            if (update == null) return 15;
+
+            if (String.Equals(update.Stage, "tables_discovered", StringComparison.OrdinalIgnoreCase))
+                return 20;
+
+            if (String.Equals(update.Stage, "table_examined", StringComparison.OrdinalIgnoreCase))
+            {
+                if (update.TableIndex.HasValue && update.TableCount.HasValue && update.TableCount.Value > 0)
+                {
+                    double ratio = Math.Clamp((double)update.TableIndex.Value / update.TableCount.Value, 0, 1);
+                    return Math.Clamp(20 + (int)Math.Round(ratio * 65), 21, 85);
+                }
+
+                return 45;
+            }
+
+            if (String.Equals(update.Stage, "relationships_analyzed", StringComparison.OrdinalIgnoreCase))
+                return 92;
+
+            return 35;
+        }
+
+        private static async Task SendCrawlEventAsync(AppRequest req, CrawlProgressEvent evt, bool final)
+        {
+            string eventName = String.IsNullOrWhiteSpace(evt.EventType) ? "progress" : evt.EventType;
+            string json = Serializer.SerializeJson(evt, false);
+            string frame = "event: " + eventName + "\n"
+                + "data: " + json + "\n\n";
+            byte[] bytes = Encoding.UTF8.GetBytes(frame);
+            await req.Http.Response.SendChunk(bytes, final, req.CancellationToken).ConfigureAwait(false);
         }
 
         #endregion

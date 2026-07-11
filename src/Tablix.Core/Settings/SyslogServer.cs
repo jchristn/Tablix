@@ -61,6 +61,7 @@ namespace Tablix.Core.Settings
         public SyslogServer(string hostname, int port)
         {
             if (string.IsNullOrEmpty(hostname)) throw new ArgumentNullException(nameof(hostname));
+            if (port < 0 || port > 65535) throw new ArgumentOutOfRangeException(nameof(port));
             _Hostname = hostname;
             _Port = port;
         }

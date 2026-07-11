@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <b>v0.1.1 - ALPHA</b> - API and structure may change without notice
+  <b>v0.2.0 - ALPHA</b> - API and structure may change without notice
 </p>
 
 <p align="center">
@@ -14,18 +14,30 @@
 
 Tablix is a database discovery and query platform that connects your databases to AI agents and humans through REST and MCP interfaces.
 
+## What's New in v0.2.0
+
+v0.2.0 focuses on making Tablix reliable for larger databases and easier to validate in automation:
+
+- **Large-schema-safe discovery:** agents can page through compact table and relationship indexes before requesting full table geometry.
+- **Database context persistence:** agents can update the saved `Context` for a database after explicit user direction and schema analysis.
+- **Relationship-aware workflows:** declared foreign keys are exposed as compact relationship edges for faster join planning.
+- **Dashboard Chat and Settings:** users can chat with a selected database through configured PolyPrompt providers and edit server settings from structured forms.
+- **Dashboard productivity controls:** crawl progress streams table-level status, database context can be built/copied from the UI, query results can be copied as JSON or downloaded as CSV, and the login page shows the configured server URL.
+- **Touchstone test infrastructure:** shared tests now run through the CLI, xUnit, and NUnit from one source of truth.
+
 ## What Is Tablix?
 
-Tablix sits between your databases and your tools. It crawls database schemas — discovering tables, columns, primary keys, foreign keys, and indexes — and exposes that metadata alongside query execution through a REST API and an MCP server. A built-in dashboard provides a browser-based UI for the same operations.
+Tablix sits between your databases and your tools. It crawls database schemas - discovering tables, columns, primary keys, foreign keys, and indexes - and exposes that metadata alongside query execution through a REST API and an MCP server. A built-in dashboard provides a browser-based UI for the same operations.
 
 **Supported databases:** SQLite, PostgreSQL, MySQL, SQL Server.
 
 ## Why Use Tablix?
 
-- **Give AI agents database access.** Connect Tablix via MCP to Claude Code, Cursor, Codex, or Gemini. Your agent can discover what databases are available, understand their schemas, and run queries to answer your questions — without you writing SQL.
+- **Give AI agents database access.** Connect Tablix via MCP to Claude Code, Cursor, Codex, or Gemini. Your agent can discover what databases are available, understand their schemas, and run queries to answer your questions - without you writing SQL.
 - **Centralize database discovery.** Configure all your database connections in one place with user-supplied context that describes what each database contains and how its tables relate to one another. AI agents use this context to figure out what queries to run.
 - **Control what's allowed.** Each database entry specifies which SQL statement types are permitted (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, etc.). Tablix validates every query before execution.
-- **Inspect schemas visually.** The dashboard shows crawled table geometry — columns, types, primary keys, foreign keys, and indexes — in a clean, browsable interface with light and dark modes.
+- **Inspect schemas visually.** The dashboard shows crawled table geometry - columns, types, primary keys, foreign keys, and indexes - in a clean, browsable interface with light and dark modes.
+- **Chat with database context.** The dashboard Chat page uses PolyPrompt providers configured in `tablix.json` to answer natural-language questions using saved context and crawled schema metadata.
 
 ## How It Works
 
@@ -34,6 +46,14 @@ Tablix sits between your databases and your tools. It crawls database schemas �
 3. AI agents connect via MCP to discover databases and execute queries
 4. Humans use the dashboard or REST API for the same operations
 5. Query validation enforces the `AllowedQueries` list per database
+
+## API References
+
+- [REST_API.md](REST_API.md) documents every REST endpoint, request body, response shape, error contract, and pagination field.
+- [MCP_API.md](MCP_API.md) documents every MCP tool, input schema, response shape, agent workflow, and model-facing safety guidance.
+- Swagger UI is available at `/swagger` when the server is running.
+
+REST read endpoints and MCP discovery tools intentionally redact database credentials. `User` and `Password` are accepted only in configuration write requests; read/discovery responses expose `HasUser` and `HasPassword` booleans instead.
 
 ## Getting Started
 
@@ -64,8 +84,8 @@ The sample SQLite database includes `users`, `orders`, and `line_items` tables s
 
 The `docker/compose.yaml` starts two containers:
 
-- **tablix-server** (`jchristn77/tablix-server`) — the REST API and MCP server. Ports 9100 (REST) and 9102 (MCP) are exposed. The `tablix.json` configuration, `database.db` SQLite file, and `logs/` directory are bind-mounted from the `docker/` directory so data persists across restarts.
-- **tablix-ui** (`jchristn77/tablix-ui`) — the dashboard, served via nginx on port 9101. It connects to the server using the `TABLIX_SERVER_URL` environment variable.
+- **tablix-server** (`jchristn77/tablix-server`) - the REST API and MCP server. Ports 9100 (REST) and 9102 (MCP) are exposed. The `tablix.json` configuration, `database.db` SQLite file, and `logs/` directory are bind-mounted from the `docker/` directory so data persists across restarts.
+- **tablix-ui** (`jchristn77/tablix-ui`) - the dashboard, served via nginx on port 9101. It proxies API calls to the server using the `TABLIX_SERVER_URL` environment variable and shows that configured URL on the login page.
 
 #### Running Individual Containers
 
@@ -78,7 +98,7 @@ docker run -d \
   -v $(pwd)/tablix.json:/app/tablix.json \
   -v $(pwd)/database.db:/app/database.db \
   -v $(pwd)/logs:/app/logs \
-  jchristn77/tablix-server:v0.1.1
+  jchristn77/tablix-server:v0.2.0
 ```
 
 To run the dashboard standalone:
@@ -87,7 +107,7 @@ To run the dashboard standalone:
 docker run -d \
   -p 9101:9101 \
   -e TABLIX_SERVER_URL=http://host.docker.internal:9100 \
-  jchristn77/tablix-ui:v0.1.1
+  jchristn77/tablix-ui:v0.2.0
 ```
 
 #### Factory Reset
@@ -105,8 +125,8 @@ reset.bat       # Windows
 To build and push Docker images from source:
 
 ```bash
-build-server.bat v0.1.1
-build-dashboard.bat v0.1.1
+build-server.bat v0.2.0
+build-dashboard.bat v0.2.0
 ```
 
 ### Running from Source
@@ -119,6 +139,8 @@ dotnet run --project Tablix.Server
 
 The server creates a default `tablix.json` on first run with a sample SQLite database entry. Swagger UI is available at http://localhost:9100/swagger.
 
+The dashboard includes Databases, Query, Chat, and Settings pages. The database detail view shows the saved database context from `tablix.json`, supports inline context edits through `POST /v1/database/{id}/context`, displays the context in a copyable fixed-size viewer, and uses `POST /v1/database/{id}/crawl/stream` to show schema crawl progress in real time with per-table status. The Databases page exposes row actions from an overflow menu, including Build Context and Delete. Build Context lets a user edit model instructions, generate context from the last successful crawl through a configured provider, and persist the result to server settings. The Query page can copy result JSON or download result rows as CSV. The Chat page selects a database and provider, supports streaming and non-streaming responses, renders markdown, can execute generated permitted queries through the server-side query validator, displays inline tool calls, and exposes per-message telemetry. The Settings page edits form-based server settings and annotates values that are saved immediately but require server restart to affect active listeners or logging.
+
 ### Running Dashboard Locally
 
 ```bash
@@ -127,12 +149,19 @@ npm install
 npm run dev
 ```
 
+For local development, set `VITE_TABLIX_SERVER_URL` or `TABLIX_SERVER_URL` before starting Vite to prepopulate the login page server URL. The login page also lets the user override the server URL; edited values are stored in browser local storage. In Docker, the dashboard uses `TABLIX_SERVER_URL` for the nginx proxy target and shows it on the login page without forcing browser clients to call the internal container hostname directly.
+
 ### Running Tests
 
 ```bash
-cd src
-dotnet test
+dotnet build src/Tablix.slnx
+dotnet run --project src/Test.Automated/Test.Automated.csproj
+dotnet test src/Test.Xunit/Test.Xunit.csproj
+dotnet test src/Test.Nunit/Test.Nunit.csproj
 ```
+
+Tests are defined once in `Test.Shared` using Touchstone descriptors and exposed through the console runner, xUnit adapter, and NUnit adapter.
+The xUnit and NUnit projects are intentionally adapter surfaces over the same shared tests, so coverage changes should start in `src/Test.Shared`.
 
 ## Installing MCP
 
@@ -168,44 +197,99 @@ To configure manually, add to your client's MCP settings:
 
 ### MCP Tools
 
-Tablix exposes six MCP tools. The recommended discovery flow for AI agents is:
+Tablix exposes seven MCP tools. The recommended discovery flow for AI agents is:
 
-1. **`tablix_discover_databases`** — List all configured databases to identify which ones are available
-2. **`tablix_list_tables`** — List the tables in a specific database
-3. **`tablix_discover_table`** — Get full geometry (columns, types, PKs, FKs, indexes) for a specific table
-4. **`tablix_execute_query`** — Execute a SQL query once you understand the schema
+See [MCP_API.md](MCP_API.md) for the complete MCP tool contract, response schemas, examples, and model guidance.
+
+1. **`tablix_discover_databases`** - List configured databases
+2. **`tablix_list_tables`** - Page through compact table summaries
+3. **`tablix_list_relationships`** - Page through compact declared relationship edges
+4. **`tablix_discover_table`** - Get full geometry for specific tables
+5. **`tablix_execute_query`** - Execute a SQL query once the schema is understood
+6. **`tablix_update_context`** - Persist analyzed database context back to `tablix.json`
+7. **`tablix_discover_database`** - Full database geometry for small databases or explicit full-schema requests
+
+#### Choosing the Right Discovery Tool
+
+| Need | Use | Why |
+|------|-----|-----|
+| Find configured databases | `tablix_discover_databases` | Returns IDs, redacted metadata, allowed query types, crawl state, and saved context |
+| Understand a large database safely | `tablix_list_tables` then `tablix_list_relationships` | Keeps responses compact and pageable |
+| Inspect tables before writing SQL | `tablix_discover_table` | Returns full column, key, foreign-key, and index geometry for one table |
+| Retrieve a complete small schema | `tablix_discover_database` | Convenient when the schema is known to fit comfortably in model context |
+| Save human-approved analysis | `tablix_update_context` | Persists curated context back to `tablix.json` |
+
+For large databases, prefer this loop:
+
+1. Call `tablix_discover_databases` and select the database by `Id`.
+2. Call `tablix_list_tables` with a conservative `maxResults` such as `50`.
+3. If `EndOfResults` is false, call `tablix_list_tables` again with `skip` set to `NextSkip`.
+4. Call `tablix_list_relationships` the same way to collect declared foreign-key edges.
+5. Call `tablix_discover_table` only for tables needed by the user's question.
+6. Execute read-only exploratory SQL only after checking `AllowedQueries` and validating table geometry.
+7. Call `tablix_update_context` only when the user asks to persist the analysis.
+
+#### Agent Best Practices
+
+- Start with `tablix_discover_databases`; use the returned `Context` as authoritative user guidance and check `AllowedQueries` before executing SQL.
+- Treat discovery metadata as intentionally redacted. Tablix never returns database usernames or passwords through MCP discovery; `HasUser` and `HasPassword` are booleans only.
+- For large schemas, avoid full-database geometry. Use `tablix_list_tables` and `tablix_list_relationships`, following `NextSkip` until `EndOfResults` is true.
+- Treat `tablix_list_tables` as a compact index, not enough information for most SQL. Call `tablix_discover_table` for every table you plan to select from, join, filter on, insert into, update, or delete from.
+- Treat `tablix_list_relationships` as declared foreign-key evidence. If no relationship is returned, that only means no declared FK was discovered; implicit relationships may still exist.
+- When inferring relationships from column names or business context, clearly label them as inferred in answers and saved context.
+- Prefer `SELECT` for exploration. Only run writes when the user explicitly asks and the database `AllowedQueries` permits the statement type.
+- Use `tablix_update_context` only when the user asks to save context or the workflow explicitly requires persisted analysis. Do not store secrets, raw query results, or unsupported guesses as facts.
 
 #### `tablix_discover_databases`
 
-List all configured databases with their connection details and user-supplied context.
+List all configured databases with redacted metadata and user-supplied context. Credential values are never returned; `HasUser` and `HasPassword` only indicate whether credentials are configured.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `maxResults` | integer | No | Maximum results to return (1–1000, default 100) |
+| `maxResults` | integer | No | Maximum results to return (1-1000, default 100) |
 | `skip` | integer | No | Number of records to skip (default 0) |
 | `filter` | string | No | Filter by database ID or name |
 
 #### `tablix_discover_database`
 
-Get full schema geometry for every table in a database at once. This can produce large responses — prefer `tablix_list_tables` + `tablix_discover_table` for targeted discovery.
+Get schema geometry for a database. This can produce large responses; use only for small databases or explicit full-schema requests. For large databases, prefer `tablix_list_tables`, `tablix_list_relationships`, and `tablix_discover_table`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `databaseId` | string | Yes | Database entry ID |
+| `maxTables` | integer | No | Optional maximum number of tables to return (1-1000) |
+| `skip` | integer | No | Optional number of tables to skip |
 
 #### `tablix_list_tables`
 
-List all tables in a database with their schema names and column counts.
+List tables in a database with schema names, column counts, foreign key counts, index counts, and pagination metadata. Use this as the compact table index for large schemas.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `databaseId` | string | Yes | Database entry ID |
+| `maxResults` | integer | No | Maximum tables to return (1-1000, default 100) |
+| `skip` | integer | No | Number of tables to skip (default 0) |
+| `filter` | string | No | Filter by table or schema name |
+| `schema` | string | No | Filter by schema name |
 
-Returns each table's `SchemaName`, `TableName`, and `Columns` (column count), along with the database `Context` and `IsCrawled` status.
+Returns `MaxResults`, `Skip`, `TotalRecords`, `RecordsRemaining`, `EndOfResults`, and `NextSkip`. If `EndOfResults` is false, call the tool again with `skip` set to `NextSkip`.
+
+#### `tablix_list_relationships`
+
+List compact relationship edges for a database. The current implementation returns declared foreign keys with `FromTable`, `FromColumn`, `ToTable`, `ToColumn`, `Source`, and `Confidence`. Absence of a relationship means no declared FK was discovered, not proof that tables are unrelated.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `databaseId` | string | Yes | Database entry ID |
+| `maxResults` | integer | No | Maximum relationships to return (1-1000, default 100) |
+| `skip` | integer | No | Number of relationships to skip (default 0) |
+| `filter` | string | No | Filter by table, column, schema, or constraint name |
+| `schema` | string | No | Filter by source or target schema |
+| `includeInferred` | boolean | No | Reserved for inferred relationships; currently returns declared FKs only |
 
 #### `tablix_discover_table`
 
-Get full geometry for a single table — columns (names, data types, primary keys, nullability, defaults), foreign keys, and indexes.
+Get full geometry for a single table: columns, data types, primary keys, foreign keys, and indexes.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -214,23 +298,26 @@ Get full geometry for a single table — columns (names, data types, primary key
 
 #### `tablix_execute_query`
 
-Execute a SQL query against a database. The query must be a single statement (no semicolons) and the statement type must be in the database's `AllowedQueries` list.
+Execute a SQL query against a database. The query must be a single statement with no semicolons, and the statement type must be in the database's `AllowedQueries` list. Validate relevant tables and columns first with `tablix_discover_table`.
+
+When the user asks for actual data or a requested database change using phrases like "show me", "how many", "count", "list", "find", "total", "average", "latest", "top", "add", "update", or "delete", agents should execute a permitted query and report the returned result or write outcome instead of only providing SQL text.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `databaseId` | string | Yes | Database entry ID |
 | `query` | string | Yes | SQL query to execute |
 
-Returns `Success`, `RowsReturned`, `TotalMs`, and a `Data` object containing `Columns` (name and type) and `Rows`.
+Returns `Success`, `RowsReturned`, `TotalMs`, and a `Data` object containing `Columns` and `Rows`.
 
 #### `tablix_update_context`
 
-Update the user-supplied context description for a database. The context helps AI agents understand what the database contains, how its tables relate, and what queries are useful.
+Update the user-supplied context description for a database. The context helps AI agents understand what the database contains, how its tables relate, and what queries are useful. Preserve human-provided facts, distinguish declared relationships from inferred relationships, and avoid secrets or raw query results.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `databaseId` | string | Yes | Database entry ID |
 | `context` | string | Yes | New context description |
+| `mode` | string | No | `replace` or `append` (default `replace`) |
 
 ## Configuration
 
@@ -253,6 +340,32 @@ Tablix is configured via `tablix.json`:
     "MinimumSeverity": 0,
     "EnableColors": true
   },
+  "Chat": {
+    "Enabled": true,
+    "DefaultProviderId": "provider_ollama_local",
+    "DefaultStreaming": true,
+    "MaxContextTables": 100,
+    "Tools": {
+      "Enabled": true,
+      "AllowReadOnlyQueries": true,
+      "AllowContextUpdates": true,
+      "MaxToolIterations": 8,
+      "MaxToolCalls": 20,
+      "ToolTimeoutMs": 30000,
+      "MaxToolOutputCharacters": 12000
+    },
+    "Providers": [
+      {
+        "Id": "provider_ollama_local",
+        "Name": "Local Ollama",
+        "Type": "Ollama",
+        "Endpoint": "http://ollama:11434",
+        "ApiKey": "",
+        "Model": "gemma3:4b",
+        "Enabled": true
+      }
+    ]
+  },
   "Databases": [
     {
       "Id": "db_sample_sqlite",
@@ -265,6 +378,29 @@ Tablix is configured via `tablix.json`:
   "ApiKeys": ["tablixadmin"]
 }
 ```
+
+### Chat Settings
+
+The `Chat` section is the configuration surface for the dashboard chat experience. The default Docker and factory settings include provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini. Only the local Ollama provider is enabled by default; cloud providers are disabled until an endpoint, model, and API key are supplied.
+
+The default `Chat.SystemPrompt` instructs the model to restrict conversation to the selected database, its structure, its contents, and their relationships. Keep that boundary in custom prompts unless you intentionally want the chat provider to answer outside the database domain.
+
+Each provider includes an explicit `ApiKey` field. Providers that do not require authentication, such as a typical local Ollama instance, should leave it as an empty string. Providers that do require authentication, such as OpenAI, Gemini, and many OpenAI-compatible services, should store their token in `Chat.Providers[].ApiKey`.
+
+| Field | Description |
+|-------|-------------|
+| `Id` | Stable provider ID referenced by `Chat.DefaultProviderId` |
+| `Name` | Display name for the dashboard and logs |
+| `Type` | `Ollama`, `OpenAI`, `OpenAICompatible`, or `Gemini` |
+| `Endpoint` | Base provider endpoint URL |
+| `ApiKey` | Provider authentication material; empty when auth is not required |
+| `Model` | Default model name |
+| `Enabled` | Whether the provider is selectable |
+| `DefaultStreaming` | Whether chat should stream by default |
+| `Temperature`, `TopP`, `MaxTokens` | Optional generation controls |
+| `RequestTimeoutMs` | Provider request timeout |
+
+Provider API keys are secret-bearing settings. Treat `Chat.Providers[].ApiKey` the same way as database passwords: protect `tablix.json`, prefer environment-specific overrides where possible, and never paste secrets into shared examples or issue reports.
 
 ### Example Database Entries
 
@@ -380,7 +516,7 @@ When syslog servers are configured, log messages are forwarded to each server in
 
 ### REST API
 
-All endpoints except health checks require `Authorization: Bearer <api-key>`. See [REST_API.md](REST_API.md) for full request/response details. A [Postman collection](Tablix.postman_collection.json) is included in the repository. Swagger UI is available at `/swagger` when the server is running.
+All endpoints except health checks require `Authorization: Bearer <api-key>`. See [REST_API.md](REST_API.md) for full request/response details and [MCP_API.md](MCP_API.md) for the complete MCP tool contract. A [Postman collection](Tablix.postman_collection.json) is included in the repository. Swagger UI is available at `/swagger` when the server is running.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -388,25 +524,35 @@ All endpoints except health checks require `Authorization: Bearer <api-key>`. Se
 | `HEAD` | `/` | No | Lightweight health check (200 OK) |
 | `GET` | `/v1/database` | Yes | List databases (paginated) |
 | `GET` | `/v1/database/{id}` | Yes | Get database details and schema geometry |
+| `GET` | `/v1/database/{id}/tables` | Yes | List database tables (paginated) |
+| `GET` | `/v1/database/{id}/relationships` | Yes | List database relationships (paginated) |
 | `POST` | `/v1/database` | Yes | Add a database entry |
 | `PUT` | `/v1/database/{id}` | Yes | Update a database entry |
+| `POST` | `/v1/database/{id}/context` | Yes | Update database context |
+| `POST` | `/v1/database/{id}/context/build` | Yes | Generate and persist database context |
 | `DELETE` | `/v1/database/{id}` | Yes | Delete a database entry |
 | `POST` | `/v1/database/{id}/crawl` | Yes | Re-crawl database schema |
+| `POST` | `/v1/database/{id}/crawl/stream` | Yes | Re-crawl database schema with SSE progress |
 | `POST` | `/v1/database/{id}/query` | Yes | Execute a SQL query |
+| `GET` | `/v1/chat/options` | Yes | List chat databases and redacted providers |
+| `POST` | `/v1/chat` | Yes | Send a non-streaming database chat request |
+| `POST` | `/v1/chat/stream` | Yes | Send a streaming database chat request |
+| `GET` | `/v1/settings` | Yes | Read redacted form-editable server settings |
+| `PUT` | `/v1/settings` | Yes | Update running server settings |
 
 ### Query Validation
 
 - Only statement types listed in `AllowedQueries` are permitted
 - Multi-statement queries (containing `;`) are rejected
 - Leading SQL comments are stripped before validation
-- **This is a heuristic safeguard, not a security boundary** — always use database-level permissions for production safety
-- Passwords in `tablix.json` are stored in cleartext — protect the file with OS-level permissions
+- **This is a heuristic safeguard, not a security boundary**; always use database-level permissions for production safety
+- Database passwords and provider API keys in `tablix.json` are stored in cleartext; protect the file with OS-level permissions
 
 ### Degraded State
 
 If a database crawl fails on startup (unreachable host, bad credentials, missing file):
 
-- The server continues to start — crawl failures are non-fatal
+- The server continues to start; crawl failures are non-fatal
 - The affected database reports `IsCrawled: false` with a `CrawlError` message
 - Re-crawl at any time via `POST /v1/database/{id}/crawl` or the dashboard
 - Query execution may still work even when the crawl has not completed

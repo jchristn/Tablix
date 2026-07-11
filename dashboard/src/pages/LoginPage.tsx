@@ -1,11 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import logoImg from '../assets/logo.png';
+import { getDisplayServerUrl, setServerUrlOverride } from '../api/client';
 
 export default function LoginPage() {
   const [apiKey, setApiKey] = useState('');
   const [error, setError] = useState('');
+  const [serverUrl, setServerUrl] = useState('');
+  const [initialServerUrl, setInitialServerUrl] = useState('');
   const navigate = useNavigate();
+
+  useEffect(() => {
+    getDisplayServerUrl().then(url => {
+      setServerUrl(url);
+      setInitialServerUrl(url);
+    });
+  }, []);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -14,6 +24,9 @@ export default function LoginPage() {
       return;
     }
     sessionStorage.setItem('tablix_api_key', apiKey.trim());
+    if (serverUrl.trim() !== initialServerUrl.trim()) {
+      setServerUrlOverride(serverUrl);
+    }
     navigate('/');
   }
 
@@ -29,6 +42,17 @@ export default function LoginPage() {
         <img src={logoImg} alt="Tablix" title="Tablix — Database discovery and query platform" style={{ maxWidth: '240px', marginBottom: '24px' }} />
 
         <form onSubmit={handleSubmit}>
+          <div className="form-group">
+            <label title="Tablix server URL used by the dashboard">Server URL</label>
+            <input
+              type="url"
+              placeholder="http://localhost:9100"
+              title="Tablix server URL"
+              value={serverUrl}
+              onChange={e => setServerUrl(e.target.value)}
+            />
+          </div>
+
           <div className="form-group">
             <input
               type="password"

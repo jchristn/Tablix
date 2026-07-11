@@ -159,6 +159,26 @@ namespace Tablix.Server
             }
         }
 
+        /// <summary>
+        /// Replace current settings and persist them.
+        /// </summary>
+        /// <param name="settings">New settings.</param>
+        public void UpdateSettings(TablixSettings settings)
+        {
+            if (settings == null) throw new ArgumentNullException(nameof(settings));
+
+            _Semaphore.Wait();
+            try
+            {
+                _Settings = settings;
+                Save();
+            }
+            finally
+            {
+                _Semaphore.Release();
+            }
+        }
+
         #endregion
 
         #region Private-Methods

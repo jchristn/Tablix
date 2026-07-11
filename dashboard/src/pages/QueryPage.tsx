@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import ResultActions from '../components/ResultActions';
 import type { DatabaseEntry, EnumerationResult, QueryResult } from '../types';
 
 export default function QueryPage() {
@@ -58,6 +59,8 @@ export default function QueryPage() {
 
   const columns = result?.Data?.Columns || [];
   const rows = result?.Data?.Rows || [];
+  const resultJson = result ? JSON.stringify(result, null, 2) : '';
+  const resultCsv = result ? toCsv(columns.map(column => column.Name), rows) : '';
 
   return (
     <div>
@@ -97,9 +100,12 @@ export default function QueryPage() {
 
       {result && (
         <div className="card">
-          <div style={{ marginBottom: '12px', display: 'flex', gap: '16px' }}>
-            <span className="muted-text" title="Number of rows returned by the query">{result.RowsReturned} row(s)</span>
-            <span className="muted-text" title="Query execution time in milliseconds">{result.TotalMs.toFixed(1)} ms</span>
+          <div className="result-header">
+            <div style={{ display: 'flex', gap: '16px' }}>
+              <span className="muted-text" title="Number of rows returned by the query">{result.RowsReturned} row(s)</span>
+              <span className="muted-text" title="Query execution time in milliseconds">{result.TotalMs.toFixed(1)} ms</span>
+            </div>
+            <ResultActions jsonText={resultJson} csvText={resultCsv} filenameBase={`${selectedDb}-query-results`} />
           </div>
 
           <div style={{ overflowX: 'auto' }}>
@@ -140,4 +146,24 @@ export default function QueryPage() {
       )}
     </div>
   );
+}
+
+function toCsv(columns: string[], rows: Record<string, unknown>[]) {
+  const lines = [columns.map(escapeCsv).join(',')];
+  for (const row of rows) {
+    lines.push(columns.map(column => escapeCsv(row[column])).join(','));
+  }
+
+  return lines.join('\r\n');
+}
+
+function escapeCsv(value: unknown) {
+  if (value === null || value === undefined) return '';
+
+  const text = String(value);
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+
+  return text;
 }

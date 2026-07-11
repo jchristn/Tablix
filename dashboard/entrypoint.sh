@@ -7,7 +7,8 @@ SERVER_URL="${TABLIX_SERVER_URL:-http://localhost:9100}"
 # (nginx proxies /v1/ to the backend server)
 cat > /usr/share/nginx/html/config.json << EOF
 {
-  "serverUrl": ""
+  "serverUrl": "",
+  "displayServerUrl": "${SERVER_URL}"
 }
 EOF
 

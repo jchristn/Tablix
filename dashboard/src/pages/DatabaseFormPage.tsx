@@ -41,8 +41,10 @@ export default function DatabaseFormPage() {
         Type: data.Type || 'Sqlite',
         Hostname: data.Hostname || '',
         Port: data.Port ?? null,
-        User: data.User || '',
-        Password: data.Password || '',
+        User: '',
+        Password: '',
+        HasUser: data.HasUser || false,
+        HasPassword: data.HasPassword || false,
         DatabaseName: data.DatabaseName || '',
         Schema: data.Schema || '',
         Filename: data.Filename || '',
@@ -150,11 +152,11 @@ export default function DatabaseFormPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div className="form-group">
                   <label title="Database authentication username">User</label>
-                  <input title="Username for database authentication" value={entry.User || ''} onChange={e => handleChange('User', e.target.value)} />
+                  <input title="Username for database authentication. Leave blank when editing to keep the existing username." value={entry.User || ''} onChange={e => handleChange('User', e.target.value)} placeholder={isEdit && entry.HasUser ? 'Configured - leave blank to keep' : ''} />
                 </div>
                 <div className="form-group">
                   <label title="Database authentication password">Password</label>
-                  <input title="Password for database authentication (stored in cleartext)" type="password" value={entry.Password || ''} onChange={e => handleChange('Password', e.target.value)} />
+                  <input title="Password for database authentication. Leave blank when editing to keep the existing password." type="password" value={entry.Password || ''} onChange={e => handleChange('Password', e.target.value)} placeholder={isEdit && entry.HasPassword ? 'Configured - leave blank to keep' : ''} />
                 </div>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: entry.Type === 'Mysql' ? '1fr' : '1fr 1fr', gap: '12px' }}>

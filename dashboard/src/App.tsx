@@ -5,6 +5,8 @@ import DatabaseListPage from './pages/DatabaseListPage';
 import DatabaseDetailPage from './pages/DatabaseDetailPage';
 import DatabaseFormPage from './pages/DatabaseFormPage';
 import QueryPage from './pages/QueryPage';
+import ChatPage from './pages/ChatPage';
+import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
   return (
@@ -17,6 +19,8 @@ export default function App() {
           <Route path="/databases/:id" element={<DatabaseDetailPage />} />
           <Route path="/databases/:id/edit" element={<DatabaseFormPage />} />
           <Route path="/query" element={<QueryPage />} />
+          <Route path="/chat" element={<ChatPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

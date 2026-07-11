@@ -36,6 +36,8 @@ namespace Tablix.Server
         private SwiftStackApp _App;
         private McpHttpServer _McpServer;
         private DatabaseHandler _DatabaseHandler;
+        private ChatHandler _ChatHandler;
+        private SettingsHandler _SettingsHandler;
         private DateTime _StartTimeUtc;
 
         #endregion
@@ -182,6 +184,8 @@ namespace Tablix.Server
                 openApiSettings.Tags = new List<OpenApiTag>
                 {
                     new OpenApiTag("Database", "Database management, crawl, and query operations"),
+                    new OpenApiTag("Chat", "Model-backed database chat operations"),
+                    new OpenApiTag("Settings", "Server settings operations"),
                     new OpenApiTag("Health", "Health check endpoints")
                 };
                 openApiSettings.SecuritySchemes = new Dictionary<string, OpenApiSecurityScheme>
@@ -255,6 +259,8 @@ namespace Tablix.Server
 
             // Register handlers
             _DatabaseHandler = new DatabaseHandler(_SettingsManager, _CrawlCache);
+            _ChatHandler = new ChatHandler(_SettingsManager, _CrawlCache, _Logging);
+            _SettingsHandler = new SettingsHandler(_SettingsManager);
 
             // Health (no auth)
             rest.Get("/", async (AppRequest r) => new { Name = Constants.ProductName, Version = Constants.ProductVersion, StartTimeUtc = _StartTimeUtc, Uptime = DateTime.UtcNow - _StartTimeUtc },
@@ -269,20 +275,43 @@ namespace Tablix.Server
                     .WithParameter(OpenApiParameterMetadata.Query("maxResults", "Maximum results (1-1000)", false))
                     .WithParameter(OpenApiParameterMetadata.Query("skip", "Records to skip", false))
                     .WithParameter(OpenApiParameterMetadata.Query("filter", "Filter by ID or name", false))
-                    .WithResponse(200, OpenApiResponseMetadata.Json<EnumerationResult<DatabaseEntry>>("Paginated database list"))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<EnumerationResult<DatabaseSummary>>("Paginated redacted database list"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
 
             rest.Get("/v1/database/{id}", _DatabaseHandler.GetDatabaseAsync,
                 api => api.WithTag("Database").WithSummary("Get database details")
                     .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
-                    .WithResponse(200, OpenApiResponseMetadata.Json<DatabaseDetail>("Database detail with geometry"))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<DatabaseReadDetail>("Redacted database detail with geometry"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Get("/v1/database/{id}/tables", _DatabaseHandler.ListTablesAsync,
+                api => api.WithTag("Database").WithSummary("List database tables (paginated)")
+                    .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
+                    .WithParameter(OpenApiParameterMetadata.Query("maxResults", "Maximum results (1-1000)", false))
+                    .WithParameter(OpenApiParameterMetadata.Query("skip", "Records to skip", false))
+                    .WithParameter(OpenApiParameterMetadata.Query("filter", "Filter by table or schema name", false))
+                    .WithParameter(OpenApiParameterMetadata.Query("schema", "Filter by schema name", false))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<DatabaseTableListResult>("Paginated table list"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Get("/v1/database/{id}/relationships", _DatabaseHandler.ListRelationshipsAsync,
+                api => api.WithTag("Database").WithSummary("List database relationships (paginated)")
+                    .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
+                    .WithParameter(OpenApiParameterMetadata.Query("maxResults", "Maximum results (1-1000)", false))
+                    .WithParameter(OpenApiParameterMetadata.Query("skip", "Records to skip", false))
+                    .WithParameter(OpenApiParameterMetadata.Query("filter", "Filter by table, column, or constraint name", false))
+                    .WithParameter(OpenApiParameterMetadata.Query("schema", "Filter by source or target schema", false))
+                    .WithParameter(OpenApiParameterMetadata.Query("includeInferred", "Reserved for inferred relationships; currently returns declared foreign keys only", false))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<DatabaseRelationshipListResult>("Paginated relationship list"))
                     .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
 
             rest.Post<DatabaseEntry>("/v1/database", _DatabaseHandler.AddDatabaseAsync,
                 api => api.WithTag("Database").WithSummary("Add a new database entry")
                     .WithRequestBody(OpenApiRequestBodyMetadata.Json<DatabaseEntry>("Database entry to add", true))
-                    .WithResponse(201, OpenApiResponseMetadata.Json<DatabaseEntry>("Created database entry"))
+                    .WithResponse(201, OpenApiResponseMetadata.Json<DatabaseSummary>("Created database entry summary"))
                     .WithResponse(409, OpenApiResponseMetadata.Create("Conflict with existing database"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
 
@@ -290,8 +319,24 @@ namespace Tablix.Server
                 api => api.WithTag("Database").WithSummary("Update an existing database entry")
                     .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
                     .WithRequestBody(OpenApiRequestBodyMetadata.Json<DatabaseEntry>("Updated database entry", true))
-                    .WithResponse(200, OpenApiResponseMetadata.Json<DatabaseEntry>("Updated database entry"))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<DatabaseSummary>("Updated database entry summary"))
                     .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Post<ContextUpdateRequest>("/v1/database/{id}/context", _DatabaseHandler.UpdateDatabaseContextAsync,
+                api => api.WithTag("Database").WithSummary("Update database context")
+                    .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
+                    .WithRequestBody(OpenApiRequestBodyMetadata.Json<ContextUpdateRequest>("Context update request", true))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<object>("Updated context"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Post<BuildContextRequest>("/v1/database/{id}/context/build", _ChatHandler.BuildContextAsync,
+                api => api.WithTag("Database").WithSummary("Build database context using a model provider")
+                    .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
+                    .WithRequestBody(OpenApiRequestBodyMetadata.Json<BuildContextRequest>("Context build request", true))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<BuildContextResponse>("Generated and persisted context"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database or provider not found"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
 
             rest.Delete("/v1/database/{id}", _DatabaseHandler.DeleteDatabaseAsync,
@@ -308,6 +353,13 @@ namespace Tablix.Server
                     .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
 
+            rest.Post("/v1/database/{id}/crawl/stream", _DatabaseHandler.CrawlDatabaseStreamAsync,
+                api => api.WithTag("Database").WithSummary("Re-crawl database schema with streamed progress")
+                    .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
+                    .WithResponse(200, OpenApiResponseMetadata.Text("Server-sent event stream with crawl status events"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
             rest.Post<QueryRequest>("/v1/database/{id}/query", _DatabaseHandler.ExecuteQueryAsync,
                 api => api.WithTag("Database").WithSummary("Execute a SQL query")
                     .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
@@ -315,6 +367,36 @@ namespace Tablix.Server
                     .WithResponse(200, OpenApiResponseMetadata.Json<QueryResult>("Query result"))
                     .WithResponse(403, OpenApiResponseMetadata.Create("Query type not permitted"))
                     .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Get("/v1/chat/options", _ChatHandler.GetOptionsAsync,
+                api => api.WithTag("Chat").WithSummary("Get chat options")
+                    .WithResponse(200, OpenApiResponseMetadata.Json<ChatOptionsResponse>("Chat database and provider options"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Post<ChatRequest>("/v1/chat", _ChatHandler.ChatAsync,
+                api => api.WithTag("Chat").WithSummary("Send a non-streaming chat message")
+                    .WithRequestBody(OpenApiRequestBodyMetadata.Json<ChatRequest>("Chat request", true))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<ChatResponseResult>("Chat response"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database or provider not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Post<ChatRequest>("/v1/chat/stream", _ChatHandler.ChatStreamAsync,
+                api => api.WithTag("Chat").WithSummary("Send a streaming chat message")
+                    .WithRequestBody(OpenApiRequestBodyMetadata.Json<ChatRequest>("Chat request", true))
+                    .WithResponse(200, OpenApiResponseMetadata.Text("Server-sent event stream with chat tokens and telemetry"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database or provider not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Get("/v1/settings", _SettingsHandler.GetSettingsAsync,
+                api => api.WithTag("Settings").WithSummary("Read redacted server settings")
+                    .WithResponse(200, OpenApiResponseMetadata.Json<SettingsReadResponse>("Redacted server settings"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Put<SettingsUpdateRequest>("/v1/settings", _SettingsHandler.UpdateSettingsAsync,
+                api => api.WithTag("Settings").WithSummary("Update server settings")
+                    .WithRequestBody(OpenApiRequestBodyMetadata.Json<SettingsUpdateRequest>("Settings update", true))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<SettingsReadResponse>("Updated redacted server settings"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
         }
 

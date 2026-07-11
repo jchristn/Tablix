@@ -1,5 +1,10 @@
 #!/bin/bash
 
+set -euo pipefail
+
+factory_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+docker_dir="$(cd "${factory_dir}/.." && pwd)"
+
 echo ""
 echo "============================================"
 echo "  Tablix Factory Reset"
@@ -16,20 +21,22 @@ fi
 
 echo ""
 echo "Stopping containers..."
-docker compose -f ../compose.yaml down
+if ! docker compose -f "${docker_dir}/compose.yaml" down; then
+    echo "Warning: docker compose down failed; continuing with local factory reset."
+fi
 
 echo ""
 echo "Restoring factory database..."
-cp -f factory/database.db ../database.db
+cp -f "${factory_dir}/database.db" "${docker_dir}/database.db"
 
 echo ""
 echo "Restoring factory configuration..."
-cp -f factory/tablix.json ../tablix.json
+cp -f "${factory_dir}/tablix.json" "${docker_dir}/tablix.json"
 
 echo ""
 echo "Clearing logs..."
-rm -rf ../logs
-mkdir -p ../logs
+rm -rf "${docker_dir}/logs"
+mkdir -p "${docker_dir}/logs"
 
 echo ""
 echo "============================================"

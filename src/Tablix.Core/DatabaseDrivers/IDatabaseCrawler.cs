@@ -2,6 +2,7 @@ namespace Tablix.Core.DatabaseDrivers
 {
     using System.Threading;
     using System.Threading.Tasks;
+    using System;
     using Tablix.Core.Models;
     using Tablix.Core.Settings;
 
@@ -17,6 +18,15 @@ namespace Tablix.Core.DatabaseDrivers
         /// <param name="token">Cancellation token.</param>
         /// <returns>Database detail with discovered tables, columns, foreign keys, and indexes.</returns>
         Task<DatabaseDetail> CrawlAsync(DatabaseEntry entry, CancellationToken token = default);
+
+        /// <summary>
+        /// Crawl the database schema and emit progress updates.
+        /// </summary>
+        /// <param name="entry">Database connection configuration.</param>
+        /// <param name="progressCallback">Optional progress callback.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Database detail with discovered tables, columns, foreign keys, and indexes.</returns>
+        Task<DatabaseDetail> CrawlAsync(DatabaseEntry entry, Func<CrawlProgressUpdate, Task> progressCallback, CancellationToken token = default);
 
         /// <summary>
         /// Execute a SQL query against the database.

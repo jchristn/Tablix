@@ -46,12 +46,22 @@ namespace Tablix.Core.Settings
             set { _ApiKeys = value ?? new List<string>(); }
         }
 
+        /// <summary>
+        /// Chat and model provider settings.
+        /// </summary>
+        public ChatSettings Chat
+        {
+            get { return _Chat; }
+            set { if (value != null) _Chat = value; }
+        }
+
         #endregion
 
         #region Private-Members
 
         private RestSettings _Rest = new RestSettings();
         private LoggingSettings _Logging = new LoggingSettings();
+        private ChatSettings _Chat = new ChatSettings();
         private List<DatabaseEntry> _Databases = new List<DatabaseEntry>
         {
             new DatabaseEntry

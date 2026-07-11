@@ -1,5 +1,8 @@
 <Solution>
   <Project Path="Tablix.Core/Tablix.Core.csproj" />
   <Project Path="Tablix.Server/Tablix.Server.csproj" />
-  <Project Path="Tablix.Tests/Tablix.Tests.csproj" />
+  <Project Path="Test.Shared/Test.Shared.csproj" />
+  <Project Path="Test.Automated/Test.Automated.csproj" />
+  <Project Path="Test.Xunit/Test.Xunit.csproj" />
+  <Project Path="Test.Nunit/Test.Nunit.csproj" />
 </Solution>

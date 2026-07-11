@@ -42,6 +42,11 @@ namespace Tablix.Core.Models
         public bool EndOfResults { get; set; } = true;
 
         /// <summary>
+        /// Skip value to use for the next page. Null when EndOfResults is true.
+        /// </summary>
+        public int? NextSkip { get; set; } = null;
+
+        /// <summary>
         /// Total time in milliseconds.
         /// </summary>
         public double TotalMs { get; set; } = 0;

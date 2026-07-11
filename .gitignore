@@ -16,6 +16,10 @@ dist/
 .env.local
 .env.*.local
 
+# Runtime output
+logs/
+docker/logs/
+
 # OS / Editor
 .DS_Store
 Thumbs.db

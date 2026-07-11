@@ -60,13 +60,24 @@ namespace Tablix.Server
         /// <returns>Database detail result.</returns>
         public async Task<DatabaseDetail> CrawlOneAsync(DatabaseEntry entry)
         {
+            return await CrawlOneAsync(entry, null).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Crawl a single database with progress updates. Non-fatal on failure.
+        /// </summary>
+        /// <param name="entry">Database entry to crawl.</param>
+        /// <param name="progressCallback">Optional progress callback.</param>
+        /// <returns>Database detail result.</returns>
+        public async Task<DatabaseDetail> CrawlOneAsync(DatabaseEntry entry, Func<CrawlProgressUpdate, Task> progressCallback)
+        {
             if (entry == null) throw new ArgumentNullException(nameof(entry));
 
             try
             {
                 _LogInfo?.Invoke("crawling database '" + entry.Id + "'");
                 IDatabaseCrawler crawler = CrawlerFactory.Create(entry.Type);
-                DatabaseDetail detail = await crawler.CrawlAsync(entry).ConfigureAwait(false);
+                DatabaseDetail detail = await crawler.CrawlAsync(entry, progressCallback).ConfigureAwait(false);
                 _Cache[entry.Id] = detail;
                 _LogInfo?.Invoke("crawled database '" + entry.Id + "': " + detail.Tables.Count + " tables");
                 return detail;

@@ -1,4 +1,9 @@
 @echo off
+setlocal
+
+set "FACTORY_DIR=%~dp0"
+set "DOCKER_DIR=%FACTORY_DIR%.."
+
 echo.
 echo ============================================
 echo   Tablix Factory Reset
@@ -15,20 +20,28 @@ if /i not "%confirm%"=="y" (
 
 echo.
 echo Stopping containers...
-docker compose -f ..\compose.yaml down
+call docker compose -f "%DOCKER_DIR%\compose.yaml" down
 
 echo.
 echo Restoring factory database...
-copy /Y factory\database.db ..\database.db
+copy /Y "%FACTORY_DIR%database.db" "%DOCKER_DIR%\database.db" >nul
+if errorlevel 1 (
+    echo Failed to restore factory database.
+    exit /b 1
+)
 
 echo.
 echo Restoring factory configuration...
-copy /Y factory\tablix.json ..\tablix.json
+copy /Y "%FACTORY_DIR%tablix.json" "%DOCKER_DIR%\tablix.json" >nul
+if errorlevel 1 (
+    echo Failed to restore factory configuration.
+    exit /b 1
+)
 
 echo.
 echo Clearing logs...
-if exist "..\logs" rd /S /Q ..\logs
-mkdir ..\logs
+if exist "%DOCKER_DIR%\logs" rd /S /Q "%DOCKER_DIR%\logs"
+mkdir "%DOCKER_DIR%\logs"
 
 echo.
 echo ============================================

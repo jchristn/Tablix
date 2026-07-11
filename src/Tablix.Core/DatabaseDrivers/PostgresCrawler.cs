@@ -22,6 +22,12 @@ namespace Tablix.Core.DatabaseDrivers
         /// <inheritdoc />
         public async Task<DatabaseDetail> CrawlAsync(DatabaseEntry entry, CancellationToken token = default)
         {
+            return await CrawlAsync(entry, null, token).ConfigureAwait(false);
+        }
+
+        /// <inheritdoc />
+        public async Task<DatabaseDetail> CrawlAsync(DatabaseEntry entry, Func<CrawlProgressUpdate, Task> progressCallback, CancellationToken token = default)
+        {
             if (entry == null) throw new ArgumentNullException(nameof(entry));
 
             string schema = entry.Schema ?? "public";
@@ -42,9 +48,17 @@ namespace Tablix.Core.DatabaseDrivers
                 await connection.OpenAsync(token).ConfigureAwait(false);
 
                 List<string> tableNames = await GetTableNamesAsync(connection, schema, token).ConfigureAwait(false);
+                await ReportProgressAsync(progressCallback, new CrawlProgressUpdate
+                {
+                    Stage = "tables_discovered",
+                    Message = "Discovered " + tableNames.Count + " table(s).",
+                    TableCount = tableNames.Count
+                }).ConfigureAwait(false);
 
+                int tableIndex = 0;
                 foreach (string tableName in tableNames)
                 {
+                    tableIndex++;
                     TableDetail table = new TableDetail
                     {
                         TableName = tableName,
@@ -64,7 +78,24 @@ namespace Tablix.Core.DatabaseDrivers
                     table.Indexes = await GetIndexesAsync(connection, schema, tableName, token).ConfigureAwait(false);
 
                     detail.Tables.Add(table);
+                    await ReportProgressAsync(progressCallback, new CrawlProgressUpdate
+                    {
+                        Stage = "table_examined",
+                        Message = "Examined table " + table.SchemaName + "." + table.TableName + ".",
+                        TableName = table.TableName,
+                        TableIndex = tableIndex,
+                        TableCount = tableNames.Count,
+                        RelationshipCount = CountRelationships(detail)
+                    }).ConfigureAwait(false);
                 }
+
+                await ReportProgressAsync(progressCallback, new CrawlProgressUpdate
+                {
+                    Stage = "relationships_analyzed",
+                    Message = "Analyzed declared relationships.",
+                    TableCount = tableNames.Count,
+                    RelationshipCount = CountRelationships(detail)
+                }).ConfigureAwait(false);
 
                 detail.IsCrawled = true;
                 detail.CrawledUtc = DateTime.UtcNow;
@@ -295,6 +326,26 @@ namespace Tablix.Core.DatabaseDrivers
             }
 
             return indexes;
+        }
+
+        private static async Task ReportProgressAsync(Func<CrawlProgressUpdate, Task> progressCallback, CrawlProgressUpdate update)
+        {
+            if (progressCallback != null)
+                await progressCallback(update).ConfigureAwait(false);
+        }
+
+        private static int CountRelationships(DatabaseDetail detail)
+        {
+            if (detail == null || detail.Tables == null) return 0;
+
+            int count = 0;
+            foreach (TableDetail table in detail.Tables)
+            {
+                if (table != null && table.ForeignKeys != null)
+                    count += table.ForeignKeys.Count;
+            }
+
+            return count;
         }
 
         #endregion
