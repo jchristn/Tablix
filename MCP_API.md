@@ -47,7 +47,8 @@ Restrict conversation to the selected database, its structure, its contents, and
 6. Call `tablix_list_relationships` the same way to collect declared foreign-key edges.
 7. Call `tablix_discover_table` for every table needed for SQL generation.
 8. Run `tablix_execute_query` after confirming the statement type is listed in `AllowedQueries` when the user asks for actual data, counts, lists, totals, computed answers, or an explicit database change.
-9. Use `tablix_update_context` only when the user explicitly asks to save context or the workflow clearly requires persisted analysis.
+9. If a query fails because of a bad or unknown column, missing column, or column type mismatch, refresh schema by re-discovering the relevant table or database before retrying.
+10. Use `tablix_update_context` when the user explicitly asks to save context, the workflow clearly requires persisted analysis, or refreshed schema proves saved context has stale column names, stale column types, or stale relationship guidance.
 
 Use `tablix_discover_database` only for small databases, explicit full-schema requests, or carefully paged full-geometry retrieval.
 
@@ -503,6 +504,8 @@ Validation and execution failures are returned as `QueryResult` with `Success: f
 - Aggregate queries such as `COUNT(*)` do not need a `LIMIT`.
 - Do not run write statements unless the user explicitly asks and `AllowedQueries` permits the statement type.
 - Validate table and column names with `tablix_discover_table` first.
+- If execution fails because of a bad or unknown column, missing column, or column type mismatch, refresh schema by re-discovering the relevant table or database before retrying.
+- If refreshed schema proves saved context has wrong column names, wrong column types, or stale relationship guidance, call `tablix_update_context` with corrected context.
 
 ### `tablix_update_context`
 
@@ -553,7 +556,7 @@ Persists database context back to `tablix.json`.
 
 #### Guidance
 
-- Use only when the user asks to save/update context or the workflow explicitly requires persisted analysis.
+- Use when the user asks to save/update context, the workflow explicitly requires persisted analysis, or refreshed schema proves saved context has stale column names, stale column types, or stale relationship guidance.
 - Preserve human-provided facts.
 - Separate declared relationships from inferred relationships.
 - Label inferred relationships clearly.

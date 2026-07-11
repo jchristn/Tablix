@@ -4,6 +4,7 @@ namespace Test.Shared
     using System.Collections.Generic;
     using System.IO;
     using System.Linq;
+    using System.Text.RegularExpressions;
     using System.Text.Json;
     using System.Threading;
     using System.Threading.Tasks;
@@ -43,7 +44,9 @@ namespace Test.Shared
                     CrawlerFactorySuite(),
                     CrawlCacheSuite(),
                     McpToolBehaviorSuite(),
-                    McpGuidanceSuite()
+                    McpGuidanceSuite(),
+                    DockerPackagingSuite(),
+                    DashboardApiContractSuite()
                 };
             }
         }
@@ -461,6 +464,9 @@ namespace Test.Shared
 
                         NotNull(settings.Chat, "Chat settings should not be null.");
                         Contains(settings.Chat.SystemPrompt, "Restrict your conversation to only the selected database", "Default chat prompt should restrict scope.");
+                        Contains(settings.Chat.SystemPrompt, "bad or unknown column", "Default chat prompt should handle unknown column failures.");
+                        Contains(settings.Chat.SystemPrompt, "column type mismatch", "Default chat prompt should handle column type failures.");
+                        Contains(settings.Chat.SystemPrompt, "update the database context", "Default chat prompt should correct stale saved context.");
                         True(settings.Chat.Providers.Any(provider => provider.Type == ModelProviderTypeEnum.Ollama), "Expected Ollama provider.");
                         True(settings.Chat.Providers.Any(provider => provider.Type == ModelProviderTypeEnum.OpenAI), "Expected OpenAI provider.");
                         True(settings.Chat.Providers.Any(provider => provider.Type == ModelProviderTypeEnum.OpenAICompatible), "Expected OpenAI-compatible provider.");
@@ -1666,6 +1672,9 @@ namespace Test.Shared
                         Contains(descriptions["tablix_execute_query"], "how many", "Query tool should identify count-style requests as executable.");
                         Contains(descriptions["tablix_execute_query"], "permitted query", "Query tool should generalize beyond SELECT.");
                         Contains(descriptions["tablix_execute_query"], "add, update, or delete", "Query tool should mention permitted write requests.");
+                        Contains(descriptions["tablix_execute_query"], "bad or unknown column", "Query tool should explain schema refresh after unknown column errors.");
+                        Contains(descriptions["tablix_execute_query"], "column type mismatch", "Query tool should explain schema refresh after type errors.");
+                        Contains(descriptions["tablix_execute_query"], "update Context", "Query tool should direct agents to correct stale context.");
                         return Task.CompletedTask;
                     }),
                     Case("McpGuidance", "ContextGuidance", "Context update guidance protects persisted context quality", ct =>
@@ -1674,6 +1683,109 @@ namespace Test.Shared
                         Contains(descriptions["tablix_update_context"], "explicit user instruction", "Context update should not be casual.");
                         Contains(descriptions["tablix_update_context"], "Do not store secrets", "Context update should protect sensitive data.");
                         Contains(descriptions["tablix_update_context"], "separate declared relationships from inferred ones", "Context update should preserve relationship fidelity.");
+                        Contains(descriptions["tablix_update_context"], "wrong column names", "Context update should correct stale column names.");
+                        Contains(descriptions["tablix_update_context"], "wrong column types", "Context update should correct stale column types.");
+                        return Task.CompletedTask;
+                    })
+                });
+        }
+
+        /// <summary>
+        /// Docker packaging tests.
+        /// </summary>
+        /// <returns>Suite descriptor.</returns>
+        public static TestSuiteDescriptor DockerPackagingSuite()
+        {
+            return new TestSuiteDescriptor(
+                suiteId: "DockerPackaging",
+                displayName: "Docker Packaging",
+                cases: new List<TestCaseDescriptor>
+                {
+                    Case("DockerPackaging", "DashboardProxyPreservesApiRequestUri", "Dashboard proxy preserves API path and query string", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string entrypointFilename = Path.Combine(repositoryRoot, "dashboard", "entrypoint.sh");
+                        string nginxFilename = Path.Combine(repositoryRoot, "dashboard", "nginx.conf");
+
+                        string entrypoint = File.ReadAllText(entrypointFilename);
+                        string nginx = File.ReadAllText(nginxFilename);
+
+                        Contains(entrypoint, "proxy_pass \\$backend\\$request_uri;", "Runtime nginx config must preserve the full API request URI.");
+                        DoesNotContain(entrypoint, "proxy_pass \\$backend/v1/;", "Runtime nginx config must not rewrite API requests to /v1/.");
+                        Contains(nginx, "proxy_pass http://localhost:9100$request_uri;", "Fallback nginx config must preserve the full API request URI.");
+                        return Task.CompletedTask;
+                    })
+                });
+        }
+
+        /// <summary>
+        /// Dashboard-to-REST API contract tests.
+        /// </summary>
+        /// <returns>Suite descriptor.</returns>
+        public static TestSuiteDescriptor DashboardApiContractSuite()
+        {
+            return new TestSuiteDescriptor(
+                suiteId: "DashboardApiContract",
+                displayName: "Dashboard API Contract",
+                cases: new List<TestCaseDescriptor>
+                {
+                    Case("DashboardApiContract", "DashboardCallsRegisteredServerRoutes", "Dashboard API calls match registered server routes", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string serverRoutes = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "TablixServer.cs"));
+                        string dashboardSource = ReadAllDashboardSource(repositoryRoot);
+
+                        List<ApiRouteContract> contracts = DashboardApiContracts();
+                        foreach (ApiRouteContract contract in contracts)
+                        {
+                            Contains(serverRoutes, contract.ServerRegistrationFragment, "Server route is missing: " + contract.Method + " " + contract.RouteTemplate);
+                            if (contract.RequiredDashboardFragment != null)
+                                Contains(dashboardSource, contract.RequiredDashboardFragment, "Dashboard call is missing: " + contract.Method + " " + contract.RouteTemplate);
+                        }
+
+                        foreach (Match match in Regex.Matches(dashboardSource, "/v1/[A-Za-z0-9_${}./?=&-]+"))
+                        {
+                            string route = NormalizeDashboardRoute(match.Value);
+                            bool known = contracts.Any(contract => route.StartsWith(contract.DashboardRoutePrefix, StringComparison.Ordinal));
+                            True(known, "Dashboard calls unknown API route fragment: " + match.Value);
+                        }
+
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ApiFetchDoesNotForceJsonOnBodylessRequests", "Dashboard API helper only sends JSON content type with request bodies", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string client = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "api", "client.ts"));
+
+                        Contains(client, "if (options.body && !headers.has('Content-Type'))", "apiFetch should only set JSON content type when a request body is present.");
+                        DoesNotContain(client, "'Content-Type': 'application/json'", "apiFetch should not force JSON content type on every request.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ChatTranscriptAdaptsToToolCallHeightChanges", "Chat transcript adapts when tool calls expand and collapse", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ChatPage.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(chatPage, "ResizeObserver", "Chat transcript should observe rendered content height changes.");
+                        Contains(chatPage, "onToggle={onToolCallToggled}", "Tool call details should notify the transcript after expand or collapse.");
+                        Contains(chatPage, "onToolCallToggleStart={captureTranscriptStickiness}", "Tool call toggles should capture whether the user was already at the bottom.");
+                        Contains(stylesheet, ".chat-transcript-content", "Chat transcript should have an observed content wrapper.");
+                        Contains(stylesheet, "flex: 0 0 auto;", "Chat messages should not shrink and clip inside the transcript.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ChatSelectorsResetConversation", "Changing chat database or provider clears the conversation", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ChatPage.tsx"));
+
+                        Contains(chatPage, "function resetConversation()", "Chat page should centralize conversation reset behavior.");
+                        Contains(chatPage, "setMessages([]);", "Conversation reset should clear chat messages.");
+                        Contains(chatPage, "setInput('');", "Conversation reset should clear pending input.");
+                        Contains(chatPage, "function handleDatabaseChanged", "Database selector should use a reset-aware change handler.");
+                        Contains(chatPage, "function handleProviderChanged", "Provider selector should use a reset-aware change handler.");
+                        Contains(chatPage, "onChange={event => handleDatabaseChanged(event.target.value)}", "Database selector should reset the conversation when changed.");
+                        Contains(chatPage, "onChange={event => handleProviderChanged(event.target.value)}", "Provider selector should reset the conversation when changed.");
                         return Task.CompletedTask;
                     })
                 });
@@ -1682,6 +1794,97 @@ namespace Test.Shared
         private static TestCaseDescriptor Case(string suiteId, string caseId, string displayName, Func<CancellationToken, Task> executeAsync)
         {
             return new TestCaseDescriptor(suiteId, caseId, displayName, executeAsync);
+        }
+
+        private static string FindRepositoryRoot()
+        {
+            DirectoryInfo directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+            while (directory != null)
+            {
+                string entrypointFilename = Path.Combine(directory.FullName, "dashboard", "entrypoint.sh");
+                string solutionFilename = Path.Combine(directory.FullName, "src", "Tablix.slnx");
+
+                if (File.Exists(entrypointFilename) && File.Exists(solutionFilename))
+                    return directory.FullName;
+
+                directory = directory.Parent;
+            }
+
+            throw new InvalidOperationException("Unable to find Tablix repository root from " + AppContext.BaseDirectory + ".");
+        }
+
+        private static string ReadAllDashboardSource(string repositoryRoot)
+        {
+            string dashboardSourceDirectory = Path.Combine(repositoryRoot, "dashboard", "src");
+            List<string> sourceFiles = Directory
+                .GetFiles(dashboardSourceDirectory, "*.*", SearchOption.AllDirectories)
+                .Where(filename =>
+                    filename.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) ||
+                    filename.EndsWith(".tsx", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(filename => filename)
+                .ToList();
+
+            return String.Join(Environment.NewLine, sourceFiles.Select(File.ReadAllText));
+        }
+
+        private static string NormalizeDashboardRoute(string route)
+        {
+            string normalized = route;
+            int queryIndex = normalized.IndexOf('?');
+            if (queryIndex >= 0)
+                normalized = normalized.Substring(0, queryIndex);
+
+            normalized = normalized.Replace("${id}", "{id}", StringComparison.Ordinal);
+            normalized = normalized.Replace("${selectedDb}", "{id}", StringComparison.Ordinal);
+            normalized = normalized.Replace("${db.Id}", "{id}", StringComparison.Ordinal);
+            normalized = normalized.Replace("${contextTarget.Id}", "{id}", StringComparison.Ordinal);
+            normalized = normalized.Replace("${detail.DatabaseId}", "{id}", StringComparison.Ordinal);
+            return normalized;
+        }
+
+        private static List<ApiRouteContract> DashboardApiContracts()
+        {
+            return new List<ApiRouteContract>
+            {
+                new ApiRouteContract("GET", "/v1/database", "rest.Get(\"/v1/database\"", "/v1/database?", "/v1/database"),
+                new ApiRouteContract("GET", "/v1/database/{id}", "rest.Get(\"/v1/database/{id}\"", "/v1/database/${id}", "/v1/database/{id}"),
+                new ApiRouteContract("POST", "/v1/database", "rest.Post<DatabaseEntry>(\"/v1/database\"", "apiFetch('/v1/database', { method: 'POST'", "/v1/database"),
+                new ApiRouteContract("PUT", "/v1/database/{id}", "rest.Put<DatabaseEntry>(\"/v1/database/{id}\"", "method: 'PUT'", "/v1/database/{id}"),
+                new ApiRouteContract("DELETE", "/v1/database/{id}", "rest.Delete(\"/v1/database/{id}\"", "method: 'DELETE'", "/v1/database/{id}"),
+                new ApiRouteContract("POST", "/v1/database/{id}/context", "rest.Post<ContextUpdateRequest>(\"/v1/database/{id}/context\"", "/context`", "/v1/database/{id}/context"),
+                new ApiRouteContract("POST", "/v1/database/{id}/context/build", "rest.Post<BuildContextRequest>(\"/v1/database/{id}/context/build\"", "/context/build", "/v1/database/{id}/context/build"),
+                new ApiRouteContract("POST", "/v1/database/{id}/crawl/stream", "rest.Post(\"/v1/database/{id}/crawl/stream\"", "/crawl/stream", "/v1/database/{id}/crawl/stream"),
+                new ApiRouteContract("POST", "/v1/database/{id}/query", "rest.Post<QueryRequest>(\"/v1/database/{id}/query\"", "/query`", "/v1/database/{id}/query"),
+                new ApiRouteContract("GET", "/v1/chat/options", "rest.Get(\"/v1/chat/options\"", "/v1/chat/options", "/v1/chat/options"),
+                new ApiRouteContract("POST", "/v1/chat", "rest.Post<ChatRequest>(\"/v1/chat\"", "apiFetch('/v1/chat',", "/v1/chat"),
+                new ApiRouteContract("POST", "/v1/chat/stream", "rest.Post<ChatRequest>(\"/v1/chat/stream\"", "/v1/chat/stream", "/v1/chat/stream"),
+                new ApiRouteContract("GET", "/v1/settings", "rest.Get(\"/v1/settings\"", "apiFetch('/v1/settings')", "/v1/settings"),
+                new ApiRouteContract("PUT", "/v1/settings", "rest.Put<SettingsUpdateRequest>(\"/v1/settings\"", "method: 'PUT'", "/v1/settings")
+            };
+        }
+
+        private class ApiRouteContract
+        {
+            public string Method { get; }
+            public string RouteTemplate { get; }
+            public string ServerRegistrationFragment { get; }
+            public string RequiredDashboardFragment { get; }
+            public string DashboardRoutePrefix { get; }
+
+            public ApiRouteContract(
+                string method,
+                string routeTemplate,
+                string serverRegistrationFragment,
+                string requiredDashboardFragment,
+                string dashboardRoutePrefix)
+            {
+                Method = method;
+                RouteTemplate = routeTemplate;
+                ServerRegistrationFragment = serverRegistrationFragment;
+                RequiredDashboardFragment = requiredDashboardFragment;
+                DashboardRoutePrefix = dashboardRoutePrefix;
+            }
         }
 
         private static DatabaseDetail SampleDetail()

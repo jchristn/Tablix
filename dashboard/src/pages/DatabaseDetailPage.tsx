@@ -146,7 +146,13 @@ export default function DatabaseDetailPage() {
 
   async function handleDelete() {
     if (!confirm('Delete this database entry?')) return;
-    await apiFetch(`/v1/database/${id}`, { method: 'DELETE' });
+    const response = await apiFetch(`/v1/database/${id}`, { method: 'DELETE' });
+    if (response.status === 401) { navigate('/login'); return; }
+    if (!response.ok) {
+      const message = await response.text();
+      setError(message || 'Failed to delete database.');
+      return;
+    }
     navigate('/');
   }
 
@@ -234,6 +240,11 @@ export default function DatabaseDetailPage() {
         }),
       });
 
+      if (response.status === 401) {
+        navigate('/login');
+        return;
+      }
+
       const data = await response.json();
       if (!response.ok || !data.Success) {
         const parts = [data.Error, data.Description, data.Message].filter(Boolean);
@@ -260,7 +271,18 @@ export default function DatabaseDetailPage() {
   return (
     <div>
       <div className="page-header">
-        <h2 title="Database entry details and schema geometry">{detail.DatabaseName || detail.DatabaseId}</h2>
+        <div className="detail-title-row">
+          <button
+            type="button"
+            className="icon-action"
+            title="Back to database list"
+            aria-label="Back to database list"
+            onClick={() => navigate('/')}
+          >
+            <BackIcon />
+          </button>
+          <h2 title="Database entry details and schema geometry">{detail.DatabaseName || detail.DatabaseId}</h2>
+        </div>
         <div style={{ display: 'flex', gap: '8px' }}>
           <button className="btn-primary" title="Re-discover tables, columns, foreign keys, and indexes" onClick={handleCrawl} disabled={crawling}>
             {crawling ? 'Crawling...' : 'Crawl'}
@@ -524,6 +546,15 @@ function CloseIcon() {
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M18 6 6 18" />
       <path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
+function BackIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m12 19-7-7 7-7" />
+      <path d="M19 12H5" />
     </svg>
   );
 }

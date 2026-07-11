@@ -43,6 +43,8 @@ export default function QueryPage() {
         body: JSON.stringify({ Query: query.replace(/;\s*$/, '') }),
       });
 
+      if (response.status === 401) { navigate('/login'); return; }
+
       const data = await response.json();
       if (response.ok && data.Success) {
         setResult(data);

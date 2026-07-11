@@ -33,6 +33,8 @@ export default function DatabaseFormPage() {
 
   async function loadEntry() {
     const response = await apiFetch(`/v1/database/${id}`);
+    if (response.status === 401) { navigate('/login'); return; }
+    if (response.status === 404) { setError('Database not found.'); return; }
     if (response.ok) {
       const data = await response.json();
       const dbEntry: DatabaseEntry = {
@@ -90,6 +92,8 @@ export default function DatabaseFormPage() {
       const response = isEdit
         ? await apiFetch(`/v1/database/${id}`, { method: 'PUT', body: JSON.stringify(body) })
         : await apiFetch('/v1/database', { method: 'POST', body: JSON.stringify(body) });
+
+      if (response.status === 401) { navigate('/login'); return; }
 
       if (response.ok) {
         navigate(isEdit ? `/databases/${id}` : '/');

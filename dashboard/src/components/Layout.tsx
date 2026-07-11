@@ -1,14 +1,17 @@
-import { Outlet, Navigate } from 'react-router-dom';
+import { Outlet, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './Navbar';
 
 export default function Layout() {
   const apiKey = sessionStorage.getItem('tablix_api_key');
+  const location = useLocation();
   if (!apiKey) return <Navigate to="/login" replace />;
 
+  const mainClassName = location.pathname === '/chat' ? 'app-main app-main-chat' : 'app-main';
+
   return (
-    <div>
+    <div className="app-shell">
       <Navbar />
-      <main style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
+      <main className={mainClassName}>
         <Outlet />
       </main>
     </div>

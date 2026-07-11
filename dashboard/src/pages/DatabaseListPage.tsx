@@ -149,6 +149,8 @@ export default function DatabaseListPage() {
         }),
       });
 
+      if (response.status === 401) { navigate('/login'); return; }
+
       const data = await response.json();
       if (!response.ok || !data.Success) {
         const parts = [data.Error, data.Description, data.Message].filter(Boolean);

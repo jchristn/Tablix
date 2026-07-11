@@ -46,11 +46,18 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   background-color: var(--bg-secondary);
   color: var(--text-primary);
   line-height: 1.5;
+  overflow: hidden;
 }
 
 a {
@@ -117,6 +124,29 @@ input:focus, textarea:focus, select:focus {
 textarea {
   font-family: var(--font-mono);
   resize: vertical;
+}
+
+.app-shell {
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.app-main-chat {
+  overflow: hidden;
 }
 
 .card {
@@ -195,6 +225,18 @@ tr:hover {
 .page-header h2 {
   font-size: 20px;
   font-weight: 600;
+}
+
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.detail-title-row h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .error-text {
@@ -291,10 +333,12 @@ tr:hover {
 }
 
 .chat-page {
-  height: calc(100vh - 92px);
+  height: 100%;
+  max-height: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .chat-page .page-header {
@@ -321,6 +365,7 @@ tr:hover {
   padding: 14px 16px;
   border-bottom: 1px solid var(--border-color);
   background-color: var(--bg-secondary);
+  flex: 0 0 auto;
 }
 
 .chat-toolbar .form-group {
@@ -348,18 +393,28 @@ tr:hover {
   border-bottom: 1px solid var(--border-color);
   color: var(--text-muted);
   font-size: 12px;
+  flex: 0 0 auto;
 }
 
 .chat-transcript {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
-  padding: 20px;
-  overflow-y: auto;
+  padding: 20px 20px 32px;
+  overflow-y: scroll;
   overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   background-color: var(--bg-secondary);
 }
 
+.chat-transcript-content {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
 .chat-empty {
+  flex: 0 0 auto;
   max-width: 560px;
   margin: 80px auto;
   text-align: center;
@@ -373,7 +428,12 @@ tr:hover {
 
 .chat-message {
   display: flex;
+  flex: 0 0 auto;
   margin-bottom: 16px;
+}
+
+.chat-message:last-child {
+  margin-bottom: 0;
 }
 
 .chat-message.user {
@@ -387,10 +447,12 @@ tr:hover {
 .chat-bubble {
   position: relative;
   max-width: min(820px, 86%);
+  min-width: 0;
   border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 12px 38px 12px 14px;
   box-shadow: var(--shadow);
+  overflow: hidden;
 }
 
 .chat-message.user .chat-bubble {
@@ -405,6 +467,10 @@ tr:hover {
 
 .markdown-body {
   font-size: 14px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .markdown-body p,
@@ -442,6 +508,7 @@ tr:hover {
 
 .markdown-body pre {
   overflow-x: auto;
+  max-width: 100%;
   background-color: var(--bg-tertiary);
   border-radius: 6px;
   padding: 10px;
@@ -450,6 +517,26 @@ tr:hover {
 .markdown-body pre code {
   background: transparent;
   padding: 0;
+}
+
+.markdown-body table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border-color);
+  padding: 6px 8px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.markdown-body th {
+  background-color: var(--bg-secondary);
 }
 
 .assistant-waiting {
@@ -536,6 +623,7 @@ tr:hover {
   padding: 14px 16px;
   border-top: 1px solid var(--border-color);
   background-color: var(--bg-primary);
+  flex: 0 0 auto;
 }
 
 .chat-composer textarea {

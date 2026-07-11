@@ -42,7 +42,7 @@ Tablix sits between your databases and your tools. It crawls database schemas - 
 ## How It Works
 
 1. Configure one or more database connections in `tablix.json`
-2. Tablix crawls each database on startup, caching schema geometry
+2. Tablix starts REST/MCP immediately, then crawls each configured database in the background and caches schema geometry
 3. AI agents connect via MCP to discover databases and execute queries
 4. Humans use the dashboard or REST API for the same operations
 5. Query validation enforces the `AllowedQueries` list per database
@@ -56,6 +56,8 @@ Tablix sits between your databases and your tools. It crawls database schemas - 
 REST read endpoints and MCP discovery tools intentionally redact database credentials. `User` and `Password` are accepted only in configuration write requests; read/discovery responses expose `HasUser` and `HasPassword` booleans instead.
 
 ## Getting Started
+
+For a full step-by-step walkthrough that covers Docker deployment, model provider setup, database setup, crawling, context building, and chat, see [GETTING_STARTED.md](GETTING_STARTED.md).
 
 ### Running from Docker
 
@@ -86,6 +88,8 @@ The `docker/compose.yaml` starts two containers:
 
 - **tablix-server** (`jchristn77/tablix-server`) - the REST API and MCP server. Ports 9100 (REST) and 9102 (MCP) are exposed. The `tablix.json` configuration, `database.db` SQLite file, and `logs/` directory are bind-mounted from the `docker/` directory so data persists across restarts.
 - **tablix-ui** (`jchristn77/tablix-ui`) - the dashboard, served via nginx on port 9101. It proxies API calls to the server using the `TABLIX_SERVER_URL` environment variable and shows that configured URL on the login page.
+
+Both containers include healthchecks that run every 10 seconds with a 2 second timeout. The healthcheck scripts require two consecutive successful heartbeats before reporting healthy and terminate the container after two consecutive failed heartbeats so Docker's restart policy can restart it. The UI depends on a healthy backend and applies a 15 second startup delay through `TABLIX_UI_STARTUP_DELAY_SECONDS`.
 
 #### Running Individual Containers
 
@@ -383,7 +387,7 @@ Tablix is configured via `tablix.json`:
 
 The `Chat` section is the configuration surface for the dashboard chat experience. The default Docker and factory settings include provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini. Only the local Ollama provider is enabled by default; cloud providers are disabled until an endpoint, model, and API key are supplied.
 
-The default `Chat.SystemPrompt` instructs the model to restrict conversation to the selected database, its structure, its contents, and their relationships. Keep that boundary in custom prompts unless you intentionally want the chat provider to answer outside the database domain.
+The default `Chat.SystemPrompt` instructs the model to restrict conversation to the selected database, its structure, its contents, and their relationships. It also instructs the model to refresh schema by crawling or re-discovering relevant tables when query execution reports a bad or unknown column, missing column, or column type mismatch, then update saved context when refreshed schema proves column names, column types, or relationship guidance were stale. Keep those boundaries in custom prompts unless you intentionally want different behavior.
 
 Each provider includes an explicit `ApiKey` field. Providers that do not require authentication, such as a typical local Ollama instance, should leave it as an empty string. Providers that do require authentication, such as OpenAI, Gemini, and many OpenAI-compatible services, should store their token in `Chat.Providers[].ApiKey`.
 
@@ -550,7 +554,7 @@ All endpoints except health checks require `Authorization: Bearer <api-key>`. Se
 
 ### Degraded State
 
-If a database crawl fails on startup (unreachable host, bad credentials, missing file):
+Initial crawls run in the background after REST and MCP listeners start. If a database crawl fails on startup (unreachable host, bad credentials, missing file):
 
 - The server continues to start; crawl failures are non-fatal
 - The affected database reports `IsCrawled: false` with a `CrawlError` message

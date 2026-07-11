@@ -34,8 +34,12 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Updated `Tablix.Core` and `Tablix.Server` package versions to `0.2.0`
 - Updated README, REST API documentation, Docker tags, and Postman collection for v0.2.0
 - Added `MCP_API.md` as a complete reference for MCP tools, schemas, examples, and agent guidance
+- Added `GETTING_STARTED.md` with a step-by-step Docker-to-chat onboarding flow
 - Updated the default chat system prompt to restrict model conversation to the selected database, its structure, contents, and relationships
 - Updated dashboard runtime configuration so Docker uses `TABLIX_SERVER_URL` for the nginx proxy while the login page displays the configured server URL; local Vite can use `VITE_TABLIX_SERVER_URL` or `TABLIX_SERVER_URL`
+- Changed server startup so REST and MCP listeners start before initial background database crawls complete
+- Added Docker Compose healthchecks for server and UI containers, made the UI depend on a healthy backend, and added a configurable 15 second UI startup delay
+- Updated chat and MCP guidance to refresh schema after bad/unknown column or column type errors and correct saved context when refreshed schema proves it stale
 - Added direct `SQLitePCLRaw.lib.e_sqlite3` package override to resolve the transitive vulnerability warning from 2.1.11
 
 ### Fixed
@@ -44,6 +48,10 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Fixed database discovery/read responses so MCP and REST no longer return configured database usernames or plaintext passwords
 - Fixed Docker default and factory `tablix.json` files to include the new `Chat` settings, explicit empty `Chat.Providers[].ApiKey` placeholders, and removed a local credential-bearing database entry from the default Docker configuration
 - Fixed the Docker Compose dashboard server URL to use `http://tablix-server:9100`
+- Fixed the Docker dashboard nginx proxy so `/v1/...` API requests preserve their full path and query string when forwarded to the Tablix server
+- Fixed Chat page layout so transcript scrolling is constrained to the chat window while the composer remains visible
+- Fixed Chat transcript scrolling after expanding or collapsing tool-call details so users can always reach the top and bottom of the conversation
+- Fixed Chat page behavior so changing the selected database or provider clears the current conversation
 
 ### Testing
 
@@ -57,7 +65,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added settings coverage for chat provider defaults and provider enum serialization
 - Added model guard coverage for chat telemetry, chat request list handling, and provider API key redaction
 - Added crawl progress event payload coverage
-- Expanded shared Touchstone coverage from 53 to 137 descriptors across query validation, settings persistence, serialization, SQLite edge cases, schema projection, model guards, crawler factory, crawl cache, MCP tool behavior, and credential redaction
+- Expanded shared Touchstone coverage from 53 to 142 descriptors across query validation, settings persistence, serialization, SQLite edge cases, schema projection, model guards, crawler factory, crawl cache, MCP tool behavior, credential redaction, Docker dashboard proxy packaging, and dashboard/server API contract checks
 
 ### Upgrade Notes
 

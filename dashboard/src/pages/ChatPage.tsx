@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
@@ -21,6 +21,9 @@ interface ParsedSseFrame {
 export default function ChatPage() {
   const navigate = useNavigate();
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const transcriptContentRef = useRef<HTMLDivElement | null>(null);
+  const stickToBottomRef = useRef(true);
+  const scrollFrameRef = useRef<number | null>(null);
   const [options, setOptions] = useState<ChatOptionsResponse | null>(null);
   const [databaseId, setDatabaseId] = useState('');
   const [providerId, setProviderId] = useState('');
@@ -31,7 +34,36 @@ export default function ChatPage() {
   const [error, setError] = useState('');
 
   useEffect(() => { loadOptions(); }, []);
-  useEffect(() => { scrollTranscriptToBottom(); }, [messages]);
+  useLayoutEffect(() => { scrollTranscriptToBottom(); }, [messages]);
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    const content = transcriptContentRef.current;
+    if (!transcript || !content || typeof ResizeObserver === 'undefined') return;
+
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) {
+        scrollTranscriptToBottom();
+      } else {
+        clampTranscriptScroll();
+      }
+    });
+
+    observer.observe(content);
+    observer.observe(transcript);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current != null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+      }
+    };
+  }, []);
 
   const selectedProvider = useMemo(
     () => options?.Providers.find(provider => provider.Id === providerId) || null,
@@ -221,6 +253,26 @@ export default function ChatPage() {
     event.currentTarget.form?.requestSubmit();
   }
 
+  function resetConversation() {
+    setMessages([]);
+    setInput('');
+    setError('');
+    stickToBottomRef.current = true;
+    scrollTranscriptToBottom();
+  }
+
+  function handleDatabaseChanged(nextDatabaseId: string) {
+    if (nextDatabaseId === databaseId) return;
+    setDatabaseId(nextDatabaseId);
+    resetConversation();
+  }
+
+  function handleProviderChanged(nextProviderId: string) {
+    if (nextProviderId === providerId) return;
+    setProviderId(nextProviderId);
+    resetConversation();
+  }
+
   function toRequestMessage(message: ChatUiMessage): ChatMessageRequest {
     return {
       Role: message.Role,
@@ -232,10 +284,50 @@ export default function ChatPage() {
     const transcript = transcriptRef.current;
     if (!transcript) return;
 
-    transcript.scrollTo({
-      top: transcript.scrollHeight,
-      behavior: 'smooth',
+    if (scrollFrameRef.current != null) {
+      cancelAnimationFrame(scrollFrameRef.current);
+    }
+
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      transcript.scrollTop = transcript.scrollHeight;
     });
+  }
+
+  function clampTranscriptScroll() {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+
+    requestAnimationFrame(() => {
+      const maxScrollTop = Math.max(0, transcript.scrollHeight - transcript.clientHeight);
+      if (transcript.scrollTop > maxScrollTop) {
+        transcript.scrollTop = maxScrollTop;
+      }
+    });
+  }
+
+  function isTranscriptAtBottom(transcript: HTMLDivElement) {
+    return transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight <= 4;
+  }
+
+  function handleTranscriptScroll() {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    stickToBottomRef.current = isTranscriptAtBottom(transcript);
+  }
+
+  function captureTranscriptStickiness() {
+    const transcript = transcriptRef.current;
+    if (!transcript) return;
+    stickToBottomRef.current = isTranscriptAtBottom(transcript);
+  }
+
+  function handleTranscriptContentToggled() {
+    if (stickToBottomRef.current) {
+      scrollTranscriptToBottom();
+    } else {
+      clampTranscriptScroll();
+    }
   }
 
   return (
@@ -248,7 +340,7 @@ export default function ChatPage() {
         <div className="chat-toolbar">
           <div className="form-group">
             <label title="Database used for schema and context">Database</label>
-            <select value={databaseId} onChange={event => setDatabaseId(event.target.value)} disabled={sending}>
+            <select value={databaseId} onChange={event => handleDatabaseChanged(event.target.value)} disabled={sending}>
               {options?.Databases.map(database => (
                 <option key={database.Id} value={database.Id}>{database.Name || database.DatabaseName || database.Id}</option>
               ))}
@@ -256,7 +348,7 @@ export default function ChatPage() {
           </div>
           <div className="form-group">
             <label title="Configured model endpoint">Provider</label>
-            <select value={providerId} onChange={event => setProviderId(event.target.value)} disabled={sending}>
+            <select value={providerId} onChange={event => handleProviderChanged(event.target.value)} disabled={sending}>
               {options?.Providers.map(provider => (
                 <option key={provider.Id} value={provider.Id}>{provider.Name || provider.Id} ({provider.Model})</option>
               ))}
@@ -276,30 +368,38 @@ export default function ChatPage() {
           </div>
         )}
 
-        <div className="chat-transcript" ref={transcriptRef}>
-          {messages.length === 0 && (
-            <div className="chat-empty">
-              <h3>Ask about the selected database.</h3>
-              <p className="muted-text">Responses can include markdown, SQL, tables, and lists.</p>
-            </div>
-          )}
-
-          {messages.map(message => (
-            <div key={message.Id} className={`chat-message ${message.Role}`}>
-              <div className="chat-bubble">
-                {message.Role === 'assistant' && !message.Content
-                  ? <AssistantWaitingIndicator />
-                  : (
-                    <div className="markdown-body">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.Content}</ReactMarkdown>
-                    </div>
-                  )
-                }
-                {message.ToolCalls.length > 0 && <ToolCallList toolCalls={message.ToolCalls} />}
-                {message.Telemetry && <TelemetryIcon telemetry={message.Telemetry} />}
+        <div className="chat-transcript" ref={transcriptRef} onScroll={handleTranscriptScroll}>
+          <div className="chat-transcript-content" ref={transcriptContentRef}>
+            {messages.length === 0 && (
+              <div className="chat-empty">
+                <h3>Ask about the selected database.</h3>
+                <p className="muted-text">Responses can include markdown, SQL, tables, and lists.</p>
               </div>
-            </div>
-          ))}
+            )}
+
+            {messages.map(message => (
+              <div key={message.Id} className={`chat-message ${message.Role}`}>
+                <div className="chat-bubble">
+                  {message.Role === 'assistant' && !message.Content
+                    ? <AssistantWaitingIndicator />
+                    : (
+                      <div className="markdown-body">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.Content}</ReactMarkdown>
+                      </div>
+                    )
+                  }
+                  {message.ToolCalls.length > 0 && (
+                    <ToolCallList
+                      toolCalls={message.ToolCalls}
+                      onToolCallToggleStart={captureTranscriptStickiness}
+                      onToolCallToggled={handleTranscriptContentToggled}
+                    />
+                  )}
+                  {message.Telemetry && <TelemetryIcon telemetry={message.Telemetry} />}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         {error && <p className="error-text" style={{ marginTop: '10px' }}>{error}</p>}
@@ -327,12 +427,29 @@ export default function ChatPage() {
   );
 }
 
-function ToolCallList({ toolCalls }: { toolCalls: ChatToolCall[] }) {
+function ToolCallList({
+  toolCalls,
+  onToolCallToggleStart,
+  onToolCallToggled,
+}: {
+  toolCalls: ChatToolCall[];
+  onToolCallToggleStart: () => void;
+  onToolCallToggled: () => void;
+}) {
   return (
     <div className="tool-call-list">
       {toolCalls.map(toolCall => (
-        <details key={toolCall.Id} className={`tool-call ${toolCall.Success ? 'success' : toolCall.Error ? 'failed' : 'running'}`}>
-          <summary>
+        <details
+          key={toolCall.Id}
+          className={`tool-call ${toolCall.Success ? 'success' : toolCall.Error ? 'failed' : 'running'}`}
+          onToggle={onToolCallToggled}
+        >
+          <summary
+            onMouseDown={onToolCallToggleStart}
+            onKeyDown={event => {
+              if (event.key === 'Enter' || event.key === ' ') onToolCallToggleStart();
+            }}
+          >
             <span>{toolCall.Name}</span>
             <span>{toolCall.Error ? 'Failed' : toolCall.Result ? 'Complete' : 'Running'}</span>
             {toolCall.TotalMs > 0 && <span>{toolCall.TotalMs.toFixed(0)} ms</span>}

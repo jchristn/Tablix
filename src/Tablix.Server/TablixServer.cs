@@ -39,6 +39,9 @@ namespace Tablix.Server
         private ChatHandler _ChatHandler;
         private SettingsHandler _SettingsHandler;
         private DateTime _StartTimeUtc;
+        private Task _RestTask = null;
+        private Task _McpTask = null;
+        private Task _InitialCrawlTask = null;
 
         #endregion
 
@@ -61,7 +64,7 @@ namespace Tablix.Server
         /// Start the server.
         /// </summary>
         /// <param name="token">Cancellation token.</param>
-        public async Task StartAsync(CancellationToken token = default)
+        public Task StartAsync(CancellationToken token = default)
         {
             _StartTimeUtc = DateTime.UtcNow;
             Welcome();
@@ -71,19 +74,21 @@ namespace Tablix.Server
             _Logging.Info(_Header + "starting Tablix v" + Constants.ProductVersion);
 
             InitializeCrawlCache();
-            await CrawlAllDatabasesAsync().ConfigureAwait(false);
             InitializeRest();
             InitializeMcp();
 
             // Start REST
-            Task restTask = Task.Run(() => _App.Rest.Run(token));
+            _RestTask = Task.Run(() => _App.Rest.Run(token));
             string restUrl = "http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.Port;
             _Logging.Info(_Header + "REST API available at " + restUrl);
             _Logging.Info(_Header + "Swagger UI available at " + restUrl + "/swagger");
 
             // Start MCP
-            Task mcpTask = Task.Run(() => _McpServer.StartAsync(token));
+            _McpTask = Task.Run(() => _McpServer.StartAsync(token));
             _Logging.Info(_Header + "MCP server available at http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.McpPort + "/rpc");
+
+            StartInitialCrawl(token);
+            return Task.CompletedTask;
         }
 
         #endregion
@@ -159,6 +164,28 @@ namespace Tablix.Server
         {
             _Logging.Info(_Header + "crawling " + _SettingsManager.Settings.Databases.Count + " configured database(s)");
             await _CrawlCache.CrawlAllAsync(_SettingsManager.Settings.Databases).ConfigureAwait(false);
+        }
+
+        private void StartInitialCrawl(CancellationToken token)
+        {
+            _InitialCrawlTask = Task.Run(async () =>
+            {
+                try
+                {
+                    if (token.IsCancellationRequested) return;
+
+                    await CrawlAllDatabasesAsync().ConfigureAwait(false);
+                    _Logging.Info(_Header + "initial background crawl complete");
+                }
+                catch (OperationCanceledException)
+                {
+                    _Logging.Info(_Header + "initial background crawl canceled");
+                }
+                catch (Exception ex)
+                {
+                    _Logging.Warn(_Header + "initial background crawl failed: " + ex.Message);
+                }
+            }, token);
         }
 
         private void InitializeRest()
