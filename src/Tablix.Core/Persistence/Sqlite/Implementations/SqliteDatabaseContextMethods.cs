@@ -32,13 +32,10 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         {
             if (string.IsNullOrWhiteSpace(databaseId)) return null;
 
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = "SELECT context FROM context_records WHERE database_id = $database_id AND table_id IS NULL AND scope = 'Database'";
-            command.Parameters.AddWithValue("$database_id", databaseId);
-            object result = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
-            if (result == null || result == DBNull.Value) return null;
-            return Convert.ToString(result);
+            return await _Driver.ExecuteReadAsync(async connection =>
+            {
+                return await ReadContextAsync(connection, databaseId, token).ConfigureAwait(false);
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -54,11 +51,13 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         {
             if (string.IsNullOrWhiteSpace(databaseId)) throw new ArgumentNullException(nameof(databaseId));
 
-            string existing = await ReadAsync(databaseId, token).ConfigureAwait(false);
-            string updated = BuildUpdatedContext(existing, context, mode);
+            string updated = null;
 
             await _Driver.ExecuteWriteAsync(async connection =>
             {
+                string existing = await ReadContextAsync(connection, databaseId, token).ConfigureAwait(false);
+                updated = BuildUpdatedContext(existing, context, mode);
+
                 using SqliteCommand command = connection.CreateCommand();
                 command.CommandText = "INSERT INTO context_records (id, database_id, table_id, scope, context, source, provider_id, prompt, created_utc, updated_utc) VALUES ($id, $database_id, NULL, 'Database', $context, $source, NULL, NULL, $now, $now) ON CONFLICT(database_id, scope) WHERE table_id IS NULL DO UPDATE SET context = excluded.context, source = excluded.source, updated_utc = excluded.updated_utc";
                 command.Parameters.AddWithValue("$id", SqliteDatabaseDriver.NewId("ctx"));
@@ -76,6 +75,16 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
             }, token).ConfigureAwait(false);
 
             return updated;
+        }
+
+        private static async Task<string> ReadContextAsync(SqliteConnection connection, string databaseId, CancellationToken token)
+        {
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "SELECT context FROM context_records WHERE database_id = $database_id AND table_id IS NULL AND scope = 'Database'";
+            command.Parameters.AddWithValue("$database_id", databaseId);
+            object result = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+            if (result == null || result == DBNull.Value) return null;
+            return Convert.ToString(result);
         }
 
         private static string BuildUpdatedContext(string existing, string context, string mode)

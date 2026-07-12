@@ -11,7 +11,7 @@ namespace Tablix.Core.Persistence.Sqlite
 
     /// <summary>
     /// SQLite implementation of the Tablix product-state persistence driver.
-    /// Thread safety: writes are serialized by a semaphore; reads use independent SQLite connections.
+    /// Thread safety: all persistence operations are serialized by a semaphore to protect the single SQLite state file.
     /// </summary>
     public class SqliteDatabaseDriver : DatabaseDriverBase
     {
@@ -28,7 +28,7 @@ namespace Tablix.Core.Persistence.Sqlite
         /// </summary>
         public string Filename { get; private set; } = null;
 
-        private readonly SemaphoreSlim _WriteSemaphore = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _OperationSemaphore = new SemaphoreSlim(1, 1);
         private bool _Disposed = false;
 
         /// <summary>
@@ -84,7 +84,8 @@ namespace Tablix.Core.Persistence.Sqlite
             {
                 DataSource = Filename,
                 Mode = SqliteOpenMode.ReadWriteCreate,
-                Cache = SqliteCacheMode.Default
+                Cache = SqliteCacheMode.Default,
+                Pooling = false
             };
 
             SqliteConnection connection = new SqliteConnection(builder.ConnectionString);
@@ -95,19 +96,52 @@ namespace Tablix.Core.Persistence.Sqlite
             return connection;
         }
 
+        internal async Task<T> ExecuteReadAsync<T>(Func<SqliteConnection, Task<T>> action, CancellationToken token)
+        {
+            if (action == null) throw new ArgumentNullException(nameof(action));
+
+            await _OperationSemaphore.WaitAsync(token).ConfigureAwait(false);
+            try
+            {
+                using SqliteConnection connection = await OpenConnectionAsync(token).ConfigureAwait(false);
+                return await action(connection).ConfigureAwait(false);
+            }
+            finally
+            {
+                _OperationSemaphore.Release();
+            }
+        }
+
         internal async Task ExecuteWriteAsync(Func<SqliteConnection, Task> action, CancellationToken token)
         {
             if (action == null) throw new ArgumentNullException(nameof(action));
 
-            await _WriteSemaphore.WaitAsync(token).ConfigureAwait(false);
+            await _OperationSemaphore.WaitAsync(token).ConfigureAwait(false);
             try
             {
                 using SqliteConnection connection = await OpenConnectionAsync(token).ConfigureAwait(false);
-                await action(connection).ConfigureAwait(false);
+                await ExecuteStatementAsync(connection, "BEGIN IMMEDIATE", token).ConfigureAwait(false);
+                try
+                {
+                    await action(connection).ConfigureAwait(false);
+                    await ExecuteStatementAsync(connection, "COMMIT", token).ConfigureAwait(false);
+                }
+                catch
+                {
+                    try
+                    {
+                        await ExecuteStatementAsync(connection, "ROLLBACK", CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                    }
+
+                    throw;
+                }
             }
             finally
             {
-                _WriteSemaphore.Release();
+                _OperationSemaphore.Release();
             }
         }
 
@@ -146,13 +180,20 @@ namespace Tablix.Core.Persistence.Sqlite
             if (_Disposed) return;
 
             if (disposing)
-                _WriteSemaphore.Dispose();
+                _OperationSemaphore.Dispose();
 
             _Disposed = true;
             base.Dispose(disposing);
         }
 
         private static async Task ExecutePragmaAsync(SqliteConnection connection, string statement, CancellationToken token)
+        {
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = statement;
+            await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+        }
+
+        private static async Task ExecuteStatementAsync(SqliteConnection connection, string statement, CancellationToken token)
         {
             using SqliteCommand command = connection.CreateCommand();
             command.CommandText = statement;
@@ -229,11 +270,15 @@ namespace Tablix.Core.Persistence.Sqlite
             long providerCount;
             long databaseCount;
 
-            using (SqliteConnection connection = await OpenConnectionAsync(token).ConfigureAwait(false))
+            providerCount = await ExecuteReadAsync(async connection =>
             {
-                providerCount = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM model_providers", token).ConfigureAwait(false);
-                databaseCount = await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM database_connections", token).ConfigureAwait(false);
-            }
+                return await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM model_providers", token).ConfigureAwait(false);
+            }, token).ConfigureAwait(false);
+
+            databaseCount = await ExecuteReadAsync(async connection =>
+            {
+                return await ExecuteScalarLongAsync(connection, "SELECT COUNT(*) FROM database_connections", token).ConfigureAwait(false);
+            }, token).ConfigureAwait(false);
 
             if (providerCount == 0)
             {

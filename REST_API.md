@@ -15,6 +15,7 @@ Setup endpoints drive the first-login wizard.
 | `GET` | `/v1/setup` | Read setup state and whether the wizard should be shown |
 | `PUT` | `/v1/setup` | Save wizard progress, selected provider, and selected database |
 | `POST` | `/v1/setup/complete` | Mark first-run setup complete |
+| `POST` | `/v1/setup/dismiss` | Dismiss the first-run setup wizard without completing setup |
 
 ## Models
 
@@ -330,6 +331,7 @@ Read first-run setup state.
   "SelectedProviderId": "provider_ollama_local",
   "SelectedDatabaseId": "db_sample_sqlite",
   "CompletedUtc": null,
+  "DismissedUtc": null,
   "UpdatedUtc": "2026-07-11T12:00:00Z",
   "ShouldShowWizard": true
 }
@@ -357,6 +359,12 @@ Persist setup wizard progress.
 Mark setup complete.
 
 **Response** `200 OK` - returns `SetupStateRead` with `Status: "Complete"` and `ShouldShowWizard: false`.
+
+### `POST /v1/setup/dismiss`
+
+Dismiss the first-run setup wizard without marking setup complete. This lets users leave the wizard and configure providers/databases later from the dashboard.
+
+**Response** `200 OK` - returns `SetupStateRead` with `DismissedUtc` populated and `ShouldShowWizard: false`.
 
 ---
 
@@ -404,7 +412,8 @@ Read one redacted provider.
   "Temperature": 0.2,
   "TopP": null,
   "MaxTokens": 4096,
-  "RequestTimeoutMs": 120000
+  "RequestTimeoutMs": 120000,
+  "MaxConcurrentRequests": 1
 }
 ```
 
@@ -433,7 +442,8 @@ Create a provider.
   "Temperature": 0.2,
   "TopP": null,
   "MaxTokens": 4096,
-  "RequestTimeoutMs": 120000
+  "RequestTimeoutMs": 120000,
+  "MaxConcurrentRequests": 1
 }
 ```
 
@@ -442,6 +452,8 @@ Create a provider.
 ### `PUT /v1/model/{id}`
 
 Update a provider. Leave `ApiKey` empty/null to preserve the current key. Set `ClearApiKey` to `true` to remove the saved key.
+
+`RequestTimeoutMs` is applied per provider request. Batch operations such as table-context generation may issue multiple provider requests and are bounded by `MaxConcurrentRequests` so the model endpoint is not overwhelmed. `MaxConcurrentRequests` is clamped from `1` to `16`; use `1` for local/single-GPU endpoints unless the model server is known to handle parallel requests.
 
 **Response** `200 OK` - returns `ModelProviderSummary`.
 

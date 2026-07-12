@@ -329,6 +329,11 @@ namespace Tablix.Server
                     .WithResponse(200, OpenApiResponseMetadata.Json<SetupStateRead>("Completed setup state"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
 
+            rest.Post("/v1/setup/dismiss", _SetupHandler.DismissSetupAsync,
+                api => api.WithTag("Setup").WithSummary("Dismiss first-run setup wizard without completing it")
+                    .WithResponse(200, OpenApiResponseMetadata.Json<SetupStateRead>("Dismissed setup state"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
             rest.Get("/v1/model", _ModelProviderHandler.ListProvidersAsync,
                 api => api.WithTag("Models").WithSummary("List model providers")
                     .WithParameter(OpenApiParameterMetadata.Query("maxResults", "Maximum results (1-1000)", false))

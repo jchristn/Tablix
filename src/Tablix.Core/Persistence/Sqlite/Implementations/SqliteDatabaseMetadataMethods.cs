@@ -77,31 +77,33 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         {
             if (string.IsNullOrWhiteSpace(databaseId)) return null;
 
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            DatabaseDetail detail = new DatabaseDetail
+            return await _Driver.ExecuteReadAsync(async connection =>
             {
-                DatabaseId = databaseId,
-                IsCrawled = false
-            };
-
-            using (SqliteCommand crawl = connection.CreateCommand())
-            {
-                crawl.CommandText = "SELECT * FROM database_crawls WHERE database_id = $database_id ORDER BY started_utc DESC LIMIT 1";
-                crawl.Parameters.AddWithValue("$database_id", databaseId);
-                using SqliteDataReader crawlReader = await crawl.ExecuteReaderAsync(token).ConfigureAwait(false);
-                if (await crawlReader.ReadAsync(token).ConfigureAwait(false))
+                DatabaseDetail detail = new DatabaseDetail
                 {
-                    detail.IsCrawled = SqliteDatabaseDriver.ToBool(Convert.ToInt64(crawlReader["success"]));
-                    detail.CrawlError = crawlReader["error"] == DBNull.Value ? null : Convert.ToString(crawlReader["error"]);
-                    detail.CrawledUtc = crawlReader["completed_utc"] == DBNull.Value ? (DateTime?)null : SqliteDatabaseDriver.FromStorageDate(Convert.ToString(crawlReader["completed_utc"]));
+                    DatabaseId = databaseId,
+                    IsCrawled = false
+                };
+
+                using (SqliteCommand crawl = connection.CreateCommand())
+                {
+                    crawl.CommandText = "SELECT * FROM database_crawls WHERE database_id = $database_id ORDER BY started_utc DESC LIMIT 1";
+                    crawl.Parameters.AddWithValue("$database_id", databaseId);
+                    using SqliteDataReader crawlReader = await crawl.ExecuteReaderAsync(token).ConfigureAwait(false);
+                    if (await crawlReader.ReadAsync(token).ConfigureAwait(false))
+                    {
+                        detail.IsCrawled = SqliteDatabaseDriver.ToBool(Convert.ToInt64(crawlReader["success"]));
+                        detail.CrawlError = crawlReader["error"] == DBNull.Value ? null : Convert.ToString(crawlReader["error"]);
+                        detail.CrawledUtc = crawlReader["completed_utc"] == DBNull.Value ? (DateTime?)null : SqliteDatabaseDriver.FromStorageDate(Convert.ToString(crawlReader["completed_utc"]));
+                    }
                 }
-            }
 
-            detail.Tables = await ReadTablesAsync(connection, databaseId, token).ConfigureAwait(false);
-            if (detail.Tables.Count == 0 && !detail.IsCrawled && string.IsNullOrWhiteSpace(detail.CrawlError))
-                return null;
+                detail.Tables = await ReadTablesAsync(connection, databaseId, token).ConfigureAwait(false);
+                if (detail.Tables.Count == 0 && !detail.IsCrawled && string.IsNullOrWhiteSpace(detail.CrawlError))
+                    return null;
 
-            return detail;
+                return detail;
+            }, token).ConfigureAwait(false);
         }
 
         internal static string CreateTableId(string databaseId, string schemaName, string tableName)

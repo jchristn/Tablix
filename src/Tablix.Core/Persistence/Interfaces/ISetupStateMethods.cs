@@ -30,5 +30,12 @@ namespace Tablix.Core.Persistence.Interfaces
         /// <param name="token">Cancellation token.</param>
         /// <returns>Updated setup state.</returns>
         Task<SetupStateRead> CompleteAsync(CancellationToken token = default);
+
+        /// <summary>
+        /// Dismiss setup without marking it complete.
+        /// </summary>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Updated setup state.</returns>
+        Task<SetupStateRead> DismissAsync(CancellationToken token = default);
     }
 }

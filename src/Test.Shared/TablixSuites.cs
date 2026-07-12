@@ -405,6 +405,17 @@ namespace Test.Shared
                         query.Skip = 10;
                         Equal(10, query.Skip, "Skip valid mismatch.");
                         return Task.CompletedTask;
+                    }),
+                    Case("SettingsClamping", "ProviderMaxConcurrentRequestsClamps", "Model provider MaxConcurrentRequests clamps to range", ct =>
+                    {
+                        ModelProviderSettings provider = new ModelProviderSettings();
+                        provider.MaxConcurrentRequests = 0;
+                        Equal(1, provider.MaxConcurrentRequests, "MaxConcurrentRequests low clamp mismatch.");
+                        provider.MaxConcurrentRequests = 32;
+                        Equal(16, provider.MaxConcurrentRequests, "MaxConcurrentRequests high clamp mismatch.");
+                        provider.MaxConcurrentRequests = 4;
+                        Equal(4, provider.MaxConcurrentRequests, "MaxConcurrentRequests valid value mismatch.");
+                        return Task.CompletedTask;
                     })
                 });
         }
@@ -633,6 +644,124 @@ namespace Test.Shared
                         {
                             TryDelete(filename);
                         }
+                    }),
+                    Case("Persistence", "FailedCrawlWriteRollsBack", "Failed crawl metadata write rolls back partial rows", async ct =>
+                    {
+                        await WithTempPersistenceAsync(async driver =>
+                        {
+                            await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "rollback_db" }, ct).ConfigureAwait(false);
+
+                            DatabaseDetail detail = new DatabaseDetail
+                            {
+                                DatabaseId = "rollback_db",
+                                IsCrawled = true,
+                                CrawledUtc = DateTime.UtcNow,
+                                Tables = new List<TableDetail>
+                                {
+                                    new TableDetail
+                                    {
+                                        SchemaName = "main",
+                                        TableName = "broken",
+                                        Columns = new List<ColumnDetail>
+                                        {
+                                            new ColumnDetail { ColumnName = "duplicate_id", DataType = "INTEGER" },
+                                            new ColumnDetail { ColumnName = "duplicate_id", DataType = "INTEGER" }
+                                        }
+                                    }
+                                }
+                            };
+
+                            await ThrowsAnyAsync(async () => await driver.DatabaseMetadata.SaveCrawlAsync(detail, ct).ConfigureAwait(false)).ConfigureAwait(false);
+
+                            DatabaseDetail persisted = await driver.DatabaseMetadata.ReadDetailAsync("rollback_db", ct).ConfigureAwait(false);
+                            Null(persisted, "Failed crawl metadata write should not leave a partial crawl or table rows.");
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("Persistence", "SetupDismissHidesWizardWithoutCompleting", "Setup dismissal hides wizard without marking setup complete", async ct =>
+                    {
+                        await WithTempPersistenceAsync(async driver =>
+                        {
+                            SetupStateRead dismissed = await driver.SetupState.DismissAsync(ct).ConfigureAwait(false);
+                            Equal(SetupWizardStatusEnum.NotStarted, dismissed.Status, "Dismissal should not complete setup.");
+                            NotNull(dismissed.DismissedUtc, "Dismissed timestamp should be stored.");
+                            False(dismissed.ShouldShowWizard, "Dismissed setup should not show the wizard.");
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("Persistence", "ConcurrentOperationsPreserveSqliteIntegrity", "Concurrent persistence operations preserve SQLite file integrity", async ct =>
+                    {
+                        string filename = GetTempDatabaseFilename();
+                        try
+                        {
+                            SqliteDatabaseDriver driver = new SqliteDatabaseDriver(filename);
+                            await driver.InitializeAsync(ct).ConfigureAwait(false);
+                            await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "concurrent_db" }, ct).ConfigureAwait(false);
+
+                            List<Task> tasks = new List<Task>();
+                            for (int index = 0; index < 40; index++)
+                            {
+                                int operationIndex = index;
+                                tasks.Add(Task.Run(async () =>
+                                {
+                                    string context = "context " + operationIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                                    await driver.DatabaseContexts.UpsertAsync("concurrent_db", context, "replace", "test", ct).ConfigureAwait(false);
+                                    DatabaseEntry database = await driver.DatabaseConnections.ReadAsync("concurrent_db", ct).ConfigureAwait(false);
+                                    NotNull(database, "Concurrent read should find the database.");
+                                    List<DatabaseEntry> databases = await driver.DatabaseConnections.EnumerateAsync(100, 0, null, ct).ConfigureAwait(false);
+                                    True(databases.Count > 0, "Concurrent enumeration should return databases.");
+                                }, ct));
+                            }
+
+                            await Task.WhenAll(tasks).ConfigureAwait(false);
+                            driver.Dispose();
+
+                            using SqliteConnection connection = new SqliteConnection("Data Source=" + filename + ";Pooling=False");
+                            await connection.OpenAsync(ct).ConfigureAwait(false);
+                            using SqliteCommand command = connection.CreateCommand();
+                            command.CommandText = "PRAGMA integrity_check";
+                            object result = await command.ExecuteScalarAsync(ct).ConfigureAwait(false);
+                            Equal("ok", Convert.ToString(result), "SQLite integrity_check should pass after concurrent persistence operations.");
+                        }
+                        finally
+                        {
+                            TryDelete(filename);
+                            TryDelete(filename + "-wal");
+                            TryDelete(filename + "-shm");
+                        }
+                    }),
+                    Case("Persistence", "ConcurrentContextAppendsAreNotLost", "Concurrent context appends are serialized atomically", async ct =>
+                    {
+                        await WithTempPersistenceAsync(async driver =>
+                        {
+                            await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "append_db" }, ct).ConfigureAwait(false);
+
+                            List<Task> tasks = new List<Task>();
+                            for (int index = 0; index < 20; index++)
+                            {
+                                int operationIndex = index;
+                                tasks.Add(Task.Run(async () =>
+                                {
+                                    string context = "append-marker-" + operationIndex.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                                    await driver.DatabaseContexts.UpsertAsync("append_db", context, "append", "test", ct).ConfigureAwait(false);
+                                }, ct));
+                            }
+
+                            await Task.WhenAll(tasks).ConfigureAwait(false);
+                            string persisted = await driver.DatabaseContexts.ReadAsync("append_db", ct).ConfigureAwait(false);
+                            for (int index = 0; index < 20; index++)
+                            {
+                                string expected = "append-marker-" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                                Contains(persisted, expected, "Concurrent append should preserve '" + expected + "'.");
+                            }
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("Persistence", "TableContextMissingTableThrowsKeyNotFound", "Table context write validates table metadata before insert", async ct =>
+                    {
+                        await WithTempPersistenceAsync(async driver =>
+                        {
+                            await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "missing_table_db" }, ct).ConfigureAwait(false);
+                            await ThrowsAsync<KeyNotFoundException>(async () =>
+                                await driver.TableContexts.UpsertAsync("missing_table_db", "tbl_missing", "context", "replace", "test", ct).ConfigureAwait(false)).ConfigureAwait(false);
+                        }).ConfigureAwait(false);
                     }),
                     Case("SettingsManager", "ReloadReadsDisk", "Reload reads updated settings from disk", ct =>
                     {
@@ -1149,7 +1278,8 @@ namespace Test.Shared
                             SupportsNativeToolCalls = true,
                             UseNativeToolCalls = true,
                             SupportsStrictJson = true,
-                            ToolCapabilityNote = "Native tools supported."
+                            ToolCapabilityNote = "Native tools supported.",
+                            MaxConcurrentRequests = 4
                         };
 
                         ModelProviderSummary summary = ModelProviderSummary.From(provider);
@@ -1158,7 +1288,9 @@ namespace Test.Shared
                         True(summary.SupportsNativeToolCalls, "Tool support should be exposed.");
                         True(summary.UseNativeToolCalls, "Native tool usage should be exposed.");
                         True(summary.SupportsStrictJson, "Strict JSON support should be exposed.");
+                        Equal(4, summary.MaxConcurrentRequests, "Summary should expose concurrency limit.");
                         Contains(json, "Native tools supported.", "Capability note should serialize.");
+                        Contains(json, "\"MaxConcurrentRequests\":4", "Provider summary should serialize concurrency limit.");
                         DoesNotContain(json, "provider-secret-key", "Provider summary should not expose API key.");
                         DoesNotContain(json, "\"ApiKey\"", "Provider summary should not expose ApiKey field.");
                         return Task.CompletedTask;
@@ -1907,6 +2039,48 @@ namespace Test.Shared
                         Contains(serverRoutes, "OpenApiRequestBodyMetadata.Json<BuildTableContextRequest>", "OpenAPI should document generated table context requests.");
                         return Task.CompletedTask;
                     }),
+                    Case("DashboardApiContract", "TableContextBuildValidatesPersistedTableIds", "Table context build validates persisted table identifiers", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
+                        string tableContextMethods = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Core", "Persistence", "Sqlite", "Implementations", "SqliteTableContextMethods.cs"));
+
+                        Contains(chatHandler, "BuildMissingTableIds", "Table context build should detect requested table IDs missing from persisted metadata.");
+                        Contains(chatHandler, "not found in persisted crawl metadata", "Table context build should return a clear persisted-metadata error.");
+                        Contains(chatHandler, "ReadDetailAsync(database.Id", "Context build should prefer persisted crawl metadata over in-memory cache.");
+                        Contains(chatHandler, "catch (KeyNotFoundException", "Table context build should convert persistence missing-table errors to API errors.");
+                        Contains(tableContextMethods, "TableExistsAsync", "Table context writes should verify persisted table metadata before insert.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "TableContextGenerationUsesProviderConcurrency", "Table context generation uses bounded provider concurrency", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
+                        string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
+                        string nginx = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "nginx.conf"));
+
+                        Contains(chatHandler, "preparation.Provider.MaxConcurrentRequests", "Backend batch generation should use provider concurrency limit.");
+                        Contains(chatHandler, "GenerateOneTableContextAsync", "Backend batch generation should issue per-table provider requests.");
+                        Contains(setupWizard, "buildTableContextsWithConcurrency", "Setup wizard should build table contexts through bounded per-table calls.");
+                        Contains(setupWizard, "/table-context/${tableId}/build", "Setup wizard should call per-table build endpoints instead of one long batch.");
+                        Contains(setupWizard, "readJsonResponse", "Setup wizard should handle non-JSON gateway errors cleanly.");
+                        Contains(nginx, "proxy_read_timeout 3600s;", "Dashboard nginx proxy should allow long-running API operations.");
+                        Contains(nginx, "proxy_send_timeout 3600s;", "Dashboard nginx proxy should allow long-running API operations.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ProviderConcurrencyDocumented", "Provider concurrency is documented in REST, README, and Postman", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string readme = File.ReadAllText(Path.Combine(repositoryRoot, "README.md"));
+                        string restApi = File.ReadAllText(Path.Combine(repositoryRoot, "REST_API.md"));
+                        string postman = File.ReadAllText(Path.Combine(repositoryRoot, "Tablix.postman_collection.json"));
+
+                        Contains(readme, "MaxConcurrentRequests", "README should document provider concurrency.");
+                        Contains(restApi, "MaxConcurrentRequests", "REST API should document provider concurrency.");
+                        Contains(restApi, "per provider request", "REST API should explain per-request timeout behavior.");
+                        Contains(postman, "MaxConcurrentRequests", "Postman provider examples should include provider concurrency.");
+                        return Task.CompletedTask;
+                    }),
                     Case("DashboardApiContract", "ApiFetchDoesNotForceJsonOnBodylessRequests", "Dashboard API helper only sends JSON content type with request bodies", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();
@@ -1969,8 +2143,67 @@ namespace Test.Shared
                         Contains(settingsPage, "Server fallback", "Settings page should expose fallback setting.");
                         Contains(modelsPage, "Supports native tools", "Models page should expose native tool support.");
                         Contains(modelsPage, "Use native tools", "Models page should expose native tool enablement.");
+                        Contains(modelsPage, "Max Concurrent Requests", "Models page should expose provider concurrency limit.");
                         Contains(types, "PromptProcessingSettings", "TypeScript contracts should include prompt processing settings.");
                         Contains(types, "SupportsNativeToolCalls", "TypeScript contracts should include provider tool capability.");
+                        Contains(types, "MaxConcurrentRequests", "TypeScript contracts should include provider concurrency limit.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "SetupWizardDatabaseFormAdaptsToType", "Setup wizard database form adapts to database type", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(setupWizard, "function updateDatabaseType", "Setup wizard should centralize database type changes.");
+                        Contains(setupWizard, "database.Type === 'Sqlite'", "Setup wizard should render SQLite-specific fields separately.");
+                        Contains(setupWizard, "Port: defaults.Port", "Setup wizard should reset the port to the selected database type default.");
+                        Contains(setupWizard, "User: defaults.User", "Setup wizard should reset the user to the selected database type default.");
+                        Contains(setupWizard, "Schema: defaults.Schema", "Setup wizard should reset the schema to the selected database type default.");
+                        Contains(setupWizard, "Hostname", "Setup wizard should expose hostname for network databases.");
+                        Contains(setupWizard, "Password", "Setup wizard should expose password for network databases.");
+                        Contains(setupWizard, "Max Concurrent Requests", "Setup wizard should expose provider concurrency limit.");
+                        Contains(setupWizard, "allowedQueryOptions.map", "Setup wizard should render allowed queries as checkboxes.");
+                        Contains(setupWizard, "type=\"checkbox\"", "Allowed query operations should be checkbox inputs.");
+                        Contains(setupWizard, "buildDatabaseCandidate", "Setup wizard should sanitize database payloads before test/save.");
+                        Contains(stylesheet, ".allowed-query-options", "Allowed query checkbox group should be styled.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "SetupWizardCrawlLogAutoScrolls", "Setup wizard crawl log scrolls with progress", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
+
+                        Contains(setupWizard, "crawlLogRef", "Setup wizard should keep a ref to the crawl log.");
+                        Contains(setupWizard, "requestAnimationFrame", "Setup wizard should scroll after the crawl log renders.");
+                        Contains(setupWizard, "log.scrollTop = log.scrollHeight", "Setup wizard crawl log should scroll to the newest progress entry.");
+                        Contains(setupWizard, "ref={crawlLogRef}", "Crawl log element should attach the scroll ref.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "SetupWizardCanBeDismissed", "Setup wizard exposes dismissal controls", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
+                        string types = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "types", "index.ts"));
+
+                        Contains(setupWizard, "function dismissSetup", "Setup wizard should expose a dismissal handler.");
+                        Contains(setupWizard, "/v1/setup/dismiss", "Setup wizard should persist dismissal through the setup API.");
+                        Contains(setupWizard, "Exit setup wizard", "Setup wizard should provide an accessible close control.");
+                        Contains(setupWizard, "Skip setup", "Setup wizard should provide an explicit skip action.");
+                        Contains(types, "DismissedUtc", "Setup state contract should include dismissal timestamp.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "SetupWizardHasConsistentVerticalSpacing", "Setup wizard keeps adequate body and action spacing", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(stylesheet, ".setup-body", "Setup wizard should have dedicated body spacing.");
+                        Contains(stylesheet, "min-height: 120px;", "Short setup steps should reserve enough body height above actions.");
+                        Contains(stylesheet, ".setup-wizard .modal-actions", "Setup wizard should have setup-specific action spacing.");
+                        Contains(stylesheet, "margin-top: 24px;", "Setup wizard actions should be separated from body copy.");
+                        Contains(stylesheet, "padding-top: 18px;", "Setup wizard actions should have top padding.");
+                        Contains(stylesheet, "border-top: 1px solid var(--border-color);", "Setup wizard actions should have a visual separation from step content.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "TopbarHeightIsFixed", "Dashboard topbar keeps a fixed vertical size", ct =>
@@ -2062,6 +2295,7 @@ namespace Test.Shared
                 new ApiRouteContract("GET", "/v1/setup", "rest.Get(\"/v1/setup\"", "apiFetch('/v1/setup')", "/v1/setup"),
                 new ApiRouteContract("PUT", "/v1/setup", "rest.Put<SetupStateUpdateRequest>(\"/v1/setup\"", "apiFetch('/v1/setup'", "/v1/setup"),
                 new ApiRouteContract("POST", "/v1/setup/complete", "rest.Post(\"/v1/setup/complete\"", "/v1/setup/complete", "/v1/setup/complete"),
+                new ApiRouteContract("POST", "/v1/setup/dismiss", "rest.Post(\"/v1/setup/dismiss\"", "/v1/setup/dismiss", "/v1/setup/dismiss"),
                 new ApiRouteContract("GET", "/v1/model", "rest.Get(\"/v1/model\"", "/v1/model?", "/v1/model"),
                 new ApiRouteContract("GET", "/v1/model/{id}", "rest.Get(\"/v1/model/{id}\"", "/v1/model/${id}", "/v1/model/{id}"),
                 new ApiRouteContract("POST", "/v1/model", "rest.Post<ModelProviderUpdate>(\"/v1/model\"", "apiFetch('/v1/model'", "/v1/model"),
@@ -2078,7 +2312,6 @@ namespace Test.Shared
                 new ApiRouteContract("POST", "/v1/database/{id}/test", "rest.Post(\"/v1/database/{id}/test\"", "/v1/database/${id}/test", "/v1/database/{id}/test"),
                 new ApiRouteContract("GET", "/v1/database/{id}/table-context", "rest.Get(\"/v1/database/{id}/table-context\"", "/table-context", "/v1/database/{id}/table-context"),
                 new ApiRouteContract("PUT", "/v1/database/{id}/table-context/{tableId}", "rest.Put<TableContextUpdateRequest>(\"/v1/database/{id}/table-context/{tableId}\"", "/table-context/${table.TableId}", "/v1/database/{id}/table-context/{tableId}"),
-                new ApiRouteContract("POST", "/v1/database/{id}/table-context/build", "rest.Post<BuildTableContextRequest>(\"/v1/database/{id}/table-context/build\"", "/table-context/build", "/v1/database/{id}/table-context/build"),
                 new ApiRouteContract("POST", "/v1/database/{id}/table-context/{tableId}/build", "rest.Post<BuildTableContextRequest>(\"/v1/database/{id}/table-context/{tableId}/build\"", "/table-context/${tableId}/build", "/v1/database/{id}/table-context/{tableId}/build"),
                 new ApiRouteContract("POST", "/v1/database/{id}/context", "rest.Post<ContextUpdateRequest>(\"/v1/database/{id}/context\"", "/context`", "/v1/database/{id}/context"),
                 new ApiRouteContract("POST", "/v1/database/{id}/context/build", "rest.Post<BuildContextRequest>(\"/v1/database/{id}/context/build\"", "/context/build", "/v1/database/{id}/context/build"),

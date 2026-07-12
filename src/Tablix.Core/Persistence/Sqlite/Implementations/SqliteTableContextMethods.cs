@@ -35,16 +35,10 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         {
             if (string.IsNullOrWhiteSpace(databaseId) || string.IsNullOrWhiteSpace(tableId)) return null;
 
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = "SELECT c.*, t.schema_name, t.table_name FROM context_records c INNER JOIN database_tables t ON t.id = c.table_id WHERE c.database_id = $database_id AND c.table_id = $table_id AND c.scope = 'Table'";
-            command.Parameters.AddWithValue("$database_id", databaseId);
-            command.Parameters.AddWithValue("$table_id", tableId);
-            using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            if (await reader.ReadAsync(token).ConfigureAwait(false))
-                return ReadTableContext(reader);
-
-            return null;
+            return await _Driver.ExecuteReadAsync(async connection =>
+            {
+                return await ReadTableContextAsync(connection, databaseId, tableId, token).ConfigureAwait(false);
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -58,17 +52,19 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
             List<TableContextRead> contexts = new List<TableContextRead>();
             if (string.IsNullOrWhiteSpace(databaseId)) return contexts;
 
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = "SELECT c.*, t.schema_name, t.table_name FROM context_records c INNER JOIN database_tables t ON t.id = c.table_id WHERE c.database_id = $database_id AND c.scope = 'Table' ORDER BY t.schema_name, t.table_name";
-            command.Parameters.AddWithValue("$database_id", databaseId);
-            using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            return await _Driver.ExecuteReadAsync(async connection =>
             {
-                contexts.Add(ReadTableContext(reader));
-            }
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = "SELECT c.*, t.schema_name, t.table_name FROM context_records c INNER JOIN database_tables t ON t.id = c.table_id WHERE c.database_id = $database_id AND c.scope = 'Table' ORDER BY t.schema_name, t.table_name";
+                command.Parameters.AddWithValue("$database_id", databaseId);
+                using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+                while (await reader.ReadAsync(token).ConfigureAwait(false))
+                {
+                    contexts.Add(ReadTableContext(reader));
+                }
 
-            return contexts;
+                return contexts;
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -86,11 +82,16 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
             if (string.IsNullOrWhiteSpace(databaseId)) throw new ArgumentNullException(nameof(databaseId));
             if (string.IsNullOrWhiteSpace(tableId)) throw new ArgumentNullException(nameof(tableId));
 
-            TableContextRead existing = await ReadAsync(databaseId, tableId, token).ConfigureAwait(false);
-            string updated = BuildUpdatedContext(existing == null ? null : existing.Context, context, mode);
+            TableContextRead updatedRead = null;
 
             await _Driver.ExecuteWriteAsync(async connection =>
             {
+                if (!await TableExistsAsync(connection, databaseId, tableId, token).ConfigureAwait(false))
+                    throw new KeyNotFoundException("Table metadata '" + tableId + "' was not found for database '" + databaseId + "'. Crawl the database again before writing table context.");
+
+                TableContextRead existing = await ReadTableContextAsync(connection, databaseId, tableId, token).ConfigureAwait(false);
+                string updated = BuildUpdatedContext(existing == null ? null : existing.Context, context, mode);
+
                 using SqliteCommand command = connection.CreateCommand();
                 command.CommandText = "INSERT INTO context_records (id, database_id, table_id, scope, context, source, provider_id, prompt, created_utc, updated_utc) VALUES ($id, $database_id, $table_id, 'Table', $context, $source, NULL, NULL, $now, $now) ON CONFLICT(database_id, table_id, scope) WHERE table_id IS NOT NULL DO UPDATE SET context = excluded.context, source = excluded.source, updated_utc = excluded.updated_utc";
                 command.Parameters.AddWithValue("$id", SqliteDatabaseDriver.NewId("ctx"));
@@ -100,9 +101,33 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
                 command.Parameters.AddWithValue("$source", source ?? "user");
                 command.Parameters.AddWithValue("$now", SqliteDatabaseDriver.ToStorageDate(DateTime.UtcNow));
                 await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                updatedRead = await ReadTableContextAsync(connection, databaseId, tableId, token).ConfigureAwait(false);
             }, token).ConfigureAwait(false);
 
-            return await ReadAsync(databaseId, tableId, token).ConfigureAwait(false);
+            return updatedRead;
+        }
+
+        private static async Task<bool> TableExistsAsync(SqliteConnection connection, string databaseId, string tableId, CancellationToken token)
+        {
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM database_tables WHERE database_id = $database_id AND id = $table_id";
+            command.Parameters.AddWithValue("$database_id", databaseId);
+            command.Parameters.AddWithValue("$table_id", tableId);
+            object result = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+            return Convert.ToInt64(result) > 0;
+        }
+
+        private static async Task<TableContextRead> ReadTableContextAsync(SqliteConnection connection, string databaseId, string tableId, CancellationToken token)
+        {
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "SELECT c.*, t.schema_name, t.table_name FROM context_records c INNER JOIN database_tables t ON t.id = c.table_id WHERE c.database_id = $database_id AND c.table_id = $table_id AND c.scope = 'Table'";
+            command.Parameters.AddWithValue("$database_id", databaseId);
+            command.Parameters.AddWithValue("$table_id", tableId);
+            using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            if (await reader.ReadAsync(token).ConfigureAwait(false))
+                return ReadTableContext(reader);
+
+            return null;
         }
 
         private static TableContextRead ReadTableContext(SqliteDataReader reader)

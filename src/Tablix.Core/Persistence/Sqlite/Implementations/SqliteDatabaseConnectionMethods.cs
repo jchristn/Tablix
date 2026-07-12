@@ -60,9 +60,11 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         {
             if (string.IsNullOrWhiteSpace(id)) return null;
 
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            DatabaseEntry database = await ReadDatabaseAsync(connection, id, token).ConfigureAwait(false);
-            return database;
+            return await _Driver.ExecuteReadAsync(async connection =>
+            {
+                DatabaseEntry database = await ReadDatabaseAsync(connection, id, token).ConfigureAwait(false);
+                return database;
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -78,23 +80,25 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
             int safeMax = Math.Clamp(maxResults, 1, 1000);
             int safeSkip = Math.Max(skip, 0);
 
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = BuildDatabaseSelectSql(false, filter) + " ORDER BY dc.name, dc.id LIMIT $limit OFFSET $offset";
-            AddFilterParameters(command, filter);
-            command.Parameters.AddWithValue("$limit", safeMax);
-            command.Parameters.AddWithValue("$offset", safeSkip);
-
-            List<DatabaseEntry> databases = new List<DatabaseEntry>();
-            using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            return await _Driver.ExecuteReadAsync(async connection =>
             {
-                DatabaseEntry database = ReadDatabase(reader);
-                database.AllowedQueries = await ReadAllowedQueriesAsync(connection, database.Id, token).ConfigureAwait(false);
-                databases.Add(database);
-            }
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = BuildDatabaseSelectSql(false, filter) + " ORDER BY dc.name, dc.id LIMIT $limit OFFSET $offset";
+                AddFilterParameters(command, filter);
+                command.Parameters.AddWithValue("$limit", safeMax);
+                command.Parameters.AddWithValue("$offset", safeSkip);
 
-            return databases;
+                List<DatabaseEntry> databases = new List<DatabaseEntry>();
+                using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+                while (await reader.ReadAsync(token).ConfigureAwait(false))
+                {
+                    DatabaseEntry database = ReadDatabase(reader);
+                    database.AllowedQueries = await ReadAllowedQueriesAsync(connection, database.Id, token).ConfigureAwait(false);
+                    databases.Add(database);
+                }
+
+                return databases;
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -105,12 +109,14 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         /// <returns>Database count.</returns>
         public async Task<long> CountAsync(string filter = null, CancellationToken token = default)
         {
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = BuildDatabaseSelectSql(true, filter);
-            AddFilterParameters(command, filter);
-            object result = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
-            return Convert.ToInt64(result);
+            return await _Driver.ExecuteReadAsync(async connection =>
+            {
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = BuildDatabaseSelectSql(true, filter);
+                AddFilterParameters(command, filter);
+                object result = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+                return Convert.ToInt64(result);
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -124,17 +130,17 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         {
             if (database == null) throw new ArgumentNullException(nameof(database));
 
-            DatabaseEntry existing = await ReadAsync(database.Id, token).ConfigureAwait(false);
-            if (existing == null) throw new KeyNotFoundException("Database with ID '" + database.Id + "' not found.");
-            if (preserveCredentialsWhenNull)
-            {
-                if (string.IsNullOrEmpty(database.User)) database.User = existing.User;
-                if (string.IsNullOrEmpty(database.Password)) database.Password = existing.Password;
-            }
-
             DateTime now = DateTime.UtcNow;
             await _Driver.ExecuteWriteAsync(async connection =>
             {
+                DatabaseEntry existing = await ReadDatabaseAsync(connection, database.Id, token).ConfigureAwait(false);
+                if (existing == null) throw new KeyNotFoundException("Database with ID '" + database.Id + "' not found.");
+                if (preserveCredentialsWhenNull)
+                {
+                    if (string.IsNullOrEmpty(database.User)) database.User = existing.User;
+                    if (string.IsNullOrEmpty(database.Password)) database.Password = existing.Password;
+                }
+
                 using SqliteCommand command = connection.CreateCommand();
                 command.CommandText = "UPDATE database_connections SET name = $name, type = $type, hostname = $hostname, port = $port, username = $username, password = $password, database_name = $database_name, schema_name = $schema_name, filename = $filename, context = $context, updated_utc = $updated_utc WHERE lower(id) = lower($id)";
                 AddDatabaseParameters(command, database, now, now);

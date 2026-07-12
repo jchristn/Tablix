@@ -401,7 +401,31 @@ tr:hover {
 
 .setup-body {
   display: grid;
-  gap: 12px;
+  gap: 16px;
+  min-height: 120px;
+  padding-bottom: 8px;
+}
+
+.setup-body h4 {
+  margin: 0;
+}
+
+.setup-body > .muted-text {
+  max-width: 680px;
+  margin: 0;
+  line-height: 1.55;
+}
+
+.setup-wizard .modal-actions {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border-color);
+}
+
+.setup-skip-button {
+  margin-right: auto;
 }
 
 .setup-log {
@@ -449,6 +473,31 @@ tr:hover {
 .setup-table-context textarea {
   font-family: var(--font-mono);
   font-size: 13px;
+}
+
+.allowed-query-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.checkbox-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.checkbox-option input {
+  margin: 0;
 }
 
 .chat-page .page-header {

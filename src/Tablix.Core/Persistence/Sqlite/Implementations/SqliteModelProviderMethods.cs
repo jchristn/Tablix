@@ -39,7 +39,7 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
             await _Driver.ExecuteWriteAsync(async connection =>
             {
                 using SqliteCommand command = connection.CreateCommand();
-                command.CommandText = "INSERT INTO model_providers (id, name, type, endpoint, api_key, model, system_prompt, enabled, default_streaming, supports_native_tool_calls, use_native_tool_calls, supports_strict_json, tool_capability_note, temperature, top_p, max_tokens, request_timeout_ms, created_utc, updated_utc) VALUES ($id, $name, $type, $endpoint, $api_key, $model, $system_prompt, $enabled, $default_streaming, $supports_native_tool_calls, $use_native_tool_calls, $supports_strict_json, $tool_capability_note, $temperature, $top_p, $max_tokens, $request_timeout_ms, $created_utc, $updated_utc)";
+                command.CommandText = "INSERT INTO model_providers (id, name, type, endpoint, api_key, model, system_prompt, enabled, default_streaming, supports_native_tool_calls, use_native_tool_calls, supports_strict_json, tool_capability_note, temperature, top_p, max_tokens, request_timeout_ms, max_concurrent_requests, created_utc, updated_utc) VALUES ($id, $name, $type, $endpoint, $api_key, $model, $system_prompt, $enabled, $default_streaming, $supports_native_tool_calls, $use_native_tool_calls, $supports_strict_json, $tool_capability_note, $temperature, $top_p, $max_tokens, $request_timeout_ms, $max_concurrent_requests, $created_utc, $updated_utc)";
                 AddProviderParameters(command, provider, now, now);
                 await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             }, token).ConfigureAwait(false);
@@ -57,16 +57,10 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         {
             if (string.IsNullOrWhiteSpace(id)) return null;
 
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = "SELECT * FROM model_providers WHERE lower(id) = lower($id)";
-            command.Parameters.AddWithValue("$id", id);
-
-            using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            if (await reader.ReadAsync(token).ConfigureAwait(false))
-                return ReadProvider(reader);
-
-            return null;
+            return await _Driver.ExecuteReadAsync(async connection =>
+            {
+                return await ReadProviderByIdAsync(connection, id, token).ConfigureAwait(false);
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -83,21 +77,23 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
             int safeMax = Math.Clamp(maxResults, 1, 1000);
             int safeSkip = Math.Max(skip, 0);
 
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = BuildProviderSelectSql(false, filter, enabled) + " ORDER BY name, id LIMIT $limit OFFSET $offset";
-            AddFilterParameters(command, filter, enabled);
-            command.Parameters.AddWithValue("$limit", safeMax);
-            command.Parameters.AddWithValue("$offset", safeSkip);
-
-            List<ModelProviderSettings> providers = new List<ModelProviderSettings>();
-            using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            return await _Driver.ExecuteReadAsync(async connection =>
             {
-                providers.Add(ReadProvider(reader));
-            }
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = BuildProviderSelectSql(false, filter, enabled) + " ORDER BY name, id LIMIT $limit OFFSET $offset";
+                AddFilterParameters(command, filter, enabled);
+                command.Parameters.AddWithValue("$limit", safeMax);
+                command.Parameters.AddWithValue("$offset", safeSkip);
 
-            return providers;
+                List<ModelProviderSettings> providers = new List<ModelProviderSettings>();
+                using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+                while (await reader.ReadAsync(token).ConfigureAwait(false))
+                {
+                    providers.Add(ReadProvider(reader));
+                }
+
+                return providers;
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -109,12 +105,14 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         /// <returns>Provider count.</returns>
         public async Task<long> CountAsync(string filter = null, bool? enabled = null, CancellationToken token = default)
         {
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = BuildProviderSelectSql(true, filter, enabled);
-            AddFilterParameters(command, filter, enabled);
-            object result = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
-            return Convert.ToInt64(result);
+            return await _Driver.ExecuteReadAsync(async connection =>
+            {
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = BuildProviderSelectSql(true, filter, enabled);
+                AddFilterParameters(command, filter, enabled);
+                object result = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+                return Convert.ToInt64(result);
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -128,16 +126,16 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         {
             if (provider == null) throw new ArgumentNullException(nameof(provider));
 
-            ModelProviderSettings existing = await ReadAsync(provider.Id, token).ConfigureAwait(false);
-            if (existing == null) throw new KeyNotFoundException("Provider with ID '" + provider.Id + "' not found.");
-            if (preserveApiKeyWhenNull && string.IsNullOrEmpty(provider.ApiKey))
-                provider.ApiKey = existing.ApiKey;
-
             DateTime now = DateTime.UtcNow;
             await _Driver.ExecuteWriteAsync(async connection =>
             {
+                ModelProviderSettings existing = await ReadProviderByIdAsync(connection, provider.Id, token).ConfigureAwait(false);
+                if (existing == null) throw new KeyNotFoundException("Provider with ID '" + provider.Id + "' not found.");
+                if (preserveApiKeyWhenNull && string.IsNullOrEmpty(provider.ApiKey))
+                    provider.ApiKey = existing.ApiKey;
+
                 using SqliteCommand command = connection.CreateCommand();
-                command.CommandText = "UPDATE model_providers SET name = $name, type = $type, endpoint = $endpoint, api_key = $api_key, model = $model, system_prompt = $system_prompt, enabled = $enabled, default_streaming = $default_streaming, supports_native_tool_calls = $supports_native_tool_calls, use_native_tool_calls = $use_native_tool_calls, supports_strict_json = $supports_strict_json, tool_capability_note = $tool_capability_note, temperature = $temperature, top_p = $top_p, max_tokens = $max_tokens, request_timeout_ms = $request_timeout_ms, updated_utc = $updated_utc WHERE lower(id) = lower($id)";
+                command.CommandText = "UPDATE model_providers SET name = $name, type = $type, endpoint = $endpoint, api_key = $api_key, model = $model, system_prompt = $system_prompt, enabled = $enabled, default_streaming = $default_streaming, supports_native_tool_calls = $supports_native_tool_calls, use_native_tool_calls = $use_native_tool_calls, supports_strict_json = $supports_strict_json, tool_capability_note = $tool_capability_note, temperature = $temperature, top_p = $top_p, max_tokens = $max_tokens, request_timeout_ms = $request_timeout_ms, max_concurrent_requests = $max_concurrent_requests, updated_utc = $updated_utc WHERE lower(id) = lower($id)";
                 AddProviderParameters(command, provider, now, now);
                 int count = await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
                 if (count == 0) throw new KeyNotFoundException("Provider with ID '" + provider.Id + "' not found.");
@@ -166,6 +164,19 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
             }, token).ConfigureAwait(false);
 
             return count > 0;
+        }
+
+        private static async Task<ModelProviderSettings> ReadProviderByIdAsync(SqliteConnection connection, string id, CancellationToken token)
+        {
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "SELECT * FROM model_providers WHERE lower(id) = lower($id)";
+            command.Parameters.AddWithValue("$id", id);
+
+            using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            if (await reader.ReadAsync(token).ConfigureAwait(false))
+                return ReadProvider(reader);
+
+            return null;
         }
 
         private static string BuildProviderSelectSql(bool count, string filter, bool? enabled)
@@ -208,6 +219,7 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
             command.Parameters.AddWithValue("$top_p", provider.TopP.HasValue ? (object)provider.TopP.Value : DBNull.Value);
             command.Parameters.AddWithValue("$max_tokens", provider.MaxTokens.HasValue ? (object)provider.MaxTokens.Value : DBNull.Value);
             command.Parameters.AddWithValue("$request_timeout_ms", provider.RequestTimeoutMs);
+            command.Parameters.AddWithValue("$max_concurrent_requests", provider.MaxConcurrentRequests);
             command.Parameters.AddWithValue("$created_utc", SqliteDatabaseDriver.ToStorageDate(createdUtc));
             command.Parameters.AddWithValue("$updated_utc", SqliteDatabaseDriver.ToStorageDate(updatedUtc));
         }
@@ -229,7 +241,8 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
                 UseNativeToolCalls = SqliteDatabaseDriver.ToBool(Convert.ToInt64(reader["use_native_tool_calls"])),
                 SupportsStrictJson = SqliteDatabaseDriver.ToBool(Convert.ToInt64(reader["supports_strict_json"])),
                 ToolCapabilityNote = reader["tool_capability_note"] == DBNull.Value ? null : Convert.ToString(reader["tool_capability_note"]),
-                RequestTimeoutMs = Convert.ToInt32(reader["request_timeout_ms"])
+                RequestTimeoutMs = Convert.ToInt32(reader["request_timeout_ms"]),
+                MaxConcurrentRequests = Convert.ToInt32(reader["max_concurrent_requests"])
             };
 
             provider.Temperature = reader["temperature"] == DBNull.Value ? (double?)null : Convert.ToDouble(reader["temperature"]);

@@ -30,6 +30,7 @@ const emptyProvider: ModelProviderUpdate = {
   TopP: null,
   MaxTokens: 4096,
   RequestTimeoutMs: 120000,
+  MaxConcurrentRequests: 1,
   ClearApiKey: false,
 };
 
@@ -234,6 +235,7 @@ export default function ModelsPage() {
                 <Field label="Top P"><input type="number" step="0.1" value={provider.TopP ?? ''} onChange={event => update('TopP', nullableNumber(event.target.value))} /></Field>
                 <Field label="Max Tokens"><input type="number" value={provider.MaxTokens ?? ''} onChange={event => update('MaxTokens', nullableNumber(event.target.value))} /></Field>
                 <Field label="Timeout Ms"><input type="number" value={provider.RequestTimeoutMs} onChange={event => update('RequestTimeoutMs', parseNumber(event.target.value, 120000))} /></Field>
+                <Field label="Max Concurrent Requests"><input type="number" min="1" max="16" value={provider.MaxConcurrentRequests} onChange={event => update('MaxConcurrentRequests', parseNumber(event.target.value, 1))} /></Field>
               </div>
               <div className="form-group" style={{ marginTop: '12px' }}>
                 <label>Tool Capability Note</label>

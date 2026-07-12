@@ -30,7 +30,8 @@ namespace Tablix.Core.Persistence.Sqlite
                 ToolCapabilityNote = "Ollama supports tool-capable APIs for some models. Enable native tools when the selected local model reliably emits tool calls.",
                 Temperature = 0.2,
                 MaxTokens = 4096,
-                RequestTimeoutMs = 120000
+                RequestTimeoutMs = 120000,
+                MaxConcurrentRequests = 1
             };
         }
 
@@ -55,7 +56,8 @@ namespace Tablix.Core.Persistence.Sqlite
                 ToolCapabilityNote = "OpenAI chat models generally support native tool calls.",
                 Temperature = 0.2,
                 MaxTokens = 4096,
-                RequestTimeoutMs = 120000
+                RequestTimeoutMs = 120000,
+                MaxConcurrentRequests = 4
             };
         }
 
@@ -80,7 +82,8 @@ namespace Tablix.Core.Persistence.Sqlite
                 ToolCapabilityNote = "OpenAI-compatible endpoints vary by server and model. Enable native tools after validating the endpoint supports function/tool calls.",
                 Temperature = 0.2,
                 MaxTokens = 4096,
-                RequestTimeoutMs = 120000
+                RequestTimeoutMs = 120000,
+                MaxConcurrentRequests = 1
             };
         }
 
@@ -105,7 +108,8 @@ namespace Tablix.Core.Persistence.Sqlite
                 ToolCapabilityNote = "Gemini models support native function calling through PolyPrompt.",
                 Temperature = 0.2,
                 MaxTokens = 4096,
-                RequestTimeoutMs = 120000
+                RequestTimeoutMs = 120000,
+                MaxConcurrentRequests = 4
             };
         }
 

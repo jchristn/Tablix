@@ -21,8 +21,9 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added MCP context management tools for single and batch database/table context reads and writes: `tablix_get_database_context`, `tablix_get_table_context`, `tablix_update_database_context`, and `tablix_update_table_context`
 - Added SQLite persistence in `tablix.db` for model providers, configured databases, crawl metadata, database context, table context, and setup wizard state
 - Added `Persistence.Type` and `Persistence.Filename` bootstrap settings in `tablix.json`
-- Added REST setup APIs: `GET /v1/setup`, `PUT /v1/setup`, and `POST /v1/setup/complete`
+- Added REST setup APIs: `GET /v1/setup`, `PUT /v1/setup`, `POST /v1/setup/complete`, and `POST /v1/setup/dismiss`
 - Added REST model provider APIs under `/v1/model`, including saved and unsaved provider connectivity tests
+- Added model provider `MaxConcurrentRequests` to bound parallel provider calls during batch operations
 - Added REST database connectivity test APIs and table-context APIs under `/v1/database`
 - Added dashboard Models page for provider CRUD and validation
 - Added first-run setup wizard for provider validation, database validation, crawl, database context, and table context
@@ -69,6 +70,8 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Fixed Chat transcript scrolling after expanding or collapsing tool-call details so users can always reach the top and bottom of the conversation
 - Fixed Chat page behavior so changing the selected database or provider clears the current conversation
 - Fixed Dashboard topbar sizing so route content and chat scrolling cannot shrink its vertical height
+- Fixed SQLite persistence consistency by disabling connection pooling, serializing reads and writes through a single operation gate, and wrapping write batches in explicit immediate transactions with rollback
+- Fixed setup wizard table-context generation so model request timeouts apply per table and model calls are bounded by provider concurrency instead of sending one long UI-proxied batch request
 - Removed a credential-bearing local database entry from the checked-in Docker default configuration
 
 ### Testing

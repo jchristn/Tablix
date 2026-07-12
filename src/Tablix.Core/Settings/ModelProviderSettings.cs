@@ -115,6 +115,15 @@ namespace Tablix.Core.Settings
             set { _RequestTimeoutMs = Math.Clamp(value, 1000, 600000); }
         }
 
+        /// <summary>
+        /// Maximum concurrent provider requests Tablix may issue for batch operations. Values are clamped from 1 to 16.
+        /// </summary>
+        public int MaxConcurrentRequests
+        {
+            get { return _MaxConcurrentRequests; }
+            set { _MaxConcurrentRequests = Math.Clamp(value, 1, 16); }
+        }
+
         #endregion
 
         #region Private-Members
@@ -124,6 +133,7 @@ namespace Tablix.Core.Settings
         private double? _TopP = null;
         private int? _MaxTokens = 4096;
         private int _RequestTimeoutMs = 120000;
+        private int _MaxConcurrentRequests = 1;
 
         #endregion
 

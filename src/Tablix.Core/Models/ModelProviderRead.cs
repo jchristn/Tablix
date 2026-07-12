@@ -99,6 +99,11 @@ namespace Tablix.Core.Models
         /// </summary>
         public int RequestTimeoutMs { get; set; } = 120000;
 
+        /// <summary>
+        /// Maximum concurrent provider requests for batch operations.
+        /// </summary>
+        public int MaxConcurrentRequests { get; set; } = 1;
+
         #endregion
 
         #region Constructors-and-Factories

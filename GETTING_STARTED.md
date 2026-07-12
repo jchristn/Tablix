@@ -84,16 +84,17 @@ The Chat and Build Context features require an enabled model provider.
 
 In the dashboard:
 
-1. Open **Settings**.
-2. Open **Models**.
-3. Either edit an existing provider or click **Add Provider**.
-4. Fill in the provider fields.
-5. Ensure **Enabled** is checked.
-6. Review provider tool settings:
+1. Open **Models**.
+2. Either edit an existing provider or click **Add Provider**.
+3. Fill in the provider fields.
+4. Ensure **Enabled** is checked.
+5. Set **Request Timeout Ms** to the timeout for one provider request. Table-context generation makes one provider request per table, so this is not a timeout for the entire batch.
+6. Set **Max Concurrent Requests** to the number of provider calls Tablix may run in parallel for batch operations. Use `1` for local/single-GPU Ollama or other constrained endpoints; raise it only when the model server can handle parallel requests reliably.
+7. Review provider tool settings:
    - Leave **Use native tools** off for local Ollama models until you have verified the model emits tool calls reliably.
    - Enable **Use native tools** for OpenAI or Gemini models that support tool/function calling.
    - Keep **Server fallback** enabled under **Prompt Processing** so Tablix can still execute permitted data queries when a model does not call a native tool.
-7. Click **Save Settings**.
+8. Click **Save**.
 
 ### Option A: Ollama on Your Host Machine
 
@@ -105,7 +106,7 @@ If Ollama is running on your workstation:
    ollama pull gpt-oss:20b
    ```
 
-2. In Tablix **Settings**, configure a provider:
+2. In Tablix **Models**, configure a provider:
 
    | Field | Value |
    | --- | --- |
@@ -119,7 +120,7 @@ On Linux Docker Engine, `host.docker.internal` may require additional Docker hos
 
 ### Option B: OpenAI
 
-In Tablix **Settings**, configure a provider:
+In Tablix **Models**, configure a provider:
 
 | Field | Value |
 | --- | --- |
@@ -131,7 +132,7 @@ In Tablix **Settings**, configure a provider:
 
 ### Option C: Gemini
 
-In Tablix **Settings**, configure a provider:
+In Tablix **Models**, configure a provider:
 
 | Field | Value |
 | --- | --- |

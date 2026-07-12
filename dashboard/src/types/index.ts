@@ -138,6 +138,7 @@ export interface ModelProviderSummary {
   UseNativeToolCalls: boolean;
   SupportsStrictJson: boolean;
   ToolCapabilityNote: string | null;
+  MaxConcurrentRequests: number;
 }
 
 export interface ChatOptionsResponse {
@@ -288,6 +289,7 @@ export interface ModelProviderRead {
   TopP: number | null;
   MaxTokens: number | null;
   RequestTimeoutMs: number;
+  MaxConcurrentRequests: number;
 }
 
 export interface ModelProviderUpdate extends ModelProviderRead {
@@ -357,6 +359,7 @@ export interface SetupStateRead {
   SelectedProviderId: string | null;
   SelectedDatabaseId: string | null;
   CompletedUtc: string | null;
+  DismissedUtc: string | null;
   UpdatedUtc: string;
   ShouldShowWizard: boolean;
 }

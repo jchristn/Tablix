@@ -255,7 +255,7 @@ namespace Tablix.Server.Handlers
                 client = new OpenAiClient(provider.Endpoint, provider.ApiKey, _Logging);
 
             client.Model = provider.Model;
-            client.TimeoutMs = Math.Clamp(provider.RequestTimeoutMs, 1000, 60000);
+            client.TimeoutMs = provider.RequestTimeoutMs;
             if (provider.Temperature.HasValue) client.Temperature = provider.Temperature.Value;
             if (provider.TopP.HasValue) client.TopP = provider.TopP.Value;
             if (provider.MaxTokens.HasValue) client.MaxTokens = provider.MaxTokens.Value;
@@ -283,7 +283,8 @@ namespace Tablix.Server.Handlers
                 Temperature = provider.Temperature,
                 TopP = provider.TopP,
                 MaxTokens = provider.MaxTokens,
-                RequestTimeoutMs = provider.RequestTimeoutMs
+                RequestTimeoutMs = provider.RequestTimeoutMs,
+                MaxConcurrentRequests = provider.MaxConcurrentRequests
             };
         }
 
@@ -307,7 +308,8 @@ namespace Tablix.Server.Handlers
                 Temperature = request.Temperature,
                 TopP = request.TopP,
                 MaxTokens = request.MaxTokens,
-                RequestTimeoutMs = request.RequestTimeoutMs
+                RequestTimeoutMs = request.RequestTimeoutMs,
+                MaxConcurrentRequests = request.MaxConcurrentRequests
             };
         }
 

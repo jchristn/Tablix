@@ -39,6 +39,11 @@ namespace Tablix.Core.Models
         public DateTime? CompletedUtc { get; set; } = null;
 
         /// <summary>
+        /// Dismissal timestamp in UTC.
+        /// </summary>
+        public DateTime? DismissedUtc { get; set; } = null;
+
+        /// <summary>
         /// Last updated timestamp in UTC.
         /// </summary>
         public DateTime UpdatedUtc { get; set; } = DateTime.UtcNow;

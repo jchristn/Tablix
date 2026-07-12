@@ -203,6 +203,13 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.Conflict, "No persisted table metadata was found for context generation.");
             }
 
+            List<string> missingTableIds = BuildMissingTableIds(request.TableIds, selectedTables);
+            if (missingTableIds.Count > 0)
+            {
+                req.Http.Response.StatusCode = 409;
+                return new ApiErrorResponse(ApiErrorEnum.Conflict, "The following table IDs were not found in persisted crawl metadata: " + String.Join(", ", missingTableIds) + ".");
+            }
+
             return await GenerateTableContextsAsync(req, preparation, request, selectedTables).ConfigureAwait(false);
         }
 
@@ -435,9 +442,9 @@ namespace Tablix.Server.Handlers
                 return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + databaseId + "' not found."));
             }
 
-            DatabaseDetail detail = _CrawlCache.Get(database.Id);
+            DatabaseDetail detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
             if (detail == null || !detail.IsCrawled)
-                detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
+                detail = _CrawlCache.Get(database.Id);
             if (detail == null || !detail.IsCrawled)
             {
                 req.Http.Response.StatusCode = 409;
@@ -466,54 +473,73 @@ namespace Tablix.Server.Handlers
             string instructions = String.IsNullOrWhiteSpace(request.Prompt) ? DefaultTableContextBuildInstructions() : request.Prompt.Trim();
             string systemPrompt = "You generate concise, durable table context for Tablix. Restrict output to the selected database, selected table, its structure, contents, and relationships. Do not include credentials, secrets, raw result rows, or speculative facts.";
             List<TableContextRead> contexts = new List<TableContextRead>();
-            StringBuilder promptTranscript = new StringBuilder();
-            StringBuilder responseTranscript = new StringBuilder();
-
-            using CompletionClientBase client = CreateClient(preparation.Provider);
-            ChatCompletionOptions options = CreateOptions(preparation.Provider, systemPrompt);
             Stopwatch stopwatch = Stopwatch.StartNew();
             string model = preparation.Provider.Model;
+            string[] promptTranscript = new string[selectedTables.Count];
+            string[] responseTranscript = new string[selectedTables.Count];
+            string[] responseModels = new string[selectedTables.Count];
+            using SemaphoreSlim semaphore = new SemaphoreSlim(preparation.Provider.MaxConcurrentRequests, preparation.Provider.MaxConcurrentRequests);
+            List<Task<TableContextRead>> tasks = new List<Task<TableContextRead>>();
 
-            foreach (TableDetail table in selectedTables)
+            for (int index = 0; index < selectedTables.Count; index++)
             {
-                string prompt = BuildTableContextPrompt(preparation.Database, preparation.Detail, table, instructions);
-                promptTranscript.AppendLine(prompt);
-                ChatResponse response = await client.ChatAsync(prompt, options, req.CancellationToken).ConfigureAwait(false);
-                if (!response.Success)
-                {
-                    stopwatch.Stop();
-                    req.Http.Response.StatusCode = 502;
-                    return new ApiErrorResponse(ApiErrorEnum.InternalError, response.Error ?? "Provider table context generation failed.");
-                }
-
-                string context = NormalizeGeneratedContext(response.Text);
-                if (String.IsNullOrWhiteSpace(context))
-                {
-                    stopwatch.Stop();
-                    req.Http.Response.StatusCode = 502;
-                    return new ApiErrorResponse(ApiErrorEnum.InternalError, "Provider returned empty table context for " + table.SchemaName + "." + table.TableName + ".");
-                }
-
-                TableContextRead saved = await _Persistence.TableContexts.UpsertAsync(
-                    preparation.Database.Id,
-                    table.TableId,
-                    context,
-                    "replace",
-                    "model",
-                    req.CancellationToken).ConfigureAwait(false);
-
-                table.Context = saved.Context;
-                contexts.Add(saved);
-                responseTranscript.AppendLine(context);
-                if (!String.IsNullOrWhiteSpace(response.Model)) model = response.Model;
+                int tableIndex = index;
+                tasks.Add(GenerateOneTableContextAsync(
+                    req,
+                    preparation,
+                    selectedTables[tableIndex],
+                    instructions,
+                    systemPrompt,
+                    semaphore,
+                    promptTranscript,
+                    responseTranscript,
+                    responseModels,
+                    tableIndex));
             }
+
+            TableContextRead[] savedContexts;
+            try
+            {
+                savedContexts = await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                stopwatch.Stop();
+                req.Http.Response.StatusCode = 409;
+                return new ApiErrorResponse(ApiErrorEnum.Conflict, ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                stopwatch.Stop();
+                req.Http.Response.StatusCode = 502;
+                return new ApiErrorResponse(ApiErrorEnum.InternalError, ex.Message);
+            }
+
+            foreach (TableContextRead saved in savedContexts)
+            {
+                if (saved == null) continue;
+                contexts.Add(saved);
+            }
+
+            for (int index = 0; index < responseModels.Length; index++)
+            {
+                if (!String.IsNullOrWhiteSpace(responseModels[index]))
+                {
+                    model = responseModels[index];
+                }
+            }
+
+            StringBuilder prompts = new StringBuilder();
+            StringBuilder responses = new StringBuilder();
+            AppendTranscripts(prompts, promptTranscript);
+            AppendTranscripts(responses, responseTranscript);
 
             stopwatch.Stop();
             ChatTelemetry telemetry = CreateTelemetry(
                 stopwatch.ElapsedMilliseconds,
                 stopwatch.ElapsedMilliseconds,
-                promptTranscript.ToString(),
-                responseTranscript.ToString(),
+                prompts.ToString(),
+                responses.ToString(),
                 null);
 
             return new BuildTableContextResponse
@@ -525,6 +551,62 @@ namespace Tablix.Server.Handlers
                 Objects = contexts,
                 Telemetry = telemetry
             };
+        }
+
+        private async Task<TableContextRead> GenerateOneTableContextAsync(
+            AppRequest req,
+            ChatPreparation preparation,
+            TableDetail table,
+            string instructions,
+            string systemPrompt,
+            SemaphoreSlim semaphore,
+            string[] promptTranscript,
+            string[] responseTranscript,
+            string[] responseModels,
+            int tableIndex)
+        {
+            await semaphore.WaitAsync(req.CancellationToken).ConfigureAwait(false);
+            try
+            {
+                string prompt = BuildTableContextPrompt(preparation.Database, preparation.Detail, table, instructions);
+                promptTranscript[tableIndex] = prompt;
+
+                using CompletionClientBase client = CreateClient(preparation.Provider);
+                ChatCompletionOptions options = CreateOptions(preparation.Provider, systemPrompt);
+                ChatResponse response = await client.ChatAsync(prompt, options, req.CancellationToken).ConfigureAwait(false);
+                if (!response.Success)
+                    throw new InvalidOperationException(response.Error ?? "Provider table context generation failed.");
+
+                string context = NormalizeGeneratedContext(response.Text);
+                if (String.IsNullOrWhiteSpace(context))
+                    throw new InvalidOperationException("Provider returned empty table context for " + table.SchemaName + "." + table.TableName + ".");
+
+                TableContextRead saved = await _Persistence.TableContexts.UpsertAsync(
+                    preparation.Database.Id,
+                    table.TableId,
+                    context,
+                    "replace",
+                    "model",
+                    req.CancellationToken).ConfigureAwait(false);
+
+                table.Context = saved.Context;
+                responseTranscript[tableIndex] = context;
+                responseModels[tableIndex] = response.Model;
+                return saved;
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }
+
+        private static void AppendTranscripts(StringBuilder builder, string[] transcripts)
+        {
+            foreach (string transcript in transcripts)
+            {
+                if (String.IsNullOrWhiteSpace(transcript)) continue;
+                builder.AppendLine(transcript);
+            }
         }
 
         private static List<TableDetail> SelectTables(DatabaseDetail detail, List<string> tableIds)
@@ -549,6 +631,22 @@ namespace Tablix.Server.Handlers
             }
 
             return tables;
+        }
+
+        private static List<string> BuildMissingTableIds(List<string> tableIds, List<TableDetail> selectedTables)
+        {
+            List<string> missing = new List<string>();
+            if (tableIds == null || tableIds.Count == 0) return missing;
+
+            foreach (string tableId in tableIds)
+            {
+                if (String.IsNullOrWhiteSpace(tableId)) continue;
+
+                bool found = selectedTables.Any(table => String.Equals(table.TableId, tableId, StringComparison.OrdinalIgnoreCase));
+                if (!found) missing.Add(tableId);
+            }
+
+            return missing;
         }
 
         private static TableDetail FindTable(DatabaseDetail detail, string tableId)

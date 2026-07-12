@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../api/client';
 import type {
   BuildContextResponse,
@@ -13,6 +13,12 @@ import type {
 } from '../types';
 
 const steps = ['provider', 'database', 'crawl', 'database-context', 'table-context', 'complete'];
+const allowedQueryOptions = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH', 'CALL'];
+const networkDefaults: Record<string, { Port: number; User: string; Schema: string }> = {
+  Postgresql: { Port: 5432, User: 'postgres', Schema: 'public' },
+  Mysql: { Port: 3306, User: 'root', Schema: '' },
+  SqlServer: { Port: 1433, User: 'sa', Schema: 'dbo' },
+};
 
 const initialProvider: ModelProviderUpdate = {
   Id: 'provider_ollama_local',
@@ -33,6 +39,7 @@ const initialProvider: ModelProviderUpdate = {
   TopP: null,
   MaxTokens: 4096,
   RequestTimeoutMs: 120000,
+  MaxConcurrentRequests: 1,
   ClearApiKey: false,
 };
 
@@ -56,7 +63,6 @@ export default function SetupWizard() {
   const [stepIndex, setStepIndex] = useState(0);
   const [provider, setProvider] = useState<ModelProviderUpdate>({ ...initialProvider });
   const [database, setDatabase] = useState<DatabaseEntry>({ ...initialDatabase });
-  const [allowedQueries, setAllowedQueries] = useState('SELECT, INSERT, UPDATE, DELETE');
   const [detail, setDetail] = useState<DatabaseDetail | null>(null);
   const [providerTest, setProviderTest] = useState<ProviderConnectivityTestResponse | null>(null);
   const [databaseTest, setDatabaseTest] = useState<DatabaseConnectivityTestResponse | null>(null);
@@ -65,8 +71,18 @@ export default function SetupWizard() {
   const [tableContextPrompt, setTableContextPrompt] = useState(defaultTableContextPrompt());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const crawlLogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => { loadSetupState(); }, []);
+
+  useEffect(() => {
+    const log = crawlLogRef.current;
+    if (!log) return;
+
+    requestAnimationFrame(() => {
+      log.scrollTop = log.scrollHeight;
+    });
+  }, [crawlEvents]);
 
   async function loadSetupState() {
     try {
@@ -131,7 +147,7 @@ export default function SetupWizard() {
     setBusy(true);
     setError('');
     try {
-      const candidate = { ...database, AllowedQueries: parseAllowedQueries() };
+      const candidate = buildDatabaseCandidate();
       const response = await apiFetch('/v1/database/test', {
         method: 'POST',
         body: JSON.stringify({ Database: candidate }),
@@ -149,7 +165,7 @@ export default function SetupWizard() {
     setBusy(true);
     setError('');
     try {
-      const candidate = { ...database, AllowedQueries: parseAllowedQueries() };
+      const candidate = buildDatabaseCandidate();
       const create = await apiFetch('/v1/database', { method: 'POST', body: JSON.stringify(candidate) });
       if (!create.ok) {
         const update = await apiFetch(`/v1/database/${candidate.Id}`, { method: 'PUT', body: JSON.stringify(candidate) });
@@ -254,21 +270,8 @@ export default function SetupWizard() {
     setError('');
     try {
       const tableIds = detail.Tables.map(table => table.TableId).filter((tableId): tableId is string => Boolean(tableId));
-      const response = await apiFetch(`/v1/database/${database.Id}/table-context/build`, {
-        method: 'POST',
-        body: JSON.stringify({
-          ProviderId: provider.Id,
-          Prompt: tableContextPrompt,
-          TableIds: tableIds,
-        }),
-      });
-      const result: BuildTableContextResponse = await response.json();
-      if (!response.ok || !result.Success) throw new Error(result.Error || 'Table context generation failed.');
-
       const generated: Record<string, string> = {};
-      result.Objects.forEach(context => {
-        if (context.TableId) generated[context.TableId] = context.Context || '';
-      });
+      await buildTableContextsWithConcurrency(tableIds, generated);
       setTableContexts(previous => ({ ...previous, ...generated }));
 
       const detailResponse = await apiFetch(`/v1/database/${database.Id}`);
@@ -284,9 +287,50 @@ export default function SetupWizard() {
     }
   }
 
+  async function buildTableContextsWithConcurrency(tableIds: string[], generated: Record<string, string>) {
+    const concurrency = clampConcurrency(provider.MaxConcurrentRequests);
+    let nextIndex = 0;
+
+    async function worker() {
+      while (nextIndex < tableIds.length) {
+        const tableId = tableIds[nextIndex];
+        nextIndex++;
+        const response = await apiFetch(`/v1/database/${database.Id}/table-context/${tableId}/build`, {
+          method: 'POST',
+          body: JSON.stringify({
+            ProviderId: provider.Id,
+            Prompt: tableContextPrompt,
+            TableIds: [tableId],
+          }),
+        });
+        const result: BuildTableContextResponse = await readJsonResponse(response, 'Table context generation failed.');
+        if (!response.ok || !result.Success) throw new Error(result.Error || 'Table context generation failed.');
+        result.Objects.forEach(context => {
+          if (context.TableId) generated[context.TableId] = context.Context || '';
+        });
+      }
+    }
+
+    const workers: Promise<void>[] = [];
+    const workerCount = Math.min(concurrency, Math.max(tableIds.length, 1));
+    for (let index = 0; index < workerCount; index++) {
+      workers.push(worker());
+    }
+
+    await Promise.all(workers);
+  }
+
   async function completeSetup() {
     await apiFetch('/v1/setup/complete', { method: 'POST' });
     setVisible(false);
+  }
+
+  async function dismissSetup() {
+    setVisible(false);
+    try {
+      await apiFetch('/v1/setup/dismiss', { method: 'POST' });
+    } catch {
+    }
   }
 
   function handleCrawlFrame(frame: string) {
@@ -300,8 +344,63 @@ export default function SetupWizard() {
     }
   }
 
-  function parseAllowedQueries() {
-    return allowedQueries.split(',').map(query => query.trim()).filter(Boolean);
+  function updateDatabaseType(type: string) {
+    setDatabase(previous => {
+      if (type === 'Sqlite') {
+        return {
+          ...previous,
+          Type: type,
+          Hostname: '',
+          Port: null,
+          User: '',
+          Password: '',
+          Schema: 'main',
+          Filename: './database.db',
+        };
+      }
+
+      const defaults = networkDefaults[type] || { Port: 0, User: '', Schema: '' };
+      return {
+        ...previous,
+        Type: type,
+        Hostname: previous.Hostname || 'localhost',
+        Port: defaults.Port,
+        User: defaults.User,
+        Schema: defaults.Schema,
+        Filename: '',
+      };
+    });
+  }
+
+  function toggleAllowedQuery(query: string) {
+    setDatabase(previous => {
+      const existing = previous.AllowedQueries || [];
+      const next = existing.includes(query)
+        ? existing.filter(item => item !== query)
+        : [...existing, query];
+      return { ...previous, AllowedQueries: next };
+    });
+  }
+
+  function buildDatabaseCandidate(): DatabaseEntry {
+    if (database.Type === 'Sqlite') {
+      return {
+        ...database,
+        Hostname: '',
+        Port: null,
+        User: '',
+        Password: '',
+        Filename: database.Filename || './database.db',
+        AllowedQueries: database.AllowedQueries || [],
+      };
+    }
+
+    return {
+      ...database,
+      Filename: '',
+      Port: database.Port || null,
+      AllowedQueries: database.AllowedQueries || [],
+    };
   }
 
   if (!visible) return null;
@@ -316,6 +415,9 @@ export default function SetupWizard() {
             <h3 id="setup-title">Set Up Tablix</h3>
             <p className="muted-text">Step {stepIndex + 1} of {steps.length}</p>
           </div>
+          <button type="button" className="icon-action" aria-label="Exit setup wizard" title="Exit setup wizard" onClick={dismissSetup}>
+            <CloseIcon />
+          </button>
         </div>
 
         <div className="setup-stepper">
@@ -339,6 +441,7 @@ export default function SetupWizard() {
               <Field label="Endpoint"><input value={provider.Endpoint || ''} onChange={event => setProvider(previous => ({ ...previous, Endpoint: event.target.value }))} /></Field>
               <Field label="Model"><input value={provider.Model || ''} onChange={event => setProvider(previous => ({ ...previous, Model: event.target.value }))} /></Field>
               <Field label="API Key"><input type="password" value={provider.ApiKey || ''} onChange={event => setProvider(previous => ({ ...previous, ApiKey: event.target.value }))} /></Field>
+              <Field label="Max Concurrent Requests"><input type="number" min="1" max="16" value={provider.MaxConcurrentRequests} onChange={event => setProvider(previous => ({ ...previous, MaxConcurrentRequests: parseBoundedNumber(event.target.value, 1, 1, 16) }))} /></Field>
             </div>
             <TestResult result={providerTest} />
           </section>
@@ -351,17 +454,44 @@ export default function SetupWizard() {
               <Field label="Database ID"><input value={database.Id} onChange={event => setDatabase(previous => ({ ...previous, Id: event.target.value }))} /></Field>
               <Field label="Name"><input value={database.Name || ''} onChange={event => setDatabase(previous => ({ ...previous, Name: event.target.value }))} /></Field>
               <Field label="Type">
-                <select value={database.Type} onChange={event => setDatabase(previous => ({ ...previous, Type: event.target.value }))}>
+                <select value={database.Type} onChange={event => updateDatabaseType(event.target.value)}>
                   <option value="Sqlite">SQLite</option>
                   <option value="Postgresql">PostgreSQL</option>
                   <option value="Mysql">MySQL</option>
                   <option value="SqlServer">SQL Server</option>
                 </select>
               </Field>
-              <Field label="Filename"><input value={database.Filename || ''} onChange={event => setDatabase(previous => ({ ...previous, Filename: event.target.value }))} /></Field>
-              <Field label="Database Name"><input value={database.DatabaseName || ''} onChange={event => setDatabase(previous => ({ ...previous, DatabaseName: event.target.value }))} /></Field>
-              <Field label="Schema"><input value={database.Schema || ''} onChange={event => setDatabase(previous => ({ ...previous, Schema: event.target.value }))} /></Field>
-              <Field label="Allowed Queries"><input value={allowedQueries} onChange={event => setAllowedQueries(event.target.value)} /></Field>
+              {database.Type === 'Sqlite' ? (
+                <Field label="Filename"><input value={database.Filename || ''} onChange={event => setDatabase(previous => ({ ...previous, Filename: event.target.value }))} placeholder="./database.db" /></Field>
+              ) : (
+                <>
+                  <Field label="Hostname"><input value={database.Hostname || ''} onChange={event => setDatabase(previous => ({ ...previous, Hostname: event.target.value }))} placeholder="localhost" /></Field>
+                  <Field label="Port"><input type="number" value={database.Port ?? ''} onChange={event => setDatabase(previous => ({ ...previous, Port: parseOptionalPort(event.target.value) }))} /></Field>
+                  <Field label="User"><input value={database.User || ''} onChange={event => setDatabase(previous => ({ ...previous, User: event.target.value }))} /></Field>
+                  <Field label="Password"><input type="password" value={database.Password || ''} onChange={event => setDatabase(previous => ({ ...previous, Password: event.target.value }))} /></Field>
+                  <Field label="Database Name"><input value={database.DatabaseName || ''} onChange={event => setDatabase(previous => ({ ...previous, DatabaseName: event.target.value }))} /></Field>
+                  {database.Type !== 'Mysql' && (
+                    <Field label="Schema"><input value={database.Schema || ''} onChange={event => setDatabase(previous => ({ ...previous, Schema: event.target.value }))} placeholder={database.Type === 'SqlServer' ? 'dbo' : 'public'} /></Field>
+                  )}
+                </>
+              )}
+              {database.Type === 'Sqlite' && (
+                <>
+                  <Field label="Database Name"><input value={database.DatabaseName || ''} onChange={event => setDatabase(previous => ({ ...previous, DatabaseName: event.target.value }))} /></Field>
+                  <Field label="Schema"><input value={database.Schema || ''} onChange={event => setDatabase(previous => ({ ...previous, Schema: event.target.value }))} placeholder="main" /></Field>
+                </>
+              )}
+            </div>
+            <div className="form-group">
+              <label>Allowed Queries</label>
+              <div className="allowed-query-options">
+                {allowedQueryOptions.map(query => (
+                  <label key={query} className="checkbox-option">
+                    <input type="checkbox" checked={(database.AllowedQueries || []).includes(query)} onChange={() => toggleAllowedQuery(query)} />
+                    <span>{query}</span>
+                  </label>
+                ))}
+              </div>
             </div>
             <TestResult result={databaseTest} />
           </section>
@@ -370,7 +500,7 @@ export default function SetupWizard() {
         {step === 'crawl' && (
           <section className="setup-body">
             <h4>Crawl Database</h4>
-            <div className="crawl-event-log setup-log">
+            <div className="crawl-event-log setup-log" ref={crawlLogRef}>
               {crawlEvents.map((event, index) => <div key={`${event.Stage}-${index}`}>{event.Percent}% {event.Message}</div>)}
             </div>
           </section>
@@ -411,6 +541,7 @@ export default function SetupWizard() {
         {error && <p className="error-text">{error}</p>}
 
         <div className="modal-actions">
+          {step !== 'complete' && <button type="button" className="btn-secondary setup-skip-button" onClick={dismissSetup}>Skip setup</button>}
           {step === 'provider' && <button className="btn-secondary" onClick={testProvider} disabled={busy}>Test Provider</button>}
           {step === 'provider' && <button className="btn-primary" onClick={saveProviderAndContinue} disabled={busy}>Save and Continue</button>}
           {step === 'database' && <button className="btn-secondary" onClick={testDatabase} disabled={busy}>Test Database</button>}
@@ -435,6 +566,15 @@ function TestResult({ result }: { result: ProviderConnectivityTestResponse | Dat
   return <p className={result.Success ? 'muted-text' : 'error-text'}>{result.Message || result.Error}</p>;
 }
 
+function CloseIcon() {
+  return (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
 function parseSseData(frame: string) {
   const lines = frame.replace(/\r/g, '').split('\n');
   const data: string[] = [];
@@ -442,6 +582,34 @@ function parseSseData(frame: string) {
     if (line.startsWith('data:')) data.push(line.slice(5).trimStart());
   });
   return data.join('\n');
+}
+
+function parseOptionalPort(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function parseBoundedNumber(value: string, fallback: number, min: number, max: number) {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.min(Math.max(parsed, min), max);
+}
+
+function clampConcurrency(value: number) {
+  return Math.min(Math.max(value || 1, 1), 16);
+}
+
+async function readJsonResponse<T>(response: Response, fallback: string): Promise<T> {
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.toLowerCase().includes('application/json')) {
+    return await response.json();
+  }
+
+  const text = await response.text();
+  const stripped = text.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  const status = response.status > 0 ? `${response.status} ${response.statusText}`.trim() : 'request failed';
+  throw new Error(stripped ? `${fallback} ${status}: ${stripped}` : `${fallback} ${status}.`);
 }
 
 function createTableContextDrafts(detail: DatabaseDetail) {

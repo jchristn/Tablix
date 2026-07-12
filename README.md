@@ -470,7 +470,8 @@ Each provider includes an explicit `ApiKey` field stored in `tablix.db`. Provide
 | `Enabled` | Whether the provider is selectable |
 | `DefaultStreaming` | Whether chat should stream by default |
 | `Temperature`, `TopP`, `MaxTokens` | Optional generation controls |
-| `RequestTimeoutMs` | Provider request timeout |
+| `RequestTimeoutMs` | Per-provider-request timeout; batch operations make multiple provider requests |
+| `MaxConcurrentRequests` | Maximum parallel provider requests for batch operations such as table-context generation; clamped from 1 to 16 |
 | `SupportsNativeToolCalls` | Whether the provider/model is expected to support tool calls |
 | `UseNativeToolCalls` | Whether Tablix should attempt PolyPrompt native tool calls |
 | `SupportsStrictJson` | Whether the provider/model is expected to follow strict JSON planner output |
@@ -603,6 +604,7 @@ All endpoints except health checks require `Authorization: Bearer <api-key>`. Se
 | `GET` | `/v1/setup` | Yes | Read first-run setup state |
 | `PUT` | `/v1/setup` | Yes | Update first-run setup state |
 | `POST` | `/v1/setup/complete` | Yes | Mark setup complete |
+| `POST` | `/v1/setup/dismiss` | Yes | Dismiss setup without completing it |
 | `GET` | `/v1/model` | Yes | List model providers |
 | `GET` | `/v1/model/{id}` | Yes | Read a redacted model provider |
 | `POST` | `/v1/model` | Yes | Create a model provider |

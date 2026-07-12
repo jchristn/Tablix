@@ -67,13 +67,25 @@ namespace Tablix.Server.Handlers
             return state;
         }
 
+        /// <summary>
+        /// Dismiss setup without marking it complete.
+        /// </summary>
+        /// <param name="req">REST request.</param>
+        /// <returns>Updated setup state.</returns>
+        public async Task<object> DismissSetupAsync(AppRequest req)
+        {
+            SetupStateRead state = await _Persistence.SetupState.DismissAsync(req.CancellationToken).ConfigureAwait(false);
+            await EnrichStateAsync(state, req).ConfigureAwait(false);
+            return state;
+        }
+
         private async Task EnrichStateAsync(SetupStateRead state, AppRequest req)
         {
             if (state == null) return;
 
             long enabledProviders = await _Persistence.ModelProviders.CountAsync(null, true, req.CancellationToken).ConfigureAwait(false);
             long databases = await _Persistence.DatabaseConnections.CountAsync(null, req.CancellationToken).ConfigureAwait(false);
-            state.ShouldShowWizard = state.Status != SetupWizardStatusEnum.Complete || enabledProviders == 0 || databases == 0;
+            state.ShouldShowWizard = !state.DismissedUtc.HasValue && (state.Status != SetupWizardStatusEnum.Complete || enabledProviders == 0 || databases == 0);
         }
     }
 }

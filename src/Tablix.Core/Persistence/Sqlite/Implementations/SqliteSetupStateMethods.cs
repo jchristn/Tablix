@@ -31,14 +31,10 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         /// <returns>Setup state.</returns>
         public async Task<SetupStateRead> ReadAsync(CancellationToken token = default)
         {
-            using SqliteConnection connection = await _Driver.OpenConnectionAsync(token).ConfigureAwait(false);
-            using SqliteCommand command = connection.CreateCommand();
-            command.CommandText = "SELECT * FROM setup_state WHERE id = 'default'";
-            using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            if (await reader.ReadAsync(token).ConfigureAwait(false))
-                return ReadState(reader);
-
-            return new SetupStateRead();
+            return await _Driver.ExecuteReadAsync(async connection =>
+            {
+                return await ReadStateAsync(connection, token).ConfigureAwait(false);
+            }, token).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -51,6 +47,7 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
 
+            SetupStateRead updated = null;
             await _Driver.ExecuteWriteAsync(async connection =>
             {
                 using SqliteCommand command = connection.CreateCommand();
@@ -62,9 +59,10 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
                 command.Parameters.AddWithValue("$completed_utc", request.Status == SetupWizardStatusEnum.Complete ? (object)SqliteDatabaseDriver.ToStorageDate(DateTime.UtcNow) : DBNull.Value);
                 command.Parameters.AddWithValue("$updated_utc", SqliteDatabaseDriver.ToStorageDate(DateTime.UtcNow));
                 await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                updated = await ReadStateAsync(connection, token).ConfigureAwait(false);
             }, token).ConfigureAwait(false);
 
-            return await ReadAsync(token).ConfigureAwait(false);
+            return updated;
         }
 
         /// <summary>
@@ -74,21 +72,67 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         /// <returns>Updated setup state.</returns>
         public async Task<SetupStateRead> CompleteAsync(CancellationToken token = default)
         {
-            SetupStateRead existing = await ReadAsync(token).ConfigureAwait(false);
-            SetupStateUpdateRequest request = new SetupStateUpdateRequest
+            SetupStateRead updated = null;
+            await _Driver.ExecuteWriteAsync(async connection =>
             {
-                Status = SetupWizardStatusEnum.Complete,
-                CurrentStep = "complete",
-                SelectedProviderId = existing.SelectedProviderId,
-                SelectedDatabaseId = existing.SelectedDatabaseId
-            };
+                SetupStateRead existing = await ReadStateAsync(connection, token).ConfigureAwait(false);
 
-            return await UpdateAsync(request, token).ConfigureAwait(false);
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = "INSERT INTO setup_state (id, status, current_step, selected_provider_id, selected_database_id, completed_utc, dismissed_utc, updated_utc) VALUES ('default', 'Complete', 'complete', $selected_provider_id, $selected_database_id, $completed_utc, NULL, $updated_utc) ON CONFLICT(id) DO UPDATE SET status = excluded.status, current_step = excluded.current_step, selected_provider_id = excluded.selected_provider_id, selected_database_id = excluded.selected_database_id, completed_utc = excluded.completed_utc, updated_utc = excluded.updated_utc";
+                command.Parameters.AddWithValue("$selected_provider_id", (object)existing.SelectedProviderId ?? DBNull.Value);
+                command.Parameters.AddWithValue("$selected_database_id", (object)existing.SelectedDatabaseId ?? DBNull.Value);
+                command.Parameters.AddWithValue("$completed_utc", SqliteDatabaseDriver.ToStorageDate(DateTime.UtcNow));
+                command.Parameters.AddWithValue("$updated_utc", SqliteDatabaseDriver.ToStorageDate(DateTime.UtcNow));
+                await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                updated = await ReadStateAsync(connection, token).ConfigureAwait(false);
+            }, token).ConfigureAwait(false);
+
+            return updated;
+        }
+
+        /// <summary>
+        /// Dismiss setup without marking it complete.
+        /// </summary>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>Updated setup state.</returns>
+        public async Task<SetupStateRead> DismissAsync(CancellationToken token = default)
+        {
+            SetupStateRead updated = null;
+            await _Driver.ExecuteWriteAsync(async connection =>
+            {
+                SetupStateRead existing = await ReadStateAsync(connection, token).ConfigureAwait(false);
+
+                using SqliteCommand command = connection.CreateCommand();
+                command.CommandText = "INSERT INTO setup_state (id, status, current_step, selected_provider_id, selected_database_id, completed_utc, dismissed_utc, updated_utc) VALUES ('default', $status, $current_step, $selected_provider_id, $selected_database_id, $completed_utc, $dismissed_utc, $updated_utc) ON CONFLICT(id) DO UPDATE SET dismissed_utc = excluded.dismissed_utc, updated_utc = excluded.updated_utc";
+                command.Parameters.AddWithValue("$status", existing.Status.ToString());
+                command.Parameters.AddWithValue("$current_step", (object)existing.CurrentStep ?? DBNull.Value);
+                command.Parameters.AddWithValue("$selected_provider_id", (object)existing.SelectedProviderId ?? DBNull.Value);
+                command.Parameters.AddWithValue("$selected_database_id", (object)existing.SelectedDatabaseId ?? DBNull.Value);
+                command.Parameters.AddWithValue("$completed_utc", existing.CompletedUtc.HasValue ? (object)SqliteDatabaseDriver.ToStorageDate(existing.CompletedUtc.Value) : DBNull.Value);
+                command.Parameters.AddWithValue("$dismissed_utc", SqliteDatabaseDriver.ToStorageDate(DateTime.UtcNow));
+                command.Parameters.AddWithValue("$updated_utc", SqliteDatabaseDriver.ToStorageDate(DateTime.UtcNow));
+                await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                updated = await ReadStateAsync(connection, token).ConfigureAwait(false);
+            }, token).ConfigureAwait(false);
+
+            return updated;
+        }
+
+        private static async Task<SetupStateRead> ReadStateAsync(SqliteConnection connection, CancellationToken token)
+        {
+            using SqliteCommand command = connection.CreateCommand();
+            command.CommandText = "SELECT * FROM setup_state WHERE id = 'default'";
+            using SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            if (await reader.ReadAsync(token).ConfigureAwait(false))
+                return ReadState(reader);
+
+            return new SetupStateRead();
         }
 
         private static SetupStateRead ReadState(SqliteDataReader reader)
         {
             SetupWizardStatusEnum status = Enum.Parse<SetupWizardStatusEnum>(Convert.ToString(reader["status"]));
+            DateTime? dismissedUtc = reader["dismissed_utc"] == DBNull.Value ? (DateTime?)null : SqliteDatabaseDriver.FromStorageDate(Convert.ToString(reader["dismissed_utc"]));
             return new SetupStateRead
             {
                 Id = Convert.ToString(reader["id"]),
@@ -97,8 +141,9 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
                 SelectedProviderId = reader["selected_provider_id"] == DBNull.Value ? null : Convert.ToString(reader["selected_provider_id"]),
                 SelectedDatabaseId = reader["selected_database_id"] == DBNull.Value ? null : Convert.ToString(reader["selected_database_id"]),
                 CompletedUtc = reader["completed_utc"] == DBNull.Value ? (DateTime?)null : SqliteDatabaseDriver.FromStorageDate(Convert.ToString(reader["completed_utc"])),
+                DismissedUtc = dismissedUtc,
                 UpdatedUtc = SqliteDatabaseDriver.FromStorageDate(Convert.ToString(reader["updated_utc"])),
-                ShouldShowWizard = status != SetupWizardStatusEnum.Complete
+                ShouldShowWizard = status != SetupWizardStatusEnum.Complete && !dismissedUtc.HasValue
             };
         }
     }

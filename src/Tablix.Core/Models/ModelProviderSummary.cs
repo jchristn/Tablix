@@ -70,6 +70,11 @@ namespace Tablix.Core.Models
         /// </summary>
         public string ToolCapabilityNote { get; set; } = null;
 
+        /// <summary>
+        /// Maximum concurrent provider requests for batch operations.
+        /// </summary>
+        public int MaxConcurrentRequests { get; set; } = 1;
+
         #endregion
 
         #region Constructors-and-Factories
@@ -103,7 +108,8 @@ namespace Tablix.Core.Models
                 SupportsNativeToolCalls = provider.SupportsNativeToolCalls,
                 UseNativeToolCalls = provider.UseNativeToolCalls,
                 SupportsStrictJson = provider.SupportsStrictJson,
-                ToolCapabilityNote = provider.ToolCapabilityNote
+                ToolCapabilityNote = provider.ToolCapabilityNote,
+                MaxConcurrentRequests = provider.MaxConcurrentRequests
             };
         }
 

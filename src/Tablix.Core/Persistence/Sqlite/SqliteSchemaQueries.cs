@@ -45,6 +45,15 @@ namespace Tablix.Core.Persistence.Sqlite
                         "CREATE TABLE IF NOT EXISTS context_history (id TEXT PRIMARY KEY, context_record_id TEXT NOT NULL, previous_context TEXT NULL, new_context TEXT NOT NULL, source TEXT NOT NULL, provider_id TEXT NULL, prompt TEXT NULL, created_utc TEXT NOT NULL, FOREIGN KEY (context_record_id) REFERENCES context_records(id) ON DELETE CASCADE)",
                         "CREATE TABLE IF NOT EXISTS setup_state (id TEXT PRIMARY KEY, status TEXT NOT NULL, current_step TEXT NULL, selected_provider_id TEXT NULL, selected_database_id TEXT NULL, completed_utc TEXT NULL, dismissed_utc TEXT NULL, updated_utc TEXT NOT NULL)"
                     }
+                },
+                new SchemaMigration
+                {
+                    Version = 2,
+                    Description = "Add model provider concurrency limit",
+                    Statements = new List<string>
+                    {
+                        "ALTER TABLE model_providers ADD COLUMN max_concurrent_requests INTEGER NOT NULL DEFAULT 1"
+                    }
                 }
             };
         }
