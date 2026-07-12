@@ -149,11 +149,11 @@ textarea {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
-  max-width: 1200px;
+  max-width: min(1640px, 100%);
   margin: 0 auto;
-  padding: 20px;
+  padding: 20px 28px;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
 }
 
 .app-main-chat {
@@ -296,8 +296,8 @@ tr:hover {
 
 .floating-action-menu {
   position: fixed;
-  z-index: 500;
-  width: 176px;
+  z-index: 950;
+  width: 190px;
   display: grid;
   gap: 2px;
   background-color: var(--bg-primary);
@@ -305,6 +305,23 @@ tr:hover {
   border-radius: var(--radius);
   box-shadow: var(--shadow-lg);
   padding: 6px;
+}
+
+.language-select {
+  width: 58px;
+  height: 32px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  background-color: var(--bg-tertiary);
+}
+
+.wide-table {
+  min-width: 1040px;
+}
+
+.actions-column {
+  width: 64px;
 }
 
 .floating-action-menu button {

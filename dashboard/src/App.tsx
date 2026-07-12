@@ -8,10 +8,12 @@ import QueryPage from './pages/QueryPage';
 import ChatPage from './pages/ChatPage';
 import ModelsPage from './pages/ModelsPage';
 import SettingsPage from './pages/SettingsPage';
+import LocalizedTooltipManager from './components/LocalizedTooltipManager';
 
 export default function App() {
   return (
     <BrowserRouter>
+      <LocalizedTooltipManager />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route element={<Layout />}>

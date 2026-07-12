@@ -16,13 +16,15 @@ Tablix is a database discovery and query platform that connects your databases t
 
 ## What's New in v0.2.0
 
-v0.2.0 focuses on making Tablix reliable for larger databases and easier to validate in automation:
+v0.2.0 turns Tablix into a more complete database-agent workspace: product state lives in SQLite, large schemas are discoverable in pages, durable context can be managed at database and table scope, and the dashboard can take a user from first login to database chat.
 
 - **Large-schema-safe discovery:** agents can page through compact table and relationship indexes before requesting full table geometry.
-- **Database context persistence:** agents can update the saved `Context` for a database after explicit user direction and schema analysis.
-- **Relationship-aware workflows:** declared foreign keys are exposed as compact relationship edges for faster join planning.
-- **Dashboard Chat and Settings:** users can chat with a selected database through configured PolyPrompt providers and edit server settings from structured forms.
-- **Dashboard productivity controls:** crawl progress streams table-level status, database context can be built/copied from the UI, query results can be copied as JSON or downloaded as CSV, and the login page shows the configured server URL.
+- **SQLite-backed product state:** model providers, configured databases, crawl metadata, database context, table context, and setup wizard state are persisted in `tablix.db`; `tablix.json` is now bootstrap/server configuration.
+- **Database and table context:** REST, MCP, and dashboard workflows can read, generate, edit, and persist durable context without returning secrets or raw data.
+- **Guided first-run setup:** the setup wizard walks through model provider validation, database validation, crawl, database context, and table context generation.
+- **Database chat:** the Chat page uses PolyPrompt providers, markdown rendering, native tool calls when supported, server-side fallback execution, inline tool-call displays, and per-message telemetry.
+- **Provider throughput controls:** `RequestTimeoutMs` applies to one provider request, while `MaxConcurrentRequests` caps parallel provider calls for batch operations such as table-context generation.
+- **Dashboard productivity controls:** crawl progress streams table-level status, table-context generation updates rows as individual tables complete, query results can be copied as JSON or downloaded as CSV, and the login page shows the configured server URL.
 - **Touchstone test infrastructure:** shared tests now run through the CLI, xUnit, and NUnit from one source of truth.
 
 ## What Is Tablix?
@@ -89,7 +91,7 @@ The `docker/compose.yaml` starts two containers:
 - **tablix-server** (`jchristn77/tablix-server`) - the REST API and MCP server. Ports 9100 (REST) and 9102 (MCP) are exposed. The bootstrap `tablix.json`, product-state `tablix.db`, sample `database.db`, and `logs/` directory are bind-mounted from the `docker/` directory so data persists across restarts.
 - **tablix-ui** (`jchristn77/tablix-ui`) - the dashboard, served via nginx on port 9101. It proxies API calls to the server using the `TABLIX_SERVER_URL` environment variable and shows that configured URL on the login page.
 
-Both containers include healthchecks that run every 10 seconds with a 2 second timeout. The healthcheck scripts require two consecutive successful heartbeats before reporting healthy and terminate the container after two consecutive failed heartbeats so Docker's restart policy can restart it. The UI depends on a healthy backend and applies a 15 second startup delay through `TABLIX_UI_STARTUP_DELAY_SECONDS`.
+Both containers include healthchecks that run every 5 seconds with a 2 second timeout. The healthcheck scripts require two consecutive successful heartbeats before reporting healthy and terminate the container after two consecutive failed heartbeats so Docker's restart policy can restart it. The UI depends on a healthy backend and applies a 15 second startup delay through `TABLIX_UI_STARTUP_DELAY_SECONDS`.
 
 #### Running Individual Containers
 
@@ -144,7 +146,7 @@ dotnet run --project Tablix.Server
 
 The server creates a default `tablix.json` on first run for bootstrap settings and initializes `tablix.db` with default model providers, a sample SQLite database connection, setup state, and persistence schema. Swagger UI is available at http://localhost:9100/swagger.
 
-The dashboard includes Databases, Query, Chat, Models, and Settings pages plus a first-run setup wizard. The database detail view shows saved database context from database-scope `context_records` in `tablix.db`, supports inline context edits through `POST /v1/database/{id}/context`, displays table-level context editors, can generate table context through `POST /v1/database/{id}/table-context/{tableId}/build`, and uses `POST /v1/database/{id}/crawl/stream` to show schema crawl progress in real time with per-table status. The Models page manages model providers and connectivity tests. The Databases page exposes row actions from an overflow menu, including Build Context and Delete. Build Context lets a user edit model instructions, generate context from the last successful crawl through a configured provider, and persist the result to SQLite. The Query page can copy result JSON or download result rows as CSV. The Chat page selects a database and provider, supports streaming and non-streaming responses, renders markdown, can execute permitted queries through PolyPrompt native tool calls or server-side fallback planning, displays inline tool calls, shows the execution path, and exposes per-message telemetry. The Settings page edits form-based bootstrap/server settings, prompt-processing settings, and chat-tool settings, and annotates values that are saved immediately but require server restart to affect active listeners, logging, or persistence filename/type.
+The dashboard includes Databases, Query, Chat, Models, and Settings pages plus a first-run setup wizard. The database detail view shows saved database context from database-scope `context_records` in `tablix.db`, supports inline context edits through `POST /v1/database/{id}/context`, displays table-level context editors, can generate one table context through `POST /v1/database/{id}/table-context/{tableId}/build`, and uses `POST /v1/database/{id}/crawl/stream` to show schema crawl progress in real time with per-table status. The setup wizard generates table context with one request per table, up to the selected provider's `MaxConcurrentRequests`, and fills each table's context editor as soon as that table completes. The Models page manages model providers and connectivity tests. The Databases page exposes row actions from an overflow menu, including Build Context and Delete. Build Context lets a user edit model instructions, generate context from the last successful crawl through a configured provider, and persist the result to SQLite. The Query page can copy result JSON or download result rows as CSV. The Chat page selects a database and provider, supports streaming and non-streaming responses, renders markdown, can execute permitted queries through PolyPrompt native tool calls or server-side fallback planning, displays inline tool calls, shows the execution path, and exposes per-message telemetry. The Settings page edits form-based bootstrap/server settings, prompt-processing settings, and chat-tool settings, and annotates values that are saved immediately but require server restart to affect active listeners, logging, or persistence filename/type.
 
 ### Running Dashboard Locally
 
@@ -439,7 +441,7 @@ Model providers are managed through the dashboard **Models** page or `/v1/model`
 
 The `Chat` section is the configuration surface for the dashboard chat experience and prompt-processing behavior. Provider records are stored in `tablix.db`; the seeded Docker database includes provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini. Only the local Ollama provider is enabled by default; cloud providers are disabled until an endpoint, model, and API key are supplied.
 
-Tablix uses PolyPrompt `1.5.0` for provider-normalized tool chat. When `Chat.PromptProcessing.PreferNativeToolCalls` is enabled and the selected persisted provider has native tool calls enabled, Tablix sends a `tablix_execute_query` tool definition to the model. Tablix still owns query validation, execution, `AllowedQueries` enforcement, schema-refresh retry, telemetry, and secret redaction. If native tools are unavailable or the model does not call a tool for a clear data request, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` lets Tablix use server-side planning to generate and execute a permitted query.
+Tablix uses PolyPrompt `1.5.0` for provider-normalized tool chat. When `Chat.PromptProcessing.PreferNativeToolCalls` is enabled and the selected persisted provider has native tool calls enabled, Tablix sends a `tablix_execute_query` tool definition to the model. New providers default `UseNativeToolCalls` to `true` whenever `SupportsNativeToolCalls` is `true`; turn it off only for a specific model endpoint that fails tool-call validation. Tablix still owns query validation, execution, `AllowedQueries` enforcement, schema-refresh retry, telemetry, and secret redaction. If native tools are unavailable or the model does not call a tool for a clear data request, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` lets Tablix use server-side planning to generate and execute a permitted query.
 
 The default `Chat.SystemPrompt` instructs the model to restrict conversation to the selected database, its structure, its contents, and their relationships. It tells the model to use database context for database-wide guidance, table context for table-specific guidance, and schema discovery as the source of truth for table names, column names, keys, indexes, and data types. It also instructs the model to execute an allowed query with the available Tablix query tool when the user asks for data that can be answered from the database, rather than merely returning SQL for the user to run. If query execution reports a bad or unknown column, missing column, or column type mismatch, the prompt tells the model to refresh schema by crawling or re-discovering relevant tables, then update database or table context when refreshed schema proves saved context stale. Keep those boundaries in custom prompts unless you intentionally want different behavior.
 
@@ -459,6 +461,8 @@ The default `Chat.SystemPrompt` instructs the model to restrict conversation to 
 
 Each provider includes an explicit `ApiKey` field stored in `tablix.db`. Providers that do not require authentication, such as a typical local Ollama instance, should leave it empty. Providers that do require authentication, such as OpenAI, Gemini, and many OpenAI-compatible services, should store their token through the Models page or Models REST API.
 
+Each provider can also define a provider-specific system prompt. When `SystemPrompt` is set on a provider, it replaces the global `Chat.SystemPrompt` for chat and model-assisted context generation that use that provider. Keep the selected-database restriction, query execution guidance, schema-refresh behavior, and no-secrets rules in provider overrides unless you intentionally need a narrower policy for that model endpoint.
+
 | Field | Description |
 |-------|-------------|
 | `Id` | Stable provider ID referenced by `Chat.DefaultProviderId` |
@@ -469,13 +473,15 @@ Each provider includes an explicit `ApiKey` field stored in `tablix.db`. Provide
 | `Model` | Default model name |
 | `Enabled` | Whether the provider is selectable |
 | `DefaultStreaming` | Whether chat should stream by default |
+| `SystemPrompt` | Optional provider-specific system prompt override; when set, it replaces `Chat.SystemPrompt` for that provider |
 | `Temperature`, `TopP`, `MaxTokens` | Optional generation controls |
 | `RequestTimeoutMs` | Per-provider-request timeout; batch operations make multiple provider requests |
 | `MaxConcurrentRequests` | Maximum parallel provider requests for batch operations such as table-context generation; clamped from 1 to 16 |
 | `SupportsNativeToolCalls` | Whether the provider/model is expected to support tool calls |
-| `UseNativeToolCalls` | Whether Tablix should attempt PolyPrompt native tool calls |
+| `UseNativeToolCalls` | Whether Tablix should attempt PolyPrompt native tool calls; defaults on when native tools are supported |
 | `SupportsStrictJson` | Whether the provider/model is expected to follow strict JSON planner output |
-| `ToolCapabilityNote` | Human-readable note shown in Settings and Chat |
+
+`RequestTimeoutMs` is evaluated per provider call. It is not the timeout for an entire multi-table context build. Dashboard setup and table-context generation issue individual table requests and run no more than `MaxConcurrentRequests` in parallel. For local Ollama or a single-GPU endpoint, start with `MaxConcurrentRequests = 1`; raise it only after the model server proves it can handle concurrent generations.
 
 Provider API keys are secret-bearing settings. Treat provider API keys the same way as database passwords: protect `tablix.db`, prefer environment-specific provisioning where possible, and never paste secrets into shared examples or issue reports.
 
@@ -625,8 +631,8 @@ All endpoints except health checks require `Authorization: Bearer <api-key>`. Se
 | `GET` | `/v1/database/{id}/table-context` | Yes | List table context records |
 | `GET` | `/v1/database/{id}/table-context/{tableId}` | Yes | Read table context |
 | `PUT` | `/v1/database/{id}/table-context/{tableId}` | Yes | Update table context |
-| `POST` | `/v1/database/{id}/table-context/build` | Yes | Generate and persist table context records |
-| `POST` | `/v1/database/{id}/table-context/{tableId}/build` | Yes | Generate and persist one table context record |
+| `POST` | `/v1/database/{id}/table-context/build` | Yes | Generate and persist table context records through the REST batch endpoint |
+| `POST` | `/v1/database/{id}/table-context/{tableId}/build` | Yes | Generate and persist one table context record; used by the dashboard for bounded per-table generation |
 | `DELETE` | `/v1/database/{id}` | Yes | Delete a database entry |
 | `POST` | `/v1/database/{id}/crawl` | Yes | Re-crawl database schema |
 | `POST` | `/v1/database/{id}/crawl/stream` | Yes | Re-crawl database schema with SSE progress |

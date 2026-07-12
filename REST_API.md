@@ -406,9 +406,9 @@ Read one redacted provider.
   "Enabled": true,
   "DefaultStreaming": true,
   "SupportsNativeToolCalls": true,
-  "UseNativeToolCalls": false,
+  "UseNativeToolCalls": true,
   "SupportsStrictJson": false,
-  "ToolCapabilityNote": "Enable native tools after validating this provider/model emits tool calls reliably.",
+  "ToolCapabilityNote": null,
   "Temperature": 0.2,
   "TopP": null,
   "MaxTokens": 4096,
@@ -436,9 +436,9 @@ Create a provider.
   "Enabled": true,
   "DefaultStreaming": true,
   "SupportsNativeToolCalls": true,
-  "UseNativeToolCalls": false,
+  "UseNativeToolCalls": true,
   "SupportsStrictJson": false,
-  "ToolCapabilityNote": "Enable native tools after validating this provider/model emits tool calls reliably.",
+  "ToolCapabilityNote": null,
   "Temperature": 0.2,
   "TopP": null,
   "MaxTokens": 4096,
@@ -451,7 +451,7 @@ Create a provider.
 
 ### `PUT /v1/model/{id}`
 
-Update a provider. Leave `ApiKey` empty/null to preserve the current key. Set `ClearApiKey` to `true` to remove the saved key.
+Update a provider. Leave `ApiKey` empty/null to preserve the current key. Set `ClearApiKey` to `true` to remove the saved key. `SystemPrompt` is an optional provider-specific prompt override; when set, chat requests using that provider use it instead of the global `Chat.SystemPrompt`. If `SupportsNativeToolCalls` is true, dashboard create/edit flows default `UseNativeToolCalls` to true so capable providers execute through PolyPrompt native tools unless explicitly disabled.
 
 `RequestTimeoutMs` is applied per provider request. Batch operations such as table-context generation may issue multiple provider requests and are bounded by `MaxConcurrentRequests` so the model endpoint is not overwhelmed. `MaxConcurrentRequests` is clamped from `1` to `16`; use `1` for local/single-GPU endpoints unless the model server is known to handle parallel requests.
 
@@ -1238,7 +1238,7 @@ Execute a SQL query against a database.
 
 Chat endpoints use the selected database's saved database/table context, allowed query policy, crawl state, table geometry, and declared foreign keys to build a database-aware model prompt. The default `Chat.SystemPrompt` restricts model conversation to the selected database, its structure, its contents, and their relationships. It tells the model to use database context for database-wide guidance, table context for table-specific guidance, and schema discovery as the source of truth for table names, column names, keys, indexes, and data types. It also tells the model to execute an allowed query through the available Tablix query tool when the user asks for data that can be answered from the database, rather than merely returning SQL for the user to run. If query execution reports a bad or unknown column, missing column, or column type mismatch, the prompt tells the model to refresh schema by crawling or discovering relevant tables, then update database or table context when refreshed schema proves saved context stale. Providers are stored in `tablix.db` and executed through PolyPrompt.
 
-Tablix uses PolyPrompt `1.5.0` native tool chat when `Chat.PromptProcessing.PreferNativeToolCalls` and the selected persisted provider's native tool settings are enabled. Tablix defines `tablix_execute_query`, receives model-requested tool calls, validates the selected database and query, executes through the same validator/crawler path used by `POST /v1/database/{id}/query`, appends the tool result, and asks the model for a final answer. If native tool calls are unavailable or the model does not request a tool for a clear data request, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` allows Tablix to use server-side planning and the same execution service. Tool calls are returned in JSON responses and streamed as SSE events.
+Tablix uses PolyPrompt `1.5.0` native tool chat when `Chat.PromptProcessing.PreferNativeToolCalls` and the selected persisted provider's native tool settings are enabled. Tablix defines `tablix_execute_query`, receives model-requested tool calls, validates the selected database and query, executes through the same validator/crawler path used by `POST /v1/database/{id}/query`, appends the tool result, and asks the model for a final answer. If native tool calls are unavailable or the model does not request a tool for a clear data request, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` allows Tablix to use server-side planning and the same execution service. Tool calls are returned in JSON responses and streamed as SSE events. For `/v1/chat/stream`, plain responses and final post-tool summaries are emitted as token chunks from PolyPrompt streaming APIs instead of one full completed message.
 
 ### `GET /v1/chat/options`
 
@@ -1342,6 +1342,12 @@ data: {"EventType":"tool_started","ToolCall":{"Id":"9f4c2a9c8c474a2eaf35f38db88c
 
 event: tool_completed
 data: {"EventType":"tool_completed","ToolCall":{"Id":"9f4c2a9c8c474a2eaf35f38db88c1310","Name":"tablix_execute_query","Success":true,"TotalMs":12.4,"Result":"{\"Success\":true,\"RowsReturned\":1,\"Data\":{\"Rows\":[{\"total_users\":5}]}}"},"Done":false}
+
+event: token
+data: {"EventType":"token","Delta":"There are ","Done":false}
+
+event: token
+data: {"EventType":"token","Delta":"5 users.","Done":false}
 
 event: completed
 data: {"EventType":"completed","Message":"There are 5 users.","Telemetry":{"TimeToFirstTokenMs":120,"TotalStreamingTimeMs":1800,"InputTokens":512,"OutputTokens":96,"TotalTokens":608,"EstimatedTokens":false},"Done":true}

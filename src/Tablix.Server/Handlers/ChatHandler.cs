@@ -304,7 +304,7 @@ namespace Tablix.Server.Handlers
             }, false).ConfigureAwait(false);
 
             using CompletionClientBase client = CreateClient(preparation.Provider);
-            ChatExecutionResult execution = await ExecuteChatResponseAsync(
+            ChatExecutionResult execution = await ExecuteChatResponseStreamingAsync(
                 client,
                 preparation,
                 request,
@@ -325,20 +325,6 @@ namespace Tablix.Server.Handlers
                     CapabilityNotice = execution.CapabilityNotice
                 }, true).ConfigureAwait(false);
                 return null;
-            }
-
-            if (!String.IsNullOrEmpty(execution.Message))
-            {
-                await SendChatEventAsync(req, new ChatStreamEvent
-                {
-                    EventType = "token",
-                    DatabaseId = preparation.Database.Id,
-                    ProviderId = preparation.Provider.Id,
-                    Model = execution.Model,
-                    Delta = execution.Message,
-                    ExecutionPath = execution.ExecutionPath,
-                    CapabilityNotice = execution.CapabilityNotice
-                }, false).ConfigureAwait(false);
             }
 
             await SendChatEventAsync(req, new ChatStreamEvent
@@ -892,6 +878,42 @@ namespace Tablix.Server.Handlers
             return await ExecutePlainChatAsync(client, preparation, "plain", policy.CapabilityNotice, token).ConfigureAwait(false);
         }
 
+        private async Task<ChatExecutionResult> ExecuteChatResponseStreamingAsync(
+            CompletionClientBase client,
+            ChatPreparation preparation,
+            ChatRequest request,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            ChatExecutionPolicy policy = BuildExecutionPolicy(preparation, request);
+            if (!policy.ToolsEnabled)
+            {
+                return await ExecutePlainChatStreamingAsync(client, preparation, "execution_disabled", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
+            }
+
+            if (policy.UseNativeTools)
+            {
+                ChatExecutionResult nativeResult = await ExecuteNativeToolChatStreamingAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
+                if (nativeResult.Success && nativeResult.ToolCalls.Count > 0)
+                    return nativeResult;
+
+                if (!nativeResult.Success && !policy.FallbackEnabled)
+                    return nativeResult;
+
+                if (!policy.UserAskedForData || policy.UserAskedOnlyForSql || !policy.FallbackEnabled)
+                    return nativeResult.Success ? nativeResult : await ExecutePlainChatStreamingAsync(client, preparation, "native_failed_plain", nativeResult.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
+
+                ChatExecutionResult fallbackResult = await ExecuteFallbackPlanningStreamingAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
+                fallbackResult.CapabilityNotice = "The model did not request a native tool for this data question. Tablix used server-side fallback execution.";
+                return fallbackResult;
+            }
+
+            if (policy.UserAskedForData && !policy.UserAskedOnlyForSql && policy.FallbackEnabled)
+                return await ExecuteFallbackPlanningStreamingAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
+
+            return await ExecutePlainChatStreamingAsync(client, preparation, "plain", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
+        }
+
         private async Task<ChatExecutionResult> ExecuteNativeToolChatAsync(
             CompletionClientBase client,
             ChatPreparation preparation,
@@ -1003,6 +1025,92 @@ namespace Tablix.Server.Handlers
             };
         }
 
+        private async Task<ChatExecutionResult> ExecuteNativeToolChatStreamingAsync(
+            CompletionClientBase client,
+            ChatPreparation preparation,
+            ChatExecutionPolicy policy,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            List<PromptChatMessage> messages = BuildPromptMessages(preparation);
+            List<ChatToolCall> executedTools = new List<ChatToolCall>();
+            ToolChatResponse response = null;
+
+            for (int iteration = 0; iteration < policy.MaxNativeToolIterations; iteration++)
+            {
+                ToolChatRequest toolRequest = new ToolChatRequest
+                {
+                    Model = preparation.Provider.Model,
+                    Messages = messages,
+                    Tools = TablixChatToolDefinitions.Build(),
+                    ToolChoice = "auto",
+                    Temperature = preparation.Provider.Temperature,
+                    TopP = preparation.Provider.TopP,
+                    MaxTokens = preparation.Provider.MaxTokens
+                };
+
+                response = await client.ToolChatAsync(toolRequest, token).ConfigureAwait(false);
+                if (!response.Success)
+                {
+                    stopwatch.Stop();
+                    return new ChatExecutionResult
+                    {
+                        Success = false,
+                        Error = response.Error,
+                        Model = response.Model ?? preparation.Provider.Model,
+                        ExecutionPath = "native_tool_call_failed",
+                        CapabilityNotice = policy.CapabilityNotice,
+                        ToolCalls = executedTools
+                    };
+                }
+
+                if (response.ToolCalls == null || response.ToolCalls.Count == 0)
+                    break;
+
+                messages.Add(response.ToAssistantMessage());
+
+                foreach (PromptToolCall toolCall in response.ToolCalls)
+                {
+                    ChatToolCall executed = await ExecutePromptToolCallAsync(preparation, toolCall, "native", token, sendEventAsync).ConfigureAwait(false);
+                    executedTools.Add(executed);
+                    string toolResultContent = BuildToolResultContent(executed);
+                    messages.Add(PromptChatMessage.ToolResult(toolCall.Id, toolCall.Name, toolResultContent));
+                }
+            }
+
+            stopwatch.Stop();
+
+            if (response == null)
+            {
+                return new ChatExecutionResult
+                {
+                    Success = false,
+                    Error = "Provider returned no response.",
+                    Model = preparation.Provider.Model,
+                    ExecutionPath = "native_no_response",
+                    CapabilityNotice = policy.CapabilityNotice,
+                    ToolCalls = executedTools
+                };
+            }
+
+            if (executedTools.Count == 0)
+                return await ExecutePlainChatStreamingAsync(client, preparation, "native_no_tool_call", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
+
+            string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, executedTools);
+            ChatExecutionResult finalResult = await ExecutePromptStreamingAsync(
+                client,
+                preparation,
+                followupPrompt,
+                "native_tool_calls",
+                policy.CapabilityNotice,
+                executedTools,
+                token,
+                sendEventAsync).ConfigureAwait(false);
+
+            return finalResult;
+        }
+
         private async Task<ChatExecutionResult> ExecuteFallbackPlanningAsync(
             CompletionClientBase client,
             ChatPreparation preparation,
@@ -1068,6 +1176,60 @@ namespace Tablix.Server.Handlers
             };
         }
 
+        private async Task<ChatExecutionResult> ExecuteFallbackPlanningStreamingAsync(
+            CompletionClientBase client,
+            ChatPreparation preparation,
+            ChatExecutionPolicy policy,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            ChatCompletionOptions plannerOptions = CreateOptions(preparation.Provider, BuildFallbackPlannerSystemPrompt(preparation));
+            plannerOptions.Temperature = preparation.Settings.Chat.PromptProcessing.PlannerTemperature;
+            string plannerPrompt = BuildFallbackPlannerPrompt(preparation);
+            ChatResponse planResponse = null;
+            FallbackQueryPlan plan = null;
+
+            for (int attempt = 0; attempt < policy.MaxPlanningAttempts; attempt++)
+            {
+                planResponse = await client.ChatAsync(plannerPrompt, plannerOptions, token).ConfigureAwait(false);
+                if (!planResponse.Success)
+                    break;
+
+                plan = ParseFallbackPlan(planResponse.Text);
+                if (plan != null && plan.Execute && !String.IsNullOrWhiteSpace(plan.Query))
+                    break;
+
+                plannerPrompt = plannerPrompt + Environment.NewLine + "Return only valid JSON matching {\"Execute\":true,\"Query\":\"...\",\"Reason\":\"...\"}.";
+            }
+
+            if (planResponse == null || !planResponse.Success)
+            {
+                return new ChatExecutionResult
+                {
+                    Success = false,
+                    Error = planResponse == null ? "Fallback planner returned no response." : planResponse.Error,
+                    Model = preparation.Provider.Model,
+                    ExecutionPath = "fallback_planner_failed",
+                    CapabilityNotice = policy.CapabilityNotice
+                };
+            }
+
+            if (plan == null || !plan.Execute || String.IsNullOrWhiteSpace(plan.Query))
+                return await ExecutePlainChatStreamingAsync(client, preparation, "fallback_no_plan", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
+
+            ChatToolCall toolCall = await ExecutePlannedQueryAsync(preparation, plan.Query, "fallback", token, sendEventAsync).ConfigureAwait(false);
+            string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, planResponse.Text, toolCall);
+            return await ExecutePromptStreamingAsync(
+                client,
+                preparation,
+                followupPrompt,
+                "server_fallback",
+                policy.CapabilityNotice,
+                new List<ChatToolCall> { toolCall },
+                token,
+                sendEventAsync).ConfigureAwait(false);
+        }
+
         private async Task<ChatExecutionResult> ExecutePlainChatAsync(CompletionClientBase client, ChatPreparation preparation, string executionPath, string capabilityNotice, CancellationToken token)
         {
             ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
@@ -1095,6 +1257,92 @@ namespace Tablix.Server.Handlers
                 ExecutionPath = executionPath,
                 CapabilityNotice = capabilityNotice,
                 Telemetry = CreateTelemetry(response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, preparation.Prompt, response.Text, null)
+            };
+        }
+
+        private async Task<ChatExecutionResult> ExecutePlainChatStreamingAsync(
+            CompletionClientBase client,
+            ChatPreparation preparation,
+            string executionPath,
+            string capabilityNotice,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            return await ExecutePromptStreamingAsync(
+                client,
+                preparation,
+                preparation.Prompt,
+                executionPath,
+                capabilityNotice,
+                new List<ChatToolCall>(),
+                token,
+                sendEventAsync).ConfigureAwait(false);
+        }
+
+        private async Task<ChatExecutionResult> ExecutePromptStreamingAsync(
+            CompletionClientBase client,
+            ChatPreparation preparation,
+            string prompt,
+            string executionPath,
+            string capabilityNotice,
+            List<ChatToolCall> toolCalls,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            ChatStreamingResponse response = await client.ChatStreamingAsync(prompt, options, token).ConfigureAwait(false);
+            if (!response.Success)
+            {
+                stopwatch.Stop();
+                return new ChatExecutionResult
+                {
+                    Success = false,
+                    Error = response.Error,
+                    Model = String.IsNullOrWhiteSpace(response.Model) ? preparation.Provider.Model : response.Model,
+                    ExecutionPath = executionPath,
+                    CapabilityNotice = capabilityNotice,
+                    ToolCalls = toolCalls
+                };
+            }
+
+            StringBuilder messageBuilder = new StringBuilder();
+            ChatStreamingUsage usage = null;
+
+            await foreach (ChatStreamingChunk chunk in response.Chunks.WithCancellation(token).ConfigureAwait(false))
+            {
+                if (chunk.Usage != null)
+                    usage = chunk.Usage;
+
+                if (String.IsNullOrEmpty(chunk.Text))
+                    continue;
+
+                messageBuilder.Append(chunk.Text);
+                await sendEventAsync(new ChatStreamEvent
+                {
+                    EventType = "token",
+                    DatabaseId = preparation.Database.Id,
+                    ProviderId = preparation.Provider.Id,
+                    Model = String.IsNullOrWhiteSpace(chunk.Model) ? preparation.Provider.Model : chunk.Model,
+                    Delta = chunk.Text,
+                    ExecutionPath = executionPath,
+                    CapabilityNotice = capabilityNotice
+                }).ConfigureAwait(false);
+            }
+
+            stopwatch.Stop();
+            string message = messageBuilder.ToString();
+            long totalMs = response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds;
+
+            return new ChatExecutionResult
+            {
+                Success = true,
+                Message = message,
+                Model = String.IsNullOrWhiteSpace(response.Model) ? preparation.Provider.Model : response.Model,
+                ExecutionPath = executionPath,
+                CapabilityNotice = capabilityNotice,
+                ToolCalls = toolCalls,
+                Telemetry = CreateTelemetry(response.TimeToFirstTokenMs, totalMs, prompt, message, usage ?? response.Usage)
             };
         }
 
@@ -1321,6 +1569,31 @@ namespace Tablix.Server.Handlers
                 builder.AppendLine("Result: " + toolCall.Result);
             builder.AppendLine();
             builder.AppendLine("Now answer the user's latest request using the tool result. Do not say the user can run the query. If a value was returned, state the value directly. Keep useful SQL only if it helps explain the answer.");
+            return builder.ToString();
+        }
+
+        private static string BuildToolFollowupPrompt(string originalPrompt, List<ChatToolCall> toolCalls)
+        {
+            StringBuilder builder = new StringBuilder();
+            builder.AppendLine(originalPrompt);
+            builder.AppendLine();
+            builder.AppendLine("Tablix executed the following tool calls requested by the model:");
+
+            foreach (ChatToolCall toolCall in toolCalls)
+            {
+                builder.AppendLine();
+                builder.AppendLine("Tool: " + toolCall.Name);
+                builder.AppendLine("Phase: " + toolCall.Phase);
+                builder.AppendLine("Arguments: " + toolCall.Arguments);
+                builder.AppendLine("Success: " + toolCall.Success);
+                if (!String.IsNullOrWhiteSpace(toolCall.Error))
+                    builder.AppendLine("Error: " + toolCall.Error);
+                if (!String.IsNullOrWhiteSpace(toolCall.Result))
+                    builder.AppendLine("Result: " + toolCall.Result);
+            }
+
+            builder.AppendLine();
+            builder.AppendLine("Now answer the user's latest request using only these tool results and the selected database context. Do not say the user can run a query. If values were returned, state them directly in the format the user requested.");
             return builder.ToString();
         }
 

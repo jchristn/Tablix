@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import ActionMenu, { EllipsisIcon, openActionMenuFromButton, type ActionMenuState } from '../components/ActionMenu';
+import { translateTooltip } from '../i18n';
 import type { BuildContextResponse, ChatOptionsResponse, DatabaseSummary, EnumerationResult, ModelProviderSummary } from '../types';
 
 export default function DatabaseListPage() {
@@ -16,30 +18,12 @@ export default function DatabaseListPage() {
   const [contextBusy, setContextBusy] = useState(false);
   const [contextError, setContextError] = useState('');
   const [contextResult, setContextResult] = useState('');
-  const [actionMenu, setActionMenu] = useState<ActionMenuState | null>(null);
+  const [actionMenu, setActionMenu] = useState<DatabaseActionMenuState | null>(null);
   const maxResults = 20;
   const navigate = useNavigate();
 
   useEffect(() => { loadDatabases(); }, [skip]);
   useEffect(() => { loadChatOptions(); }, []);
-  useEffect(() => {
-    function closeMenu() {
-      setActionMenu(null);
-    }
-
-    if (actionMenu) {
-      window.addEventListener('click', closeMenu);
-      window.addEventListener('scroll', closeMenu, true);
-      window.addEventListener('resize', closeMenu);
-    }
-
-    return () => {
-      window.removeEventListener('click', closeMenu);
-      window.removeEventListener('scroll', closeMenu, true);
-      window.removeEventListener('resize', closeMenu);
-    };
-  }, [actionMenu]);
-
   async function loadDatabases() {
     try {
       const response = await apiFetch(`/v1/database?maxResults=${maxResults}&skip=${skip}`);
@@ -103,12 +87,7 @@ export default function DatabaseListPage() {
   function openActionMenu(db: DatabaseSummary, e: React.MouseEvent<HTMLButtonElement>) {
     e.preventDefault();
     e.stopPropagation();
-    const rect = e.currentTarget.getBoundingClientRect();
-    setActionMenu({
-      database: db,
-      top: rect.bottom + 6,
-      left: Math.max(8, rect.right - 176),
-    });
+    setActionMenu({ ...openActionMenuFromButton(e.currentTarget), Database: db });
   }
 
   async function deleteDatabase(db: DatabaseSummary) {
@@ -228,14 +207,14 @@ export default function DatabaseListPage() {
             </div>
           </div>
 
-          <table>
+          <table className="data-table wide-table">
             <thead>
               <tr>
                 <th title="Unique database entry identifier">ID</th>
                 <th title="Human-readable display name">Name</th>
                 <th title="Database engine type">Type</th>
                 <th title="Database schema">Schema</th>
-                <th title="Database actions">Actions</th>
+                <th className="actions-column" title={translateTooltip('actions.open')}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -249,7 +228,7 @@ export default function DatabaseListPage() {
                     <button
                       type="button"
                       className="icon-action row-actions-button"
-                      title="Open database actions"
+                      title={translateTooltip('actions.open')}
                       aria-label={`Open actions for ${db.Id}`}
                       onClick={event => openActionMenu(db, event)}
                     >
@@ -266,30 +245,24 @@ export default function DatabaseListPage() {
         </div>
       )}
 
-      {actionMenu && (
-        <div
-          className="floating-action-menu"
-          style={{ top: `${actionMenu.top}px`, left: `${actionMenu.left}px` }}
-          onClick={event => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            title={actionMenu.database.IsCrawled ? 'Generate and save database context using the last successful crawl' : 'Crawl this database before building context'}
-            disabled={providers.length === 0 || !actionMenu.database.IsCrawled}
-            onClick={event => openBuildContext(actionMenu.database, event)}
-          >
-            Build Context
-          </button>
-          <button
-            type="button"
-            className="danger-menu-item"
-            title="Delete this database entry"
-            onClick={() => deleteDatabase(actionMenu.database)}
-          >
-            Delete
-          </button>
-        </div>
-      )}
+      <ActionMenu
+        State={actionMenu}
+        OnClose={() => setActionMenu(null)}
+        Items={actionMenu ? [
+          {
+            Label: 'Build Context',
+            TooltipKey: 'actions.buildContext',
+            Disabled: providers.length === 0 || !actionMenu.Database.IsCrawled,
+            OnClick: () => openBuildContext(actionMenu.Database)
+          },
+          {
+            Label: 'Delete',
+            TooltipKey: 'actions.delete',
+            Danger: true,
+            OnClick: () => deleteDatabase(actionMenu.Database)
+          }
+        ] : []}
+      />
 
       {contextTarget && (
         <div className="modal-backdrop" role="presentation" onClick={closeBuildContext}>
@@ -346,10 +319,8 @@ export default function DatabaseListPage() {
   );
 }
 
-interface ActionMenuState {
-  database: DatabaseSummary;
-  top: number;
-  left: number;
+interface DatabaseActionMenuState extends ActionMenuState {
+  Database: DatabaseSummary;
 }
 
 function defaultContextPrompt(db: DatabaseSummary) {
@@ -371,16 +342,6 @@ function CloseIcon() {
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M18 6 6 18" />
       <path d="m6 6 12 12" />
-    </svg>
-  );
-}
-
-function EllipsisIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="1" />
-      <circle cx="19" cy="12" r="1" />
-      <circle cx="5" cy="12" r="1" />
     </svg>
   );
 }

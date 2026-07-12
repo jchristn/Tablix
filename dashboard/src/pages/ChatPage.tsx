@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import { translateTooltip } from '../i18n';
 import type { ChatMessageRequest, ChatOptionsResponse, ChatRequest, ChatResponseResult, ChatStreamEvent, ChatTelemetry, ChatToolCall } from '../types';
 
 interface ChatUiMessage {
@@ -339,29 +340,29 @@ export default function ChatPage() {
   return (
     <div className="chat-page">
       <div className="page-header">
-        <h2 title="Chat with a configured database">Chat</h2>
+        <h2 title={translateTooltip('nav.chat')}>Chat</h2>
       </div>
 
       <div className="chat-shell">
         <div className="chat-toolbar">
           <div className="form-group">
-            <label title="Database used for schema and context">Database</label>
-            <select value={databaseId} onChange={event => handleDatabaseChanged(event.target.value)} disabled={sending}>
+            <label title={translateTooltip('chat.database')}>Database</label>
+            <select title={translateTooltip('chat.database')} value={databaseId} onChange={event => handleDatabaseChanged(event.target.value)} disabled={sending}>
               {options?.Databases.map(database => (
                 <option key={database.Id} value={database.Id}>{database.Name || database.DatabaseName || database.Id}</option>
               ))}
             </select>
           </div>
           <div className="form-group">
-            <label title="Configured model endpoint">Provider</label>
-            <select value={providerId} onChange={event => handleProviderChanged(event.target.value)} disabled={sending}>
+            <label title={translateTooltip('chat.provider')}>Provider</label>
+            <select title={translateTooltip('chat.provider')} value={providerId} onChange={event => handleProviderChanged(event.target.value)} disabled={sending}>
               {options?.Providers.map(provider => (
                 <option key={provider.Id} value={provider.Id}>{provider.Name || provider.Id} ({provider.Model})</option>
               ))}
             </select>
           </div>
-          <label className="toggle-row" title="Stream model tokens as they arrive">
-            <input type="checkbox" checked={streaming} onChange={event => setStreaming(event.target.checked)} disabled={sending} />
+          <label className="toggle-row" title={translateTooltip('chat.streaming')}>
+            <input title={translateTooltip('chat.streaming')} type="checkbox" checked={streaming} onChange={event => setStreaming(event.target.checked)} disabled={sending} />
             <span>Streaming</span>
           </label>
         </div>
@@ -380,7 +381,6 @@ export default function ChatPage() {
             {selectedProvider.UseNativeToolCalls && selectedProvider.SupportsNativeToolCalls
               ? 'Native tool calls are enabled for this provider. Tablix validates every database query before execution.'
               : 'This provider is not configured for native tool calls. Tablix can use server-side fallback execution for database data requests.'}
-            {selectedProvider.ToolCapabilityNote ? ' ' + selectedProvider.ToolCapabilityNote : ''}
           </div>
         )}
 
@@ -429,6 +429,7 @@ export default function ChatPage() {
         <form className="chat-composer" onSubmit={handleSubmit}>
           <div className="chat-input-stack">
           <textarea
+            title={translateTooltip('chat.input')}
             value={input}
             onChange={event => setInput(event.target.value)}
             onKeyDown={handleComposerKeyDown}
@@ -439,7 +440,7 @@ export default function ChatPage() {
             <span className="chat-input-help">Enter to send, Shift+Enter for newline</span>
           </div>
           <div className="chat-send-column">
-            <button className="btn-primary" type="submit" disabled={sending || !input.trim() || !databaseId || !providerId || !options?.Enabled}>
+            <button className="btn-primary" title={translateTooltip('chat.send')} type="submit" disabled={sending || !input.trim() || !databaseId || !providerId || !options?.Enabled}>
               {sending ? 'Sending...' : 'Send'}
             </button>
           </div>

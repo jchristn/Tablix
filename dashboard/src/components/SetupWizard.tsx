@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../api/client';
+import { translateTooltip } from '../i18n';
 import type {
   BuildContextResponse,
   BuildTableContextResponse,
@@ -32,9 +33,9 @@ const initialProvider: ModelProviderUpdate = {
   Enabled: true,
   DefaultStreaming: true,
   SupportsNativeToolCalls: true,
-  UseNativeToolCalls: false,
+  UseNativeToolCalls: true,
   SupportsStrictJson: false,
-  ToolCapabilityNote: 'Enable native tools after validating this provider/model emits tool calls reliably.',
+  ToolCapabilityNote: null,
   Temperature: 0.2,
   TopP: null,
   MaxTokens: 4096,
@@ -382,6 +383,14 @@ export default function SetupWizard() {
     });
   }
 
+  function updateProviderSupportsNativeTools(supportsNativeTools: boolean) {
+    setProvider(previous => ({
+      ...previous,
+      SupportsNativeToolCalls: supportsNativeTools,
+      UseNativeToolCalls: supportsNativeTools ? true : false,
+    }));
+  }
+
   function buildDatabaseCandidate(): DatabaseEntry {
     if (database.Type === 'Sqlite') {
       return {
@@ -428,20 +437,22 @@ export default function SetupWizard() {
           <section className="setup-body">
             <h4>Model Provider</h4>
             <div className="settings-grid">
-              <Field label="Provider ID"><input value={provider.Id} onChange={event => setProvider(previous => ({ ...previous, Id: event.target.value }))} /></Field>
-              <Field label="Name"><input value={provider.Name || ''} onChange={event => setProvider(previous => ({ ...previous, Name: event.target.value }))} /></Field>
+              <Field label="Provider ID" tooltipKey="models.id"><input title={translateTooltip('models.id')} value={provider.Id} onChange={event => setProvider(previous => ({ ...previous, Id: event.target.value }))} /></Field>
+              <Field label="Name" tooltipKey="models.name"><input title={translateTooltip('models.name')} value={provider.Name || ''} onChange={event => setProvider(previous => ({ ...previous, Name: event.target.value }))} /></Field>
               <Field label="Type">
-                <select value={provider.Type} onChange={event => setProvider(previous => ({ ...previous, Type: event.target.value }))}>
+                <select title={translateTooltip('models.type')} value={provider.Type} onChange={event => setProvider(previous => ({ ...previous, Type: event.target.value }))}>
                   <option value="Ollama">Ollama</option>
                   <option value="OpenAI">OpenAI</option>
                   <option value="OpenAICompatible">OpenAI Compatible</option>
                   <option value="Gemini">Gemini</option>
                 </select>
               </Field>
-              <Field label="Endpoint"><input value={provider.Endpoint || ''} onChange={event => setProvider(previous => ({ ...previous, Endpoint: event.target.value }))} /></Field>
-              <Field label="Model"><input value={provider.Model || ''} onChange={event => setProvider(previous => ({ ...previous, Model: event.target.value }))} /></Field>
-              <Field label="API Key"><input type="password" value={provider.ApiKey || ''} onChange={event => setProvider(previous => ({ ...previous, ApiKey: event.target.value }))} /></Field>
-              <Field label="Max Concurrent Requests"><input type="number" min="1" max="16" value={provider.MaxConcurrentRequests} onChange={event => setProvider(previous => ({ ...previous, MaxConcurrentRequests: parseBoundedNumber(event.target.value, 1, 1, 16) }))} /></Field>
+              <Field label="Endpoint" tooltipKey="models.endpoint"><input title={translateTooltip('models.endpoint')} value={provider.Endpoint || ''} onChange={event => setProvider(previous => ({ ...previous, Endpoint: event.target.value }))} /></Field>
+              <Field label="Model" tooltipKey="models.model"><input title={translateTooltip('models.model')} value={provider.Model || ''} onChange={event => setProvider(previous => ({ ...previous, Model: event.target.value }))} /></Field>
+              <Field label="API Key" tooltipKey="models.apiKey"><input title={translateTooltip('models.apiKey')} type="password" value={provider.ApiKey || ''} onChange={event => setProvider(previous => ({ ...previous, ApiKey: event.target.value }))} /></Field>
+              <Field label="Max Concurrent Requests" tooltipKey="models.concurrency"><input title={translateTooltip('models.concurrency')} type="number" min="1" max="16" value={provider.MaxConcurrentRequests} onChange={event => setProvider(previous => ({ ...previous, MaxConcurrentRequests: parseBoundedNumber(event.target.value, 1, 1, 16) }))} /></Field>
+              <label className="toggle-row settings-toggle" title={translateTooltip('models.supportsTools')}><input title={translateTooltip('models.supportsTools')} type="checkbox" checked={provider.SupportsNativeToolCalls} onChange={event => updateProviderSupportsNativeTools(event.target.checked)} /><span>Supports native tools</span></label>
+              <label className="toggle-row settings-toggle" title={translateTooltip('models.useTools')}><input title={translateTooltip('models.useTools')} type="checkbox" checked={provider.UseNativeToolCalls} disabled={!provider.SupportsNativeToolCalls} onChange={event => setProvider(previous => ({ ...previous, UseNativeToolCalls: event.target.checked }))} /><span>Use native tools</span></label>
             </div>
             <TestResult result={providerTest} />
           </section>
@@ -572,8 +583,8 @@ export default function SetupWizard() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="form-group"><label>{label}</label>{children}</div>;
+function Field({ label, tooltipKey, children }: { label: string; tooltipKey?: string; children: React.ReactNode }) {
+  return <div className="form-group"><label title={tooltipKey ? translateTooltip(tooltipKey) : undefined}>{label}</label>{children}</div>;
 }
 
 function TestResult({ result }: { result: ProviderConnectivityTestResponse | DatabaseConnectivityTestResponse | null }) {

@@ -2,9 +2,9 @@
 
 ## v0.2.0 - ALPHA (2026-07-11)
 
-Large-schema discovery, persisted database context, and test infrastructure release.
+SQLite-backed product state, large-schema discovery, persisted context, dashboard chat, setup wizard, and test infrastructure release.
 
-This release changes Tablix from a primarily full-schema discovery surface into a workflow that can safely guide AI agents through larger databases: page through compact indexes first, inspect only the tables needed for the task, then persist curated database context when a user asks for it.
+This release changes Tablix from a primarily full-schema discovery surface into a database-agent workspace: persist product state in `tablix.db`, guide users through first-run setup, page through compact schema indexes before inspecting table geometry, generate durable database/table context, and chat with a selected database through configured model providers.
 
 ### Added
 
@@ -27,6 +27,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added REST database connectivity test APIs and table-context APIs under `/v1/database`
 - Added dashboard Models page for provider CRUD and validation
 - Added first-run setup wizard for provider validation, database validation, crawl, database context, and table context
+- Added dense setup wizard table-context review grid that updates each table context editor as individual provider requests complete
 - Added table-level context editing on database detail pages
 - Added Docker seed `tablix.db` files for runtime and factory reset
 - Added Databases row action overflow menu with Build Context and Delete actions
@@ -42,6 +43,8 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Expanded MCP tool descriptions with model-facing guidance for pagination, large schemas, relationship fidelity, query safety, and context persistence
 - Clarified MCP query guidance so data-answer or action requests such as counts, totals, lists, "show me", add, update, and delete should execute permitted queries instead of only returning SQL text
 - Added persisted model provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini
+- Added provider-specific system prompt overrides to the dashboard Models workflow, allowing one model endpoint to replace the global chat prompt when explicitly configured
+- Added selected-language-aware dashboard tooltip infrastructure and a compact language selector for localized control help
 
 ### Changed
 
@@ -52,9 +55,11 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Updated the default chat system prompt to restrict model conversation to the selected database, its structure, contents, and relationships
 - Updated dashboard runtime configuration so Docker uses `TABLIX_SERVER_URL` for the nginx proxy while the login page displays the configured server URL; local Vite can use `VITE_TABLIX_SERVER_URL` or `TABLIX_SERVER_URL`
 - Changed server startup so REST and MCP listeners start before initial background database crawls complete
-- Added Docker Compose healthchecks for server and UI containers, made the UI depend on a healthy backend, and added a configurable 15 second UI startup delay
+- Added Docker Compose healthchecks for server and UI containers with a 5 second interval and 2 second timeout, made the UI depend on a healthy backend, and added a configurable 15 second UI startup delay
 - Updated chat and MCP guidance to refresh schema after bad/unknown column or column type errors and correct saved context when refreshed schema proves it stale
 - Updated chat prompt guidance to tell models to execute allowed Tablix query-tool calls when the user asks for data that can be answered from the selected database
+- Changed model provider defaults so `UseNativeToolCalls` is enabled automatically when `SupportsNativeToolCalls` is enabled
+- Changed dashboard table views to use wider layouts and shared viewport-positioned overflow action menus
 - Moved configured databases and model providers out of `tablix.json` and into `tablix.db`
 - Updated Docker Compose to mount `tablix.db` as the product-state database
 - Added direct `SQLitePCLRaw.lib.e_sqlite3` package override to resolve the transitive vulnerability warning from 2.1.11
@@ -73,6 +78,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Fixed SQLite persistence consistency by disabling connection pooling, serializing reads and writes through a single operation gate, and wrapping write batches in explicit immediate transactions with rollback
 - Fixed setup wizard table-context generation so model request timeouts apply per table and model calls are bounded by provider concurrency instead of sending one long UI-proxied batch request
 - Fixed dashboard container startup so its generated nginx config preserves long-running API proxy timeouts for context generation
+- Fixed `/v1/chat/stream` so plain responses and post-tool summaries stream PolyPrompt token chunks instead of emitting the completed assistant message as one token event
 - Removed a credential-bearing local database entry from the checked-in Docker default configuration
 
 ### Testing
@@ -87,7 +93,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added settings coverage for chat provider defaults, prompt-processing defaults, provider tool capability fields, and provider enum serialization
 - Added model guard coverage for chat telemetry, chat request list handling, and provider API key redaction
 - Added crawl progress event payload coverage
-- Expanded shared Touchstone coverage from 53 to 148 descriptors across query validation, settings persistence, serialization, SQLite edge cases, schema projection, model guards, crawler factory, crawl cache, MCP tool behavior, credential redaction, Docker dashboard proxy packaging, prompt-processing contracts, and dashboard/server API contract checks
+- Expanded shared Touchstone coverage from 53 to 167 descriptors across query validation, settings persistence, serialization, SQLite edge cases, schema projection, model guards, crawler factory, crawl cache, MCP tool behavior, credential redaction, Docker dashboard proxy packaging, prompt-processing contracts, setup wizard behavior, localized dashboard tooltips, streaming chat contracts, provider prompt overrides, action menu consistency, and dashboard/server API contract checks
 
 ### Code Quality
 

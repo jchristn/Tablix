@@ -91,10 +91,11 @@ In the dashboard:
 5. Set **Request Timeout Ms** to the timeout for one provider request. Table-context generation makes one provider request per table, so this is not a timeout for the entire batch.
 6. Set **Max Concurrent Requests** to the number of provider calls Tablix may run in parallel for batch operations. Use `1` for local/single-GPU Ollama or other constrained endpoints; raise it only when the model server can handle parallel requests reliably.
 7. Review provider tool settings:
-   - Leave **Use native tools** off for local Ollama models until you have verified the model emits tool calls reliably.
-   - Enable **Use native tools** for OpenAI or Gemini models that support tool/function calling.
+   - **Use native tools** defaults on whenever **Supports native tools** is checked.
+   - Turn **Use native tools** off only for a specific provider/model that fails tool-call validation.
    - Keep **Server fallback** enabled under **Prompt Processing** so Tablix can still execute permitted data queries when a model does not call a native tool.
-8. Click **Save**.
+8. Optionally set **System Prompt Override** for a provider-specific prompt. When set, it replaces the global Settings system prompt for that provider, so preserve the selected-database, query-execution, schema-refresh, and no-secrets rules unless you intentionally need a narrower policy.
+9. Click **Save**.
 
 ### Option A: Ollama on Your Host Machine
 

@@ -248,7 +248,7 @@
             "description": "Create a persisted model provider. ApiKey is accepted but never returned by read APIs.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Id\": \"{{providerId}}\",\n  \"Name\": \"Local Ollama\",\n  \"Type\": \"Ollama\",\n  \"Endpoint\": \"http://ollama:11434\",\n  \"ApiKey\": \"\",\n  \"ClearApiKey\": false,\n  \"Model\": \"gemma3:4b\",\n  \"SystemPrompt\": null,\n  \"Enabled\": true,\n  \"DefaultStreaming\": true,\n  \"SupportsNativeToolCalls\": true,\n  \"UseNativeToolCalls\": false,\n  \"SupportsStrictJson\": false,\n  \"ToolCapabilityNote\": \"Enable native tools after validating this provider/model emits tool calls reliably.\",\n  \"Temperature\": 0.2,\n  \"TopP\": null,\n  \"MaxTokens\": 4096,\n  \"RequestTimeoutMs\": 120000,\n  \"MaxConcurrentRequests\": 1\n}",
+              "raw": "{\n  \"Id\": \"{{providerId}}\",\n  \"Name\": \"Local Ollama\",\n  \"Type\": \"Ollama\",\n  \"Endpoint\": \"http://ollama:11434\",\n  \"ApiKey\": \"\",\n  \"ClearApiKey\": false,\n  \"Model\": \"gemma3:4b\",\n  \"SystemPrompt\": null,\n  \"Enabled\": true,\n  \"DefaultStreaming\": true,\n  \"SupportsNativeToolCalls\": true,\n  \"UseNativeToolCalls\": true,\n  \"SupportsStrictJson\": false,\n  \"ToolCapabilityNote\": null,\n  \"Temperature\": 0.2,\n  \"TopP\": null,\n  \"MaxTokens\": 4096,\n  \"RequestTimeoutMs\": 120000,\n  \"MaxConcurrentRequests\": 1\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -281,7 +281,7 @@
             "description": "Update a persisted model provider. Leave ApiKey empty to preserve it or set ClearApiKey to true to remove it.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Id\": \"{{providerId}}\",\n  \"Name\": \"Local Ollama\",\n  \"Type\": \"Ollama\",\n  \"Endpoint\": \"http://ollama:11434\",\n  \"ApiKey\": \"\",\n  \"ClearApiKey\": false,\n  \"Model\": \"gemma3:4b\",\n  \"SystemPrompt\": null,\n  \"Enabled\": true,\n  \"DefaultStreaming\": true,\n  \"SupportsNativeToolCalls\": true,\n  \"UseNativeToolCalls\": false,\n  \"SupportsStrictJson\": false,\n  \"ToolCapabilityNote\": \"Enable native tools after validating this provider/model emits tool calls reliably.\",\n  \"Temperature\": 0.2,\n  \"TopP\": null,\n  \"MaxTokens\": 4096,\n  \"RequestTimeoutMs\": 120000,\n  \"MaxConcurrentRequests\": 1\n}",
+              "raw": "{\n  \"Id\": \"{{providerId}}\",\n  \"Name\": \"Local Ollama\",\n  \"Type\": \"Ollama\",\n  \"Endpoint\": \"http://ollama:11434\",\n  \"ApiKey\": \"\",\n  \"ClearApiKey\": false,\n  \"Model\": \"gemma3:4b\",\n  \"SystemPrompt\": null,\n  \"Enabled\": true,\n  \"DefaultStreaming\": true,\n  \"SupportsNativeToolCalls\": true,\n  \"UseNativeToolCalls\": true,\n  \"SupportsStrictJson\": false,\n  \"ToolCapabilityNote\": null,\n  \"Temperature\": 0.2,\n  \"TopP\": null,\n  \"MaxTokens\": 4096,\n  \"RequestTimeoutMs\": 120000,\n  \"MaxConcurrentRequests\": 1\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -333,7 +333,7 @@
             "description": "Test unsaved model provider settings without persisting them.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Provider\": {\n    \"Id\": \"{{providerId}}\",\n    \"Name\": \"Local Ollama\",\n    \"Type\": \"Ollama\",\n    \"Endpoint\": \"http://ollama:11434\",\n    \"ApiKey\": \"\",\n    \"ClearApiKey\": false,\n    \"Model\": \"gemma3:4b\",\n    \"SystemPrompt\": null,\n    \"Enabled\": true,\n    \"DefaultStreaming\": true,\n    \"SupportsNativeToolCalls\": true,\n    \"UseNativeToolCalls\": false,\n    \"SupportsStrictJson\": false,\n    \"ToolCapabilityNote\": \"Enable native tools after validating this provider/model emits tool calls reliably.\",\n    \"Temperature\": 0.2,\n    \"TopP\": null,\n    \"MaxTokens\": 4096,\n    \"RequestTimeoutMs\": 120000,\n    \"MaxConcurrentRequests\": 1\n  }\n}",
+              "raw": "{\n  \"Provider\": {\n    \"Id\": \"{{providerId}}\",\n    \"Name\": \"Local Ollama\",\n    \"Type\": \"Ollama\",\n    \"Endpoint\": \"http://ollama:11434\",\n    \"ApiKey\": \"\",\n    \"ClearApiKey\": false,\n    \"Model\": \"gemma3:4b\",\n    \"SystemPrompt\": null,\n    \"Enabled\": true,\n    \"DefaultStreaming\": true,\n    \"SupportsNativeToolCalls\": true,\n    \"UseNativeToolCalls\": true,\n    \"SupportsStrictJson\": false,\n    \"ToolCapabilityNote\": null,\n    \"Temperature\": 0.2,\n    \"TopP\": null,\n    \"MaxTokens\": 4096,\n    \"RequestTimeoutMs\": 120000,\n    \"MaxConcurrentRequests\": 1\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"

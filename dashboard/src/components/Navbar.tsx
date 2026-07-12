@@ -1,11 +1,13 @@
-import { useNavigate, Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { getDisplayServerUrl } from '../api/client';
+import { getLanguage, setLanguage, translateTooltip, type DashboardLanguage } from '../i18n';
 import iconImg from '../assets/icon.png';
 
 export default function Navbar() {
   const navigate = useNavigate();
   const [serverUrl, setServerUrl] = useState('');
+  const [language, setCurrentLanguage] = useState<DashboardLanguage>(() => getLanguage());
   const [isDark, setIsDark] = useState(() => {
     const stored = localStorage.getItem('tablix_theme');
     if (stored) return stored === 'dark';
@@ -24,6 +26,11 @@ export default function Navbar() {
   function handleLogout() {
     sessionStorage.removeItem('tablix_api_key');
     navigate('/login');
+  }
+
+  function handleLanguageChanged(nextLanguage: DashboardLanguage) {
+    setLanguage(nextLanguage);
+    setCurrentLanguage(nextLanguage);
   }
 
   const iconButtonStyle = {
@@ -56,37 +63,48 @@ export default function Navbar() {
       boxShadow: 'var(--shadow)',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <img src={iconImg} alt="Tablix" title="Tablix — Database discovery and query platform" style={{ height: '28px' }} />
-        <Link to="/" title="Go to home page" style={{ fontWeight: 600, fontSize: '16px', color: 'var(--text-primary)', textDecoration: 'none' }}>Tablix</Link>
-        <Link to="/" title="View and manage configured databases" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Databases</Link>
-        <Link to="/query" title="Execute SQL queries against a database" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Query</Link>
-        <Link to="/chat" title="Chat with a configured database" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Chat</Link>
-        <Link to="/models" title="Manage configured model providers" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Models</Link>
-        <Link to="/settings" title="View and edit server settings" style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Settings</Link>
+        <img src={iconImg} alt="Tablix" title={translateTooltip('nav.brand', language)} style={{ height: '28px' }} />
+        <Link to="/" title={translateTooltip('nav.brand', language)} style={{ fontWeight: 600, fontSize: '16px', color: 'var(--text-primary)', textDecoration: 'none' }}>Tablix</Link>
+        <Link to="/" title={translateTooltip('nav.databases', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Databases</Link>
+        <Link to="/query" title={translateTooltip('nav.query', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Query</Link>
+        <Link to="/chat" title={translateTooltip('nav.chat', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Chat</Link>
+        <Link to="/models" title={translateTooltip('nav.models', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Models</Link>
+        <Link to="/settings" title={translateTooltip('nav.settings', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Settings</Link>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-        <span className="muted-text" title="Connected Tablix server URL" style={{ fontSize: '12px', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{serverUrl}</span>
+        <span className="muted-text" title={translateTooltip('nav.server', language)} style={{ fontSize: '12px', maxWidth: '280px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{serverUrl}</span>
 
         <a
           href="https://github.com/jchristn/Tablix"
           target="_blank"
           rel="noopener noreferrer"
-          title="View Tablix on GitHub"
+          title={translateTooltip('nav.github', language)}
           aria-label="View Tablix on GitHub"
           className="btn-secondary"
           style={iconButtonStyle}
         >
           <svg width="18" height="18" viewBox="0 0 16 16" fill="var(--text-muted)">
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
           </svg>
         </a>
+
+        <select
+          className="language-select"
+          value={language}
+          title={translateTooltip('nav.language', language)}
+          aria-label="Dashboard help language"
+          onChange={event => handleLanguageChanged(event.target.value as DashboardLanguage)}
+        >
+          <option value="en">EN</option>
+          <option value="es">ES</option>
+        </select>
 
         <button
           className="btn-secondary"
           onClick={() => setIsDark(!isDark)}
           aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-          title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={translateTooltip('nav.theme', language)}
           style={iconButtonStyle}
         >
           {isDark ? (
@@ -112,7 +130,7 @@ export default function Navbar() {
           className="btn-secondary"
           onClick={handleLogout}
           aria-label="Sign out"
-          title="Sign out and return to the login page"
+          title={translateTooltip('nav.logout', language)}
           style={iconButtonStyle}
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import ActionMenu, { EllipsisIcon, openActionMenuFromButton, type ActionMenuState } from '../components/ActionMenu';
+import { translateTooltip } from '../i18n';
 import type {
   EnumerationResult,
   ModelProviderRead,
@@ -23,9 +25,9 @@ const emptyProvider: ModelProviderUpdate = {
   Enabled: true,
   DefaultStreaming: true,
   SupportsNativeToolCalls: true,
-  UseNativeToolCalls: false,
+  UseNativeToolCalls: true,
   SupportsStrictJson: false,
-  ToolCapabilityNote: 'Enable native tools after validating this provider/model emits tool calls reliably.',
+  ToolCapabilityNote: null,
   Temperature: 0.2,
   TopP: null,
   MaxTokens: 4096,
@@ -44,6 +46,7 @@ export default function ModelsPage() {
   const [editing, setEditing] = useState(false);
   const [provider, setProvider] = useState<ModelProviderUpdate>({ ...emptyProvider });
   const [testResult, setTestResult] = useState<ProviderConnectivityTestResponse | null>(null);
+  const [actionMenu, setActionMenu] = useState<ModelActionMenuState | null>(null);
 
   useEffect(() => { loadModels(); }, []);
 
@@ -137,21 +140,34 @@ export default function ModelsPage() {
   }
 
   function update(field: keyof ModelProviderUpdate, value: string | number | boolean | null) {
-    setProvider(previous => ({ ...previous, [field]: value }));
+    setProvider(previous => {
+      if (field === 'SupportsNativeToolCalls') {
+        const supports = Boolean(value);
+        return { ...previous, SupportsNativeToolCalls: supports, UseNativeToolCalls: supports ? true : false };
+      }
+
+      return { ...previous, [field]: value };
+    });
+  }
+
+  function openActionMenu(model: ModelProviderSummary, event: React.MouseEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setActionMenu({ ...openActionMenuFromButton(event.currentTarget), Model: model });
   }
 
   return (
     <div>
       <div className="page-header">
-        <h2 title="Manage model endpoints used by Chat and context generation">Models</h2>
-        <button className="btn-primary" onClick={openCreate}>Add Model</button>
+        <h2 title={translateTooltip('nav.models')}>Models</h2>
+        <button className="btn-primary" title={translateTooltip('models.add')} onClick={openCreate}>Add Model</button>
       </div>
 
       {error && <p className="error-text" style={{ marginBottom: '12px' }}>{error}</p>}
       {message && <p className="muted-text" style={{ marginBottom: '12px' }}>{message}</p>}
 
       <div className="card">
-        <table>
+        <table className="data-table wide-table">
           <thead>
             <tr>
               <th>Name</th>
@@ -160,7 +176,7 @@ export default function ModelsPage() {
               <th>Model</th>
               <th>Tools</th>
               <th>Status</th>
-              <th style={{ width: '170px' }}>Actions</th>
+              <th className="actions-column">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -176,11 +192,15 @@ export default function ModelsPage() {
                 <td>{model.UseNativeToolCalls ? 'Native' : model.SupportsNativeToolCalls ? 'Available' : 'Fallback'}</td>
                 <td>{model.Enabled ? <span className="badge badge-success">Enabled</span> : <span className="badge badge-warning">Disabled</span>}</td>
                 <td>
-                  <div className="row-actions-inline">
-                    <button className="btn-secondary compact-button" onClick={() => openEdit(model.Id)}>Edit</button>
-                    <button className="btn-secondary compact-button" onClick={() => testProvider(model.Id)} disabled={busy}>Test</button>
-                    <button className="btn-danger compact-button" onClick={() => deleteProvider(model.Id)}>Delete</button>
-                  </div>
+                  <button
+                    type="button"
+                    className="icon-action row-actions-button"
+                    title={translateTooltip('actions.open')}
+                    aria-label={`Open actions for ${model.Id}`}
+                    onClick={event => openActionMenu(model, event)}
+                  >
+                    <EllipsisIcon />
+                  </button>
                 </td>
               </tr>
             ))}
@@ -198,6 +218,30 @@ export default function ModelsPage() {
         </div>
       )}
 
+      <ActionMenu
+        State={actionMenu}
+        OnClose={() => setActionMenu(null)}
+        Items={actionMenu ? [
+          {
+            Label: 'Edit',
+            TooltipKey: 'actions.edit',
+            OnClick: () => openEdit(actionMenu.Model.Id)
+          },
+          {
+            Label: 'Test',
+            TooltipKey: 'actions.test',
+            Disabled: busy,
+            OnClick: () => testProvider(actionMenu.Model.Id)
+          },
+          {
+            Label: 'Delete',
+            TooltipKey: 'actions.delete',
+            Danger: true,
+            OnClick: () => deleteProvider(actionMenu.Model.Id)
+          }
+        ] : []}
+      />
+
       {modalOpen && (
         <div className="modal-backdrop" role="presentation" onClick={() => !busy && setModalOpen(false)}>
           <div className="modal-panel model-modal" role="dialog" aria-modal="true" aria-labelledby="model-modal-title" onClick={event => event.stopPropagation()}>
@@ -213,37 +257,33 @@ export default function ModelsPage() {
 
             <form onSubmit={saveProvider} className="model-form">
               <div className="settings-grid">
-                <Field label="Id"><input value={provider.Id} onChange={event => update('Id', event.target.value)} disabled={editing} /></Field>
-                <Field label="Name"><input value={provider.Name || ''} onChange={event => update('Name', event.target.value)} /></Field>
+                <Field label="Id" tooltipKey="models.id"><input title={translateTooltip('models.id')} value={provider.Id} onChange={event => update('Id', event.target.value)} disabled={editing} /></Field>
+                <Field label="Name" tooltipKey="models.name"><input title={translateTooltip('models.name')} value={provider.Name || ''} onChange={event => update('Name', event.target.value)} /></Field>
                 <Field label="Type">
-                  <select value={provider.Type} onChange={event => update('Type', event.target.value)}>
+                  <select title={translateTooltip('models.type')} value={provider.Type} onChange={event => update('Type', event.target.value)}>
                     {providerTypes.map(type => <option key={type} value={type}>{type}</option>)}
                   </select>
                 </Field>
-                <Field label="Endpoint"><input value={provider.Endpoint || ''} onChange={event => update('Endpoint', event.target.value)} /></Field>
-                <Field label="Model"><input value={provider.Model || ''} onChange={event => update('Model', event.target.value)} /></Field>
-                <Field label={provider.HasApiKey ? 'API Key Configured' : 'API Key'}>
-                  <input type="password" value={provider.ApiKey || ''} placeholder={provider.HasApiKey ? 'Leave blank to keep existing key' : ''} onChange={event => update('ApiKey', event.target.value)} />
+                <Field label="Endpoint" tooltipKey="models.endpoint"><input title={translateTooltip('models.endpoint')} value={provider.Endpoint || ''} onChange={event => update('Endpoint', event.target.value)} /></Field>
+                <Field label="Model" tooltipKey="models.model"><input title={translateTooltip('models.model')} value={provider.Model || ''} onChange={event => update('Model', event.target.value)} /></Field>
+                <Field label={provider.HasApiKey ? 'API Key Configured' : 'API Key'} tooltipKey="models.apiKey">
+                  <input title={translateTooltip('models.apiKey')} type="password" value={provider.ApiKey || ''} placeholder={provider.HasApiKey ? 'Leave blank to keep existing key' : ''} onChange={event => update('ApiKey', event.target.value)} />
                 </Field>
-                <label className="toggle-row settings-toggle"><input type="checkbox" checked={provider.Enabled} onChange={event => update('Enabled', event.target.checked)} /><span>Enabled</span></label>
-                <label className="toggle-row settings-toggle"><input type="checkbox" checked={provider.DefaultStreaming} onChange={event => update('DefaultStreaming', event.target.checked)} /><span>Streaming</span></label>
-                <label className="toggle-row settings-toggle"><input type="checkbox" checked={provider.SupportsNativeToolCalls} onChange={event => update('SupportsNativeToolCalls', event.target.checked)} /><span>Supports native tools</span></label>
-                <label className="toggle-row settings-toggle"><input type="checkbox" checked={provider.UseNativeToolCalls} onChange={event => update('UseNativeToolCalls', event.target.checked)} /><span>Use native tools</span></label>
-                <label className="toggle-row settings-toggle"><input type="checkbox" checked={provider.SupportsStrictJson} onChange={event => update('SupportsStrictJson', event.target.checked)} /><span>Strict JSON</span></label>
-                <label className="toggle-row settings-toggle"><input type="checkbox" checked={provider.ClearApiKey || false} onChange={event => update('ClearApiKey', event.target.checked)} /><span>Clear API key</span></label>
-                <Field label="Temperature"><input type="number" step="0.1" value={provider.Temperature ?? ''} onChange={event => update('Temperature', nullableNumber(event.target.value))} /></Field>
-                <Field label="Top P"><input type="number" step="0.1" value={provider.TopP ?? ''} onChange={event => update('TopP', nullableNumber(event.target.value))} /></Field>
-                <Field label="Max Tokens"><input type="number" value={provider.MaxTokens ?? ''} onChange={event => update('MaxTokens', nullableNumber(event.target.value))} /></Field>
-                <Field label="Timeout Ms"><input type="number" value={provider.RequestTimeoutMs} onChange={event => update('RequestTimeoutMs', parseNumber(event.target.value, 120000))} /></Field>
-                <Field label="Max Concurrent Requests"><input type="number" min="1" max="16" value={provider.MaxConcurrentRequests} onChange={event => update('MaxConcurrentRequests', parseNumber(event.target.value, 1))} /></Field>
-              </div>
-              <div className="form-group" style={{ marginTop: '12px' }}>
-                <label>Tool Capability Note</label>
-                <textarea rows={2} value={provider.ToolCapabilityNote || ''} onChange={event => update('ToolCapabilityNote', event.target.value)} />
+                <label className="toggle-row settings-toggle" title={translateTooltip('models.enabled')}><input title={translateTooltip('models.enabled')} type="checkbox" checked={provider.Enabled} onChange={event => update('Enabled', event.target.checked)} /><span>Enabled</span></label>
+                <label className="toggle-row settings-toggle" title={translateTooltip('models.streaming')}><input title={translateTooltip('models.streaming')} type="checkbox" checked={provider.DefaultStreaming} onChange={event => update('DefaultStreaming', event.target.checked)} /><span>Streaming</span></label>
+                <label className="toggle-row settings-toggle" title={translateTooltip('models.supportsTools')}><input title={translateTooltip('models.supportsTools')} type="checkbox" checked={provider.SupportsNativeToolCalls} onChange={event => update('SupportsNativeToolCalls', event.target.checked)} /><span>Supports native tools</span></label>
+                <label className="toggle-row settings-toggle" title={translateTooltip('models.useTools')}><input title={translateTooltip('models.useTools')} type="checkbox" checked={provider.UseNativeToolCalls} onChange={event => update('UseNativeToolCalls', event.target.checked)} disabled={!provider.SupportsNativeToolCalls} /><span>Use native tools</span></label>
+                <label className="toggle-row settings-toggle" title={translateTooltip('models.strictJson')}><input title={translateTooltip('models.strictJson')} type="checkbox" checked={provider.SupportsStrictJson} onChange={event => update('SupportsStrictJson', event.target.checked)} /><span>Strict JSON</span></label>
+                <label className="toggle-row settings-toggle" title={translateTooltip('models.clearKey')}><input title={translateTooltip('models.clearKey')} type="checkbox" checked={provider.ClearApiKey || false} onChange={event => update('ClearApiKey', event.target.checked)} /><span>Clear API key</span></label>
+                <Field label="Temperature" tooltipKey="models.temperature"><input title={translateTooltip('models.temperature')} type="number" step="0.1" value={provider.Temperature ?? ''} onChange={event => update('Temperature', nullableNumber(event.target.value))} /></Field>
+                <Field label="Top P" tooltipKey="models.topP"><input title={translateTooltip('models.topP')} type="number" step="0.1" value={provider.TopP ?? ''} onChange={event => update('TopP', nullableNumber(event.target.value))} /></Field>
+                <Field label="Max Tokens" tooltipKey="models.maxTokens"><input title={translateTooltip('models.maxTokens')} type="number" value={provider.MaxTokens ?? ''} onChange={event => update('MaxTokens', nullableNumber(event.target.value))} /></Field>
+                <Field label="Timeout Ms" tooltipKey="models.timeout"><input title={translateTooltip('models.timeout')} type="number" value={provider.RequestTimeoutMs} onChange={event => update('RequestTimeoutMs', parseNumber(event.target.value, 120000))} /></Field>
+                <Field label="Max Concurrent Requests" tooltipKey="models.concurrency"><input title={translateTooltip('models.concurrency')} type="number" min="1" max="16" value={provider.MaxConcurrentRequests} onChange={event => update('MaxConcurrentRequests', parseNumber(event.target.value, 1))} /></Field>
               </div>
               <div className="form-group">
-                <label>System Prompt Override</label>
-                <textarea rows={3} value={provider.SystemPrompt || ''} onChange={event => update('SystemPrompt', event.target.value)} />
+                <label title={translateTooltip('models.systemPrompt')}>System Prompt Override</label>
+                <textarea title={translateTooltip('models.systemPrompt')} rows={3} value={provider.SystemPrompt || ''} onChange={event => update('SystemPrompt', event.target.value)} />
               </div>
 
               {testResult && (
@@ -251,9 +291,9 @@ export default function ModelsPage() {
               )}
 
               <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => setModalOpen(false)} disabled={busy}>Cancel</button>
-                <button type="button" className="btn-secondary" onClick={() => testProvider()} disabled={busy}>Test</button>
-                <button type="submit" className="btn-primary" disabled={busy}>{busy ? 'Saving...' : 'Save'}</button>
+                <button type="button" className="btn-secondary" title={translateTooltip('models.cancel')} onClick={() => setModalOpen(false)} disabled={busy}>Cancel</button>
+                <button type="button" className="btn-secondary" title={translateTooltip('models.modalTest')} onClick={() => testProvider()} disabled={busy}>Test</button>
+                <button type="submit" className="btn-primary" title={translateTooltip('models.save')} disabled={busy}>{busy ? 'Saving...' : 'Save'}</button>
               </div>
             </form>
           </div>
@@ -263,10 +303,14 @@ export default function ModelsPage() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+interface ModelActionMenuState extends ActionMenuState {
+  Model: ModelProviderSummary;
+}
+
+function Field({ label, tooltipKey, children }: { label: string; tooltipKey?: string; children: React.ReactNode }) {
   return (
     <div className="form-group">
-      <label>{label}</label>
+      <label title={tooltipKey ? translateTooltip(tooltipKey) : undefined}>{label}</label>
       {children}
     </div>
   );

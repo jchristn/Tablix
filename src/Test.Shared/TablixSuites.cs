@@ -416,6 +416,25 @@ namespace Test.Shared
                         provider.MaxConcurrentRequests = 4;
                         Equal(4, provider.MaxConcurrentRequests, "MaxConcurrentRequests valid value mismatch.");
                         return Task.CompletedTask;
+                    }),
+                    Case("SettingsClamping", "DefaultProvidersUseNativeToolsWhenSupported", "Default providers enable native tool use when native tools are supported", ct =>
+                    {
+                        List<ModelProviderSettings> providers = new List<ModelProviderSettings>
+                        {
+                            DefaultDataFactory.CreateOllamaProvider(),
+                            DefaultDataFactory.CreateOpenAiProvider(),
+                            DefaultDataFactory.CreateOpenAiCompatibleProvider(),
+                            DefaultDataFactory.CreateGeminiProvider()
+                        };
+
+                        foreach (ModelProviderSettings provider in providers)
+                        {
+                            if (provider.SupportsNativeToolCalls)
+                                True(provider.UseNativeToolCalls, provider.Id + " should use native tools when native tools are supported.");
+                            True(String.IsNullOrWhiteSpace(provider.ToolCapabilityNote), provider.Id + " should not seed a user-facing tool capability note.");
+                        }
+
+                        return Task.CompletedTask;
                     })
                 });
         }
@@ -2135,6 +2154,77 @@ namespace Test.Shared
                         Contains(chatPage, "CapabilityNotice", "Chat page should consume capability notice.");
                         Contains(stylesheet, ".chat-capability-notice", "Capability notice should be styled.");
                         Contains(stylesheet, ".chat-execution-note", "Execution note should be styled.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ChatStreamingUsesPolyPromptChunks", "Streaming chat sends PolyPrompt chunks instead of one completed message", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
+
+                        Contains(chatHandler, "ExecuteChatResponseStreamingAsync", "SSE chat should use a dedicated streaming execution path.");
+                        Contains(chatHandler, "ChatStreamingAsync", "SSE chat should call PolyPrompt streaming APIs.");
+                        Contains(chatHandler, "await foreach (ChatStreamingChunk chunk", "SSE chat should enumerate provider chunks.");
+                        Contains(chatHandler, "Delta = chunk.Text", "SSE token events should send individual chunk text.");
+                        Contains(chatHandler, "BuildToolFollowupPrompt(preparation.Prompt, executedTools)", "Native tool execution should stream the final post-tool answer.");
+                        Contains(chatHandler, "ExecuteFallbackPlanningStreamingAsync", "Fallback tool execution should stream the final post-tool answer.");
+                        DoesNotContain(chatHandler, "Delta = execution.Message", "SSE chat should not send the full completed answer as one token event.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ProviderPromptOverrideIsSurfaced", "Model provider prompt overrides are surfaced and documented in the dashboard", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
+                        string modelsPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ModelsPage.tsx"));
+                        string readme = File.ReadAllText(Path.Combine(repositoryRoot, "README.md"));
+                        string restApi = File.ReadAllText(Path.Combine(repositoryRoot, "REST_API.md"));
+
+                        Contains(chatHandler, "provider.SystemPrompt) ? settings.Chat.SystemPrompt : provider.SystemPrompt", "Provider system prompt should override settings system prompt when set.");
+                        Contains(modelsPage, "System Prompt Override", "Models page should expose provider-specific system prompt override.");
+                        Contains(modelsPage, "models.systemPrompt", "Provider prompt override should have localized tooltip coverage.");
+                        Contains(readme, "provider-specific system prompt", "README should explain provider prompt overrides.");
+                        Contains(restApi, "SystemPrompt", "REST API should document provider prompt override fields.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "DashboardTooltipsAreLocalized", "Dashboard control tooltips use selected-language-aware strings", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string navbar = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "Navbar.tsx"));
+                        string modelsPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ModelsPage.tsx"));
+                        string chatPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ChatPage.tsx"));
+                        string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
+                        string tooltipManager = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "LocalizedTooltipManager.tsx"));
+                        string i18n = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "i18n.ts"));
+
+                        Contains(navbar, "translateTooltip('nav.databases', language)", "Navbar table of contents should use selected language tooltips.");
+                        Contains(navbar, "className=\"language-select\"", "Dashboard should expose a selected-language control.");
+                        Contains(modelsPage, "translateTooltip('models.systemPrompt')", "Model prompt override tooltip should be localized.");
+                        Contains(chatPage, "translateTooltip('chat.streaming')", "Chat streaming control tooltip should be localized.");
+                        Contains(setupWizard, "translateTooltip('models.concurrency')", "Setup wizard provider controls should use localized tooltips.");
+                        Contains(tooltipManager, "querySelectorAll(controlSelector)", "Dashboard should apply fallback tooltips to all interactive controls.");
+                        Contains(tooltipManager, "tablix-language-changed", "Dashboard tooltips should update when the selected language changes.");
+                        Contains(i18n, "generic.button", "Tooltip localization should include fallback button help.");
+                        Contains(i18n, "generic.input", "Tooltip localization should include fallback input help.");
+                        Contains(i18n, "export type DashboardLanguage", "Tooltip localization should define supported dashboard languages.");
+                        Contains(i18n, "en: {", "Tooltip localization should include English strings.");
+                        Contains(i18n, "es: {", "Tooltip localization should include Spanish strings.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "TableViewsUseSharedActionMenus", "Dashboard table row actions use shared overflow menus above the workspace", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string databaseListPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "DatabaseListPage.tsx"));
+                        string modelsPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ModelsPage.tsx"));
+                        string actionMenu = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "ActionMenu.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(databaseListPage, "ActionMenu", "Databases table should use the shared action menu.");
+                        Contains(modelsPage, "ActionMenu", "Models table should use the shared action menu.");
+                        Contains(databaseListPage, "className=\"data-table wide-table\"", "Databases table should use wider table styling.");
+                        Contains(modelsPage, "className=\"data-table wide-table\"", "Models table should use wider table styling.");
+                        Contains(actionMenu, "className=\"floating-action-menu\"", "Action menu component should use the shared floating menu class.");
+                        Contains(stylesheet, "position: fixed;", "Action menu should render relative to the viewport.");
+                        Contains(stylesheet, "z-index: 950;", "Action menu should render above workspace content.");
+                        Contains(stylesheet, ".wide-table", "Stylesheet should define wide table behavior.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "SettingsExposePromptProcessing", "Settings page exposes prompt processing and native tool provider settings", ct =>
