@@ -72,6 +72,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Fixed Dashboard topbar sizing so route content and chat scrolling cannot shrink its vertical height
 - Fixed SQLite persistence consistency by disabling connection pooling, serializing reads and writes through a single operation gate, and wrapping write batches in explicit immediate transactions with rollback
 - Fixed setup wizard table-context generation so model request timeouts apply per table and model calls are bounded by provider concurrency instead of sending one long UI-proxied batch request
+- Fixed dashboard container startup so its generated nginx config preserves long-running API proxy timeouts for context generation
 - Removed a credential-bearing local database entry from the checked-in Docker default configuration
 
 ### Testing

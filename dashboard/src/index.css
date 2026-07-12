@@ -432,18 +432,74 @@ tr:hover {
   min-height: 180px;
 }
 
-.setup-table-contexts {
-  display: grid;
-  gap: 10px;
-  max-height: 420px;
-  overflow: auto;
+.setup-wizard .crawl-event-log {
+  font-size: 12px;
+  line-height: 1.4;
 }
 
-.setup-table-context label,
+.setup-table-contexts {
+  max-height: 420px;
+  overflow: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background-color: var(--bg-primary);
+}
+
 .table-context-header {
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
+}
+
+.setup-table-context-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.setup-table-context-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px 8px;
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.setup-table-context-table th:first-child {
+  width: 210px;
+}
+
+.setup-table-context-table td {
+  padding: 5px 8px;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.setup-table-context-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.setup-table-context-name {
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.setup-table-context-name span,
+.setup-table-context-name strong {
+  display: block;
+}
+
+.setup-table-context-name span {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
 }
 
 .table-context-editor {
@@ -470,9 +526,16 @@ tr:hover {
 }
 
 .table-context-editor textarea,
-.setup-table-context textarea {
+.setup-table-context-table textarea {
   font-family: var(--font-mono);
   font-size: 13px;
+}
+
+.setup-table-context-table textarea {
+  min-height: 58px;
+  padding: 6px 8px;
+  resize: vertical;
+  line-height: 1.35;
 }
 
 .allowed-query-options {

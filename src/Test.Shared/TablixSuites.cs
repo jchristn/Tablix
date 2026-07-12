@@ -2058,14 +2058,20 @@ namespace Test.Shared
                         string chatHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
                         string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
                         string nginx = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "nginx.conf"));
+                        string entrypoint = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "entrypoint.sh"));
 
                         Contains(chatHandler, "preparation.Provider.MaxConcurrentRequests", "Backend batch generation should use provider concurrency limit.");
                         Contains(chatHandler, "GenerateOneTableContextAsync", "Backend batch generation should issue per-table provider requests.");
                         Contains(setupWizard, "buildTableContextsWithConcurrency", "Setup wizard should build table contexts through bounded per-table calls.");
                         Contains(setupWizard, "/table-context/${tableId}/build", "Setup wizard should call per-table build endpoints instead of one long batch.");
+                        DoesNotContain(setupWizard, "/table-context/build", "Setup wizard should not call the batch table-context build endpoint.");
+                        Contains(setupWizard, "const received: Record<string, string> = {}", "Setup wizard should collect each completed table-context response independently.");
+                        Contains(setupWizard, "setTableContexts(previous => ({ ...previous, ...received }))", "Setup wizard should update table context editors as each response arrives.");
                         Contains(setupWizard, "readJsonResponse", "Setup wizard should handle non-JSON gateway errors cleanly.");
                         Contains(nginx, "proxy_read_timeout 3600s;", "Dashboard nginx proxy should allow long-running API operations.");
                         Contains(nginx, "proxy_send_timeout 3600s;", "Dashboard nginx proxy should allow long-running API operations.");
+                        Contains(entrypoint, "proxy_read_timeout 3600s;", "Dashboard runtime nginx proxy should allow long-running API operations.");
+                        Contains(entrypoint, "proxy_send_timeout 3600s;", "Dashboard runtime nginx proxy should allow long-running API operations.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "ProviderConcurrencyDocumented", "Provider concurrency is documented in REST, README, and Postman", ct =>
@@ -2204,6 +2210,21 @@ namespace Test.Shared
                         Contains(stylesheet, "margin-top: 24px;", "Setup wizard actions should be separated from body copy.");
                         Contains(stylesheet, "padding-top: 18px;", "Setup wizard actions should have top padding.");
                         Contains(stylesheet, "border-top: 1px solid var(--border-color);", "Setup wizard actions should have a visual separation from step content.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "SetupWizardTableContextUsesDenseTable", "Setup wizard table context uses a dense table view", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(setupWizard, "setup-table-context-table", "Setup wizard table context step should render a table view.");
+                        Contains(setupWizard, "<th>Table</th>", "Setup wizard table context step should have a table-name column.");
+                        Contains(setupWizard, "<th>Context</th>", "Setup wizard table context step should have a context column.");
+                        Contains(setupWizard, "rows={2}", "Setup wizard table context editors should be compact.");
+                        Contains(stylesheet, "table-layout: fixed;", "Setup wizard table context table should use stable column widths.");
+                        Contains(stylesheet, "width: 210px;", "Setup wizard table context name column should be constrained.");
+                        Contains(stylesheet, "min-height: 58px;", "Setup wizard table context text areas should avoid oversized rows.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "TopbarHeightIsFixed", "Dashboard topbar keeps a fixed vertical size", ct =>

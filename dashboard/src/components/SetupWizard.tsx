@@ -270,9 +270,7 @@ export default function SetupWizard() {
     setError('');
     try {
       const tableIds = detail.Tables.map(table => table.TableId).filter((tableId): tableId is string => Boolean(tableId));
-      const generated: Record<string, string> = {};
-      await buildTableContextsWithConcurrency(tableIds, generated);
-      setTableContexts(previous => ({ ...previous, ...generated }));
+      await buildTableContextsWithConcurrency(tableIds);
 
       const detailResponse = await apiFetch(`/v1/database/${database.Id}`);
       const latest: DatabaseDetail = await detailResponse.json();
@@ -287,7 +285,7 @@ export default function SetupWizard() {
     }
   }
 
-  async function buildTableContextsWithConcurrency(tableIds: string[], generated: Record<string, string>) {
+  async function buildTableContextsWithConcurrency(tableIds: string[]) {
     const concurrency = clampConcurrency(provider.MaxConcurrentRequests);
     let nextIndex = 0;
 
@@ -305,9 +303,11 @@ export default function SetupWizard() {
         });
         const result: BuildTableContextResponse = await readJsonResponse(response, 'Table context generation failed.');
         if (!response.ok || !result.Success) throw new Error(result.Error || 'Table context generation failed.');
+        const received: Record<string, string> = {};
         result.Objects.forEach(context => {
-          if (context.TableId) generated[context.TableId] = context.Context || '';
+          if (context.TableId) received[context.TableId] = context.Context || '';
         });
+        setTableContexts(previous => ({ ...previous, ...received }));
       }
     }
 
@@ -520,13 +520,28 @@ export default function SetupWizard() {
               <label>Generation Instructions</label>
               <textarea rows={4} value={tableContextPrompt} onChange={event => setTableContextPrompt(event.target.value)} />
             </div>
-            <div className="setup-table-contexts">
-              {(detail?.Tables || []).map(table => (
-                <div key={table.TableId || table.TableName} className="setup-table-context">
-                  <label>{table.SchemaName}.{table.TableName}</label>
-                  <textarea rows={3} value={table.TableId ? tableContexts[table.TableId] || '' : ''} onChange={event => table.TableId && setTableContexts(previous => ({ ...previous, [table.TableId as string]: event.target.value }))} />
-                </div>
-              ))}
+            <div className="setup-table-contexts" role="region" aria-label="Table contexts">
+              <table className="setup-table-context-table">
+                <thead>
+                  <tr>
+                    <th>Table</th>
+                    <th>Context</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(detail?.Tables || []).map(table => (
+                    <tr key={table.TableId || table.TableName}>
+                      <td className="setup-table-context-name">
+                        <span>{table.SchemaName}</span>
+                        <strong>{table.TableName}</strong>
+                      </td>
+                      <td>
+                        <textarea rows={2} value={table.TableId ? tableContexts[table.TableId] || '' : ''} onChange={event => table.TableId && setTableContexts(previous => ({ ...previous, [table.TableId as string]: event.target.value }))} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </section>
         )}
