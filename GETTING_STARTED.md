@@ -426,6 +426,8 @@ Factory reset restores:
 - `docker/tablix.json`
 - Docker logs under `docker/logs`
 
+If `docker/tablix.db` is missing during a normal Docker startup, the server creates and initializes it at `/data/tablix.db` automatically. Factory reset still restores the seeded database so examples and setup defaults return to their original state.
+
 ## Common Problems
 
 ### The dashboard says "Failed to load databases"

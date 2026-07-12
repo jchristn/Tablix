@@ -56,6 +56,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Updated dashboard runtime configuration so Docker uses `TABLIX_SERVER_URL` for the nginx proxy while the login page displays the configured server URL; local Vite can use `VITE_TABLIX_SERVER_URL` or `TABLIX_SERVER_URL`
 - Changed server startup so REST and MCP listeners start before initial background database crawls complete
 - Added Docker Compose healthchecks for server and UI containers with a 5 second interval and 2 second timeout, made the UI depend on a healthy backend, and added a configurable 15 second UI startup delay
+- Changed Docker persistence mounting to use `/data/tablix.db` backed by the host `docker/` directory, allowing the server to create and initialize the SQLite product-state database when the file is missing
 - Updated chat and MCP guidance to refresh schema after bad/unknown column or column type errors and correct saved context when refreshed schema proves it stale
 - Updated chat prompt guidance to tell models to execute allowed Tablix query-tool calls when the user asks for data that can be answered from the selected database
 - Changed model provider defaults so `UseNativeToolCalls` is enabled automatically when `SupportsNativeToolCalls` is enabled

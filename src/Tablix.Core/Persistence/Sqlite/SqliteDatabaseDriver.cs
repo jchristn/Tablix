@@ -56,9 +56,7 @@ namespace Tablix.Core.Persistence.Sqlite
         {
             token.ThrowIfCancellationRequested();
 
-            string directory = Path.GetDirectoryName(Path.GetFullPath(Filename));
-            if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
-                Directory.CreateDirectory(directory);
+            PrepareDatabaseFile();
 
             using SqliteConnection connection = await OpenConnectionAsync(token).ConfigureAwait(false);
             await ApplyMigrationsAsync(connection, token).ConfigureAwait(false);
@@ -207,6 +205,33 @@ namespace Tablix.Core.Persistence.Sqlite
             object result = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
             if (result == null || result == DBNull.Value) return 0;
             return Convert.ToInt64(result);
+        }
+
+        private void PrepareDatabaseFile()
+        {
+            string fullPath = Path.GetFullPath(Filename);
+            string directory = Path.GetDirectoryName(fullPath);
+            if (!string.IsNullOrWhiteSpace(directory) && !Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+
+            if (Directory.Exists(fullPath))
+            {
+                try
+                {
+                    Directory.Delete(fullPath);
+                }
+                catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+                {
+                    throw new IOException("SQLite persistence filename '" + fullPath + "' is a directory, not a database file. Remove the directory or configure Persistence.Filename to a file path inside a mounted directory.", exception);
+                }
+            }
+
+            if (!File.Exists(fullPath))
+            {
+                using FileStream stream = new FileStream(fullPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+            }
+
+            Filename = fullPath;
         }
 
         private async Task ApplyMigrationsAsync(SqliteConnection connection, CancellationToken token)

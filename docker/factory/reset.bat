@@ -29,6 +29,7 @@ if errorlevel 1 (
     echo Failed to restore factory database.
     exit /b 1
 )
+if exist "%DOCKER_DIR%\tablix.db\" rd /S /Q "%DOCKER_DIR%\tablix.db"
 copy /Y "%FACTORY_DIR%tablix.db" "%DOCKER_DIR%\tablix.db" >nul
 if errorlevel 1 (
     echo Failed to restore factory Tablix persistence database.

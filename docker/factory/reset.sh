@@ -28,6 +28,9 @@ fi
 echo ""
 echo "Restoring factory database..."
 cp -f "${factory_dir}/database.db" "${docker_dir}/database.db"
+if [ -d "${docker_dir}/tablix.db" ]; then
+    rm -rf "${docker_dir}/tablix.db"
+fi
 cp -f "${factory_dir}/tablix.db" "${docker_dir}/tablix.db"
 rm -f "${docker_dir}/tablix.db-wal" "${docker_dir}/tablix.db-shm"
 

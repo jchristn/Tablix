@@ -664,6 +664,42 @@ namespace Test.Shared
                             TryDelete(filename);
                         }
                     }),
+                    Case("Persistence", "MissingNestedSqliteFileIsCreated", "Missing nested SQLite persistence file is created and initialized", async ct =>
+                    {
+                        string rootDirectory = Path.Combine(Path.GetTempPath(), "tablix_persistence_" + Guid.NewGuid().ToString("N"));
+                        string filename = Path.Combine(rootDirectory, "state", "tablix.db");
+
+                        try
+                        {
+                            SqliteDatabaseDriver driver = new SqliteDatabaseDriver(filename);
+                            await driver.InitializeAsync(ct).ConfigureAwait(false);
+
+                            True(File.Exists(filename), "SQLite persistence file should be created when it is missing.");
+                            long providerCount = await driver.ModelProviders.CountAsync(null, null, ct).ConfigureAwait(false);
+                            True(providerCount > 0, "SQLite persistence file should be initialized with default providers.");
+                        }
+                        finally
+                        {
+                            TryDeleteDirectory(rootDirectory);
+                        }
+                    }),
+                    Case("Persistence", "EmptyDirectoryAtSqliteFilenameIsReplaced", "Empty directory at SQLite persistence filename is replaced", async ct =>
+                    {
+                        string rootDirectory = Path.Combine(Path.GetTempPath(), "tablix_persistence_" + Guid.NewGuid().ToString("N"));
+                        string filename = Path.Combine(rootDirectory, "tablix.db");
+
+                        try
+                        {
+                            Directory.CreateDirectory(filename);
+                            SqliteDatabaseDriver driver = new SqliteDatabaseDriver(filename);
+                            await driver.InitializeAsync(ct).ConfigureAwait(false);
+                            True(File.Exists(filename), "Empty directory at SQLite filename should be replaced by a database file.");
+                        }
+                        finally
+                        {
+                            TryDeleteDirectory(rootDirectory);
+                        }
+                    }),
                     Case("Persistence", "FailedCrawlWriteRollsBack", "Failed crawl metadata write rolls back partial rows", async ct =>
                     {
                         await WithTempPersistenceAsync(async driver =>
@@ -2714,6 +2750,18 @@ namespace Test.Shared
             {
                 if (File.Exists(filename))
                     File.Delete(filename);
+            }
+            catch (IOException)
+            {
+            }
+        }
+
+        private static void TryDeleteDirectory(string directory)
+        {
+            try
+            {
+                if (Directory.Exists(directory))
+                    Directory.Delete(directory, true);
             }
             catch (IOException)
             {

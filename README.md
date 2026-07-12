@@ -88,10 +88,10 @@ The sample SQLite database includes `users`, `orders`, and `line_items` tables s
 
 The `docker/compose.yaml` starts two containers:
 
-- **tablix-server** (`jchristn77/tablix-server`) - the REST API and MCP server. Ports 9100 (REST) and 9102 (MCP) are exposed. The bootstrap `tablix.json`, product-state `tablix.db`, sample `database.db`, and `logs/` directory are bind-mounted from the `docker/` directory so data persists across restarts.
+- **tablix-server** (`jchristn77/tablix-server`) - the REST API and MCP server. Ports 9100 (REST) and 9102 (MCP) are exposed. The bootstrap `tablix.json`, sample `database.db`, and `logs/` directory are bind-mounted from the `docker/` directory. Product state is stored at `/data/tablix.db`, backed by the same host `docker/` directory, so the server can create the SQLite file on first run if it is missing.
 - **tablix-ui** (`jchristn77/tablix-ui`) - the dashboard, served via nginx on port 9101. It proxies API calls to the server using the `TABLIX_SERVER_URL` environment variable and shows that configured URL on the login page.
 
-Both containers include healthchecks that run every 5 seconds with a 2 second timeout. The healthcheck scripts require two consecutive successful heartbeats before reporting healthy and terminate the container after two consecutive failed heartbeats so Docker's restart policy can restart it. The UI depends on a healthy backend and applies a 15 second startup delay through `TABLIX_UI_STARTUP_DELAY_SECONDS`.
+Both containers include simple curl-based healthchecks that run every 5 seconds with a 2 second timeout and use Docker's standard retry handling. The UI depends on a healthy backend and applies a 15 second startup delay through `TABLIX_UI_STARTUP_DELAY_SECONDS`.
 
 #### Running Individual Containers
 
@@ -102,7 +102,7 @@ docker run -d \
   -p 9100:9100 \
   -p 9102:9102 \
   -v $(pwd)/tablix.json:/app/tablix.json \
-  -v $(pwd)/tablix.db:/app/tablix.db \
+  -v $(pwd):/data \
   -v $(pwd)/database.db:/app/database.db \
   -v $(pwd)/logs:/app/logs \
   jchristn77/tablix-server:v0.2.0
@@ -382,6 +382,8 @@ General context update tool retained for compatibility. Prefer `tablix_update_da
 ## Configuration
 
 Tablix uses `tablix.json` only for bootstrap/server settings. Product state such as model providers, configured databases, crawled metadata, database context, and table context lives in `tablix.db`.
+
+For local source runs, the default relative `tablix.db` path is resolved next to `tablix.json` and is created automatically when missing. The supplied Docker configuration uses `/data/tablix.db`, with the host `docker/` directory mounted at `/data`, so Docker does not need a pre-existing SQLite file bind mount.
 
 ```json
 {
