@@ -2151,8 +2151,10 @@ namespace Test.Shared
                         Contains(chatPage, "chat-capability-notice", "Chat page should show fallback provider capability notice.");
                         Contains(chatPage, "This provider is not configured for native tool calls", "Chat page should explain fallback execution when native tools are not active.");
                         DoesNotContain(chatPage, "Native tool calls are enabled for this provider. Tablix validates every database query before execution.", "Chat page should not repeat native tool status already shown in the provider line.");
+                        DoesNotContain(chatPage, "No tool call requested", "Chat page should not render the old native_no_tool_call label.");
                         Contains(chatPage, "chat-execution-note", "Chat page should show response execution notes.");
                         Contains(chatPage, "ExecutionPath", "Chat page should consume execution path.");
+                        Contains(chatPage, "The model did not request a tool call.", "Chat page should render native_no_tool_call as a complete user-facing sentence.");
                         Contains(chatPage, "CapabilityNotice", "Chat page should consume capability notice.");
                         Contains(stylesheet, ".chat-capability-notice", "Capability notice should be styled.");
                         Contains(stylesheet, ".chat-execution-note", "Execution note should be styled.");

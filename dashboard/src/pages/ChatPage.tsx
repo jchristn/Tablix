@@ -411,8 +411,7 @@ export default function ChatPage() {
                   )}
                   {message.Role === 'assistant' && (message.ExecutionPath || message.CapabilityNotice) && (
                     <div className="chat-execution-note">
-                      {message.ExecutionPath && <span>{formatExecutionPath(message.ExecutionPath)}</span>}
-                      {message.CapabilityNotice && <span>{message.CapabilityNotice}</span>}
+                      {formatExecutionNotes(message).map(note => <span key={note}>{note}</span>)}
                     </div>
                   )}
                   {message.Telemetry && <TelemetryIcon telemetry={message.Telemetry} />}
@@ -519,7 +518,28 @@ function formatJsonish(value: string) {
 }
 
 function formatExecutionPath(value: string) {
+  if (value === 'native_tool_calls') return 'Native tool calls';
+  if (value === 'server_fallback') return 'Server fallback';
+  if (value === 'plain') return 'Plain response';
+  if (value === 'execution_disabled') return 'Execution disabled';
   return value.replace(/_/g, ' ');
+}
+
+function formatExecutionNotes(message: ChatUiMessage) {
+  if (message.ExecutionPath === 'native_no_tool_call') {
+    return ['The model did not request a tool call.'];
+  }
+
+  const notes: string[] = [];
+  if (message.ExecutionPath) {
+    notes.push(formatExecutionPath(message.ExecutionPath));
+  }
+
+  if (message.CapabilityNotice) {
+    notes.push(message.CapabilityNotice);
+  }
+
+  return notes;
 }
 
 function TelemetryIcon({ telemetry }: { telemetry: ChatTelemetry }) {
