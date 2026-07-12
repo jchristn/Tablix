@@ -55,7 +55,7 @@ const initialDatabase: DatabaseEntry = {
   DatabaseName: 'sample',
   Schema: 'main',
   Filename: './database.db',
-  AllowedQueries: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+  AllowedQueries: [...allowedQueryOptions],
   Context: '',
 };
 
@@ -71,6 +71,7 @@ export default function SetupWizard() {
   const [tableContexts, setTableContexts] = useState<Record<string, string>>({});
   const [tableContextPrompt, setTableContextPrompt] = useState(defaultTableContextPrompt());
   const [busy, setBusy] = useState(false);
+  const [providerTesting, setProviderTesting] = useState(false);
   const [error, setError] = useState('');
   const crawlLogRef = useRef<HTMLDivElement | null>(null);
 
@@ -109,7 +110,10 @@ export default function SetupWizard() {
   }
 
   async function testProvider() {
+    if (providerTesting) return;
+
     setBusy(true);
+    setProviderTesting(true);
     setError('');
     try {
       const response = await apiFetch('/v1/model/test', {
@@ -121,6 +125,7 @@ export default function SetupWizard() {
     } catch {
       setProviderTest({ Success: false, ProviderId: provider.Id, Model: provider.Model, Message: null, Error: 'Could not connect to server.', TotalMs: 0 });
     } finally {
+      setProviderTesting(false);
       setBusy(false);
     }
   }
@@ -451,6 +456,8 @@ export default function SetupWizard() {
               <Field label="Model" tooltipKey="models.model"><input title={translateTooltip('models.model')} value={provider.Model || ''} onChange={event => setProvider(previous => ({ ...previous, Model: event.target.value }))} /></Field>
               <Field label="API Key" tooltipKey="models.apiKey"><input title={translateTooltip('models.apiKey')} type="password" value={provider.ApiKey || ''} onChange={event => setProvider(previous => ({ ...previous, ApiKey: event.target.value }))} /></Field>
               <Field label="Max Concurrent Requests" tooltipKey="models.concurrency"><input title={translateTooltip('models.concurrency')} type="number" min="1" max="16" value={provider.MaxConcurrentRequests} onChange={event => setProvider(previous => ({ ...previous, MaxConcurrentRequests: parseBoundedNumber(event.target.value, 1, 1, 16) }))} /></Field>
+            </div>
+            <div className="setup-provider-toggles">
               <label className="toggle-row settings-toggle" title={translateTooltip('models.supportsTools')}><input title={translateTooltip('models.supportsTools')} type="checkbox" checked={provider.SupportsNativeToolCalls} onChange={event => updateProviderSupportsNativeTools(event.target.checked)} /><span>Supports native tools</span></label>
               <label className="toggle-row settings-toggle" title={translateTooltip('models.useTools')}><input title={translateTooltip('models.useTools')} type="checkbox" checked={provider.UseNativeToolCalls} disabled={!provider.SupportsNativeToolCalls} onChange={event => setProvider(previous => ({ ...previous, UseNativeToolCalls: event.target.checked }))} /><span>Use native tools</span></label>
             </div>
@@ -521,6 +528,7 @@ export default function SetupWizard() {
           <section className="setup-body">
             <h4>Database Context</h4>
             <p className="muted-text">Generate durable context from the latest crawl with the selected provider.</p>
+            <p className="muted-text">This operation may take some time, please be patient.</p>
           </section>
         )}
 
@@ -568,7 +576,7 @@ export default function SetupWizard() {
 
         <div className="modal-actions">
           {step !== 'complete' && <button type="button" className="btn-secondary setup-skip-button" onClick={dismissSetup}>Skip setup</button>}
-          {step === 'provider' && <button className="btn-secondary" onClick={testProvider} disabled={busy}>Test Provider</button>}
+          {step === 'provider' && <button type="button" className="btn-secondary" onClick={testProvider} disabled={busy || providerTesting} aria-disabled={busy || providerTesting}>Test Provider</button>}
           {step === 'provider' && <button className="btn-primary" onClick={saveProviderAndContinue} disabled={busy}>Save and Continue</button>}
           {step === 'database' && <button className="btn-secondary" onClick={testDatabase} disabled={busy}>Test Database</button>}
           {step === 'database' && <button className="btn-primary" onClick={saveDatabaseAndContinue} disabled={busy}>Save and Continue</button>}
@@ -578,6 +586,18 @@ export default function SetupWizard() {
           {step === 'table-context' && <button className="btn-primary" onClick={buildTableContextsAndContinue} disabled={busy || !tableContextPrompt.trim()}>{busy ? 'Building...' : 'Build Table Contexts'}</button>}
           {step === 'complete' && <button className="btn-primary" onClick={completeSetup}>Go to Chat When Ready</button>}
         </div>
+
+        {providerTesting && (
+          <div className="modal-backdrop setup-validation-backdrop" role="presentation">
+            <div className="modal-panel setup-validation-modal" role="dialog" aria-modal="true" aria-labelledby="provider-test-title" aria-busy="true">
+              <div className="setup-spinner" aria-hidden="true" />
+              <div>
+                <h4 id="provider-test-title">Testing Provider</h4>
+                <p className="muted-text">Tablix is validating that the model endpoint can be reached and can answer a small request.</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

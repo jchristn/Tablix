@@ -2148,7 +2148,9 @@ namespace Test.Shared
                         string chatPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ChatPage.tsx"));
                         string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
 
-                        Contains(chatPage, "chat-capability-notice", "Chat page should show provider capability notice.");
+                        Contains(chatPage, "chat-capability-notice", "Chat page should show fallback provider capability notice.");
+                        Contains(chatPage, "This provider is not configured for native tool calls", "Chat page should explain fallback execution when native tools are not active.");
+                        DoesNotContain(chatPage, "Native tool calls are enabled for this provider. Tablix validates every database query before execution.", "Chat page should not repeat native tool status already shown in the provider line.");
                         Contains(chatPage, "chat-execution-note", "Chat page should show response execution notes.");
                         Contains(chatPage, "ExecutionPath", "Chat page should consume execution path.");
                         Contains(chatPage, "CapabilityNotice", "Chat page should consume capability notice.");
@@ -2259,7 +2261,10 @@ namespace Test.Shared
                         Contains(setupWizard, "Hostname", "Setup wizard should expose hostname for network databases.");
                         Contains(setupWizard, "Password", "Setup wizard should expose password for network databases.");
                         Contains(setupWizard, "Max Concurrent Requests", "Setup wizard should expose provider concurrency limit.");
+                        Contains(setupWizard, "setup-provider-toggles", "Setup wizard provider checkboxes should be grouped in an aligned row.");
+                        Contains(stylesheet, ".setup-provider-toggles", "Setup wizard provider checkbox row should have dedicated alignment styling.");
                         Contains(setupWizard, "allowedQueryOptions.map", "Setup wizard should render allowed queries as checkboxes.");
+                        Contains(setupWizard, "AllowedQueries: [...allowedQueryOptions]", "Setup wizard should check every allowed operation by default for new database setup.");
                         Contains(setupWizard, "type=\"checkbox\"", "Allowed query operations should be checkbox inputs.");
                         Contains(setupWizard, "buildDatabaseCandidate", "Setup wizard should sanitize database payloads before test/save.");
                         Contains(stylesheet, ".allowed-query-options", "Allowed query checkbox group should be styled.");
@@ -2269,11 +2274,16 @@ namespace Test.Shared
                     {
                         string repositoryRoot = FindRepositoryRoot();
                         string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
 
                         Contains(setupWizard, "crawlLogRef", "Setup wizard should keep a ref to the crawl log.");
                         Contains(setupWizard, "requestAnimationFrame", "Setup wizard should scroll after the crawl log renders.");
                         Contains(setupWizard, "log.scrollTop = log.scrollHeight", "Setup wizard crawl log should scroll to the newest progress entry.");
                         Contains(setupWizard, "ref={crawlLogRef}", "Crawl log element should attach the scroll ref.");
+                        Contains(stylesheet, ".setup-log", "Setup wizard crawl log should have dedicated sizing.");
+                        Contains(stylesheet, "height: 180px;", "Setup wizard crawl log should keep a fixed height so the modal does not expand.");
+                        Contains(stylesheet, "max-height: 180px;", "Setup wizard crawl log should scroll before the modal grows.");
+                        Contains(stylesheet, "overflow-y: auto;", "Setup wizard crawl log should scroll as progress entries arrive.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "SetupWizardCanBeDismissed", "Setup wizard exposes dismissal controls", ct =>
@@ -2289,14 +2299,31 @@ namespace Test.Shared
                         Contains(types, "DismissedUtc", "Setup state contract should include dismissal timestamp.");
                         return Task.CompletedTask;
                     }),
+                    Case("DashboardApiContract", "SetupWizardProviderTestShowsModal", "Setup wizard provider validation shows a blocking spinner modal", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(setupWizard, "providerTesting", "Setup wizard should track provider validation separately from other busy states.");
+                        Contains(setupWizard, "if (providerTesting) return;", "Provider validation should ignore duplicate clicks while a test is running.");
+                        Contains(setupWizard, "disabled={busy || providerTesting}", "Test Provider button should be inaccessible while validation is running.");
+                        Contains(setupWizard, "setup-validation-modal", "Setup wizard should render a provider validation modal.");
+                        Contains(setupWizard, "setup-spinner", "Provider validation modal should include a spinner.");
+                        Contains(stylesheet, ".setup-validation-backdrop", "Provider validation modal should have blocking backdrop styling.");
+                        Contains(stylesheet, "@keyframes setup-spinner-rotate", "Provider validation spinner should be animated.");
+                        return Task.CompletedTask;
+                    }),
                     Case("DashboardApiContract", "SetupWizardHasConsistentVerticalSpacing", "Setup wizard keeps adequate body and action spacing", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();
+                        string setupWizard = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "SetupWizard.tsx"));
                         string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
 
                         Contains(stylesheet, ".setup-body", "Setup wizard should have dedicated body spacing.");
                         Contains(stylesheet, "min-height: 120px;", "Short setup steps should reserve enough body height above actions.");
                         Contains(stylesheet, ".setup-wizard .modal-actions", "Setup wizard should have setup-specific action spacing.");
+                        Contains(setupWizard, "This operation may take some time, please be patient.", "Database context generation step should warn users that the model operation can take time.");
                         Contains(stylesheet, "margin-top: 24px;", "Setup wizard actions should be separated from body copy.");
                         Contains(stylesheet, "padding-top: 18px;", "Setup wizard actions should have top padding.");
                         Contains(stylesheet, "border-top: 1px solid var(--border-color);", "Setup wizard actions should have a visual separation from step content.");

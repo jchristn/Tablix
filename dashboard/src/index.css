@@ -446,12 +446,61 @@ tr:hover {
 }
 
 .setup-log {
+  height: 180px;
   min-height: 180px;
+  max-height: 180px;
+  overflow-y: auto;
 }
 
 .setup-wizard .crawl-event-log {
   font-size: 12px;
   line-height: 1.4;
+}
+
+.setup-provider-toggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: center;
+  margin-top: -4px;
+}
+
+.setup-provider-toggles .toggle-row {
+  justify-content: flex-start;
+  margin: 0;
+}
+
+.setup-validation-backdrop {
+  z-index: 900;
+  background-color: rgba(0, 0, 0, 0.34);
+}
+
+.setup-validation-modal {
+  width: min(420px, calc(100vw - 48px));
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 18px;
+}
+
+.setup-validation-modal h4 {
+  margin: 0 0 4px;
+}
+
+.setup-spinner {
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--border-color);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: setup-spinner-rotate 0.8s linear infinite;
+}
+
+@keyframes setup-spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .setup-table-contexts {

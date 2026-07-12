@@ -376,11 +376,9 @@ export default function ChatPage() {
           </div>
         )}
 
-        {selectedProvider && (
+        {selectedProvider && !(selectedProvider.UseNativeToolCalls && selectedProvider.SupportsNativeToolCalls) && (
           <div className="chat-capability-notice">
-            {selectedProvider.UseNativeToolCalls && selectedProvider.SupportsNativeToolCalls
-              ? 'Native tool calls are enabled for this provider. Tablix validates every database query before execution.'
-              : 'This provider is not configured for native tool calls. Tablix can use server-side fallback execution for database data requests.'}
+            This provider is not configured for native tool calls. Tablix can use server-side fallback execution for database data requests.
           </div>
         )}
 
