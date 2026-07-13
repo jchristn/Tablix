@@ -14,6 +14,16 @@ const attributeSelector = '[title], [placeholder], [aria-label]';
 
 export default function LocalizedTooltipManager() {
   useEffect(() => {
+    let localizationFrame = 0;
+
+    function scheduleLocalization() {
+      if (localizationFrame) return;
+      localizationFrame = window.requestAnimationFrame(() => {
+        localizationFrame = 0;
+        applyLocalization();
+      });
+    }
+
     function applyLocalization() {
       const language = getLanguage();
       document.documentElement.lang = language;
@@ -26,14 +36,17 @@ export default function LocalizedTooltipManager() {
       controls.forEach(control => applyTooltip(control, language));
     }
 
-    const observer = new MutationObserver(() => applyLocalization());
+    const observer = new MutationObserver(() => scheduleLocalization());
     observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['aria-label', 'placeholder', 'title', 'data-tooltip-key', 'disabled'] });
-    window.addEventListener('tablix-language-changed', applyLocalization);
+    window.addEventListener('tablix-language-changed', scheduleLocalization);
     applyLocalization();
 
     return () => {
+      if (localizationFrame) {
+        window.cancelAnimationFrame(localizationFrame);
+      }
       observer.disconnect();
-      window.removeEventListener('tablix-language-changed', applyLocalization);
+      window.removeEventListener('tablix-language-changed', scheduleLocalization);
     };
   }, []);
 
@@ -82,11 +95,11 @@ function applyTooltip(control: Element, language: DashboardLanguage) {
 
   const key = control.dataset.tooltipKey;
   if (key) {
-    control.title = translateTooltip(key, language);
+    setAttributeIfChanged(control, 'title', translateTooltip(key, language));
     return;
   }
 
-  control.title = buildFallbackTooltip(control, language);
+  setAttributeIfChanged(control, 'title', buildFallbackTooltip(control, language));
 }
 
 function buildFallbackTooltip(control: HTMLElement, language: DashboardLanguage) {
@@ -137,8 +150,13 @@ function translateAttribute(element: HTMLElement, attribute: string, language: D
 
   const translated = translateAttributeValue(current, language);
   if (translated !== current) {
-    element.setAttribute(attribute, translated);
+    setAttributeIfChanged(element, attribute, translated);
   }
+}
+
+function setAttributeIfChanged(element: HTMLElement, attribute: string, value: string) {
+  if (element.getAttribute(attribute) === value) return;
+  element.setAttribute(attribute, value);
 }
 
 function shouldSkipTextNode(node: Text) {
