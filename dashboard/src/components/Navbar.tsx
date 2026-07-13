@@ -66,6 +66,7 @@ export default function Navbar() {
         <img src={iconImg} alt="Tablix" title={translateTooltip('nav.brand', language)} style={{ height: '28px' }} />
         <Link to="/" title={translateTooltip('nav.brand', language)} style={{ fontWeight: 600, fontSize: '16px', color: 'var(--text-primary)', textDecoration: 'none' }}>Tablix</Link>
         <Link to="/" title={translateTooltip('nav.databases', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Databases</Link>
+        <Link to="/tables" title={translateTooltip('nav.tables', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Tables</Link>
         <Link to="/query" title={translateTooltip('nav.query', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Query</Link>
         <Link to="/chat" title={translateTooltip('nav.chat', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Chat</Link>
         <Link to="/models" title={translateTooltip('nav.models', language)} style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Models</Link>

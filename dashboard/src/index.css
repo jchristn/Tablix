@@ -149,8 +149,8 @@ textarea {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
-  max-width: min(1640px, 100%);
-  margin: 0 auto;
+  max-width: none;
+  margin: 0;
   padding: 20px 28px;
   overflow-y: auto;
   overflow-x: auto;
@@ -589,6 +589,38 @@ tr:hover {
   display: flex;
   gap: 6px;
   align-items: center;
+}
+
+.tables-control-panel .form-group {
+  margin-bottom: 0;
+}
+
+.tables-page-table {
+  table-layout: fixed;
+}
+
+.tables-page-table th:nth-child(1),
+.tables-page-table td:nth-child(1) {
+  width: 130px;
+}
+
+.tables-page-table th:nth-child(3),
+.tables-page-table td:nth-child(3),
+.tables-page-table th:nth-child(4),
+.tables-page-table td:nth-child(4),
+.tables-page-table th:nth-child(5),
+.tables-page-table td:nth-child(5) {
+  width: 118px;
+}
+
+.table-context-preview {
+  max-width: 460px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .table-context-editor textarea,
