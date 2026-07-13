@@ -1,8 +1,10 @@
 # Tablix SQLite Persistence Plan
 
+> Archived implementation plan. This file is preserved for design history and may include historical checklist items. For the current deployment and dashboard workflow, use [README.md](../README.md), [GETTING_STARTED.md](../GETTING_STARTED.md), [REST_API.md](../REST_API.md), and [MCP_API.md](../MCP_API.md).
+
 Tablix v0.2.0 should stop treating `tablix.json` as the product database. The JSON file remains the bootstrap and runtime settings file for server concerns such as ports, logging, authentication keys, and the persistence database location. Product state moves into a single SQLite file: configured databases, model providers, crawled schema metadata, database-level context, table-level context, setup wizard state, and related records added later.
 
-The implementation should land as a whole-product update. Backend persistence, REST APIs, MCP behavior, dashboard workflows, Docker packaging, Postman examples, tests, and documentation must agree on the same model. The user experience target is simple: `docker compose pull`, `docker compose up`, sign into the dashboard, complete the setup wizard, then chat with a configured database.
+The implementation should land as a whole-product update. Backend persistence, REST APIs, MCP behavior, dashboard workflows, Docker packaging, Postman examples, tests, and documentation must agree on the same model. The user experience target is simple: from `docker/`, run `docker compose pull && docker compose up -d`, sign into the dashboard, complete the setup wizard, then chat with a configured database.
 
 ## Implementation Status
 
@@ -18,7 +20,7 @@ The implementation should land as a whole-product update. Backend persistence, R
 - [x] Made `context_records` the source of truth for database-scope and table-scope context; the legacy `database_connections.context` column is retained only for schema compatibility.
 - [x] Added model-generated table context through REST, dashboard detail page actions, first-run setup wizard, docs, Postman, and contract tests.
 - [x] Verified `dotnet build src\Tablix.slnx`, `dotnet run --no-build --project src\Test.Automated\Test.Automated.csproj`, `dotnet test` for xUnit/NUnit adapters, `npm.cmd run build`, JSON validation, SQLite seed validation, Docker compose config validation, and C# structural scans after the latest edits.
-- [ ] Human/manual Docker smoke test remains: `docker compose pull`, `docker compose up`, login, complete wizard, validate provider/database, crawl, build contexts, and chat with the database.
+- [ ] Human/manual Docker smoke test remains: from `docker/`, run `docker compose pull && docker compose up -d`, login, complete wizard, validate provider/database, crawl, build contexts, and chat with the database.
 - [ ] Human/provider validation remains for real external model endpoints requiring credentials.
 
 ## Non-Blocking Assumptions
@@ -1441,7 +1443,7 @@ All tests belong in `Test.Shared` and must be exposed through `Test.Automated`, 
 
 - [x] `tablix.json` no longer contains model providers or configured databases in default/factory/server templates.
 - [x] `tablix.db` is the source of truth for providers, databases, metadata, and context.
-- [ ] Docker deployment works from a clean checkout with `docker compose pull && docker compose up`.
+- [ ] Docker deployment works from a clean checkout with `cd docker && docker compose pull && docker compose up -d`.
 - [x] First-login setup wizard implements the provider, database, crawl, database context, table context, and chat-readiness path; manual browser smoke test remains open.
 - [x] Dashboard Models page exists and manages providers independently of Settings.
 - [x] Database detail page exposes table context management.

@@ -8,7 +8,8 @@ This guide walks through a complete first run using Docker:
 4. Configure a database.
 5. Crawl the database schema.
 6. Build saved database context.
-7. Chat with the database.
+7. Build saved table context.
+8. Chat with the database.
 
 The Docker deployment includes:
 
@@ -41,6 +42,7 @@ From the repository root:
 
 ```bash
 cd docker
+docker compose pull
 docker compose up -d
 ```
 
@@ -78,6 +80,10 @@ On the login page:
 
 Do not test authenticated API endpoints by pasting `/v1/...` URLs directly into a browser. The browser address bar does not include the bearer token, so authenticated endpoints should return `401` there. The dashboard sends the token after sign-in.
 
+If setup has not been completed, the dashboard opens the first-run setup wizard after sign-in. The wizard is the shortest path through provider validation, database validation, schema crawl, database context generation, table context generation, and chat readiness. The page-by-page steps below describe the same workflow and are useful when you skip the wizard or need to adjust an existing deployment.
+
+The topbar also includes theme and language controls. Localization covers dashboard labels, placeholders, accessibility labels, and tooltips; generated chat text, query results, database names, and saved context remain as authored or returned by the server.
+
 ## Step 3: Configure a Model Provider
 
 The Chat and Build Context features require an enabled model provider.
@@ -85,7 +91,7 @@ The Chat and Build Context features require an enabled model provider.
 In the dashboard:
 
 1. Open **Models**.
-2. Either edit an existing provider or click **Add Provider**.
+2. Either edit an existing provider or click **Add Model**.
 3. Fill in the provider fields.
 4. Ensure **Enabled** is checked.
 5. Set **Request Timeout Ms** to the timeout for one provider request. Table-context generation makes one provider request per table, so this is not a timeout for the entire batch.
@@ -402,6 +408,7 @@ docker compose down
 To start again:
 
 ```bash
+docker compose pull
 docker compose up -d
 ```
 

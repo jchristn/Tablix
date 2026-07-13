@@ -45,11 +45,12 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added persisted model provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini
 - Added provider-specific system prompt overrides to the dashboard Models workflow, allowing one model endpoint to replace the global chat prompt when explicitly configured
 - Added selected-language-aware dashboard localization infrastructure and a compact language selector for English, Spanish, French, Italian, Portuguese, Mandarin, Cantonese, Kanji-labeled Japanese, Japanese, and Farsi visible text, control help, placeholders, aria labels, and tooltips
+- Added `build-all.bat` as the aggregate release build entry point for publishing both dashboard and server Docker images with the same version tag
 
 ### Changed
 
 - Updated `Tablix.Core` and `Tablix.Server` package versions to `0.2.0`
-- Updated README, REST API documentation, Docker tags, and Postman collection for v0.2.0
+- Updated README, GETTING_STARTED, REST API documentation, Docker tags, and Postman collection for v0.2.0
 - Added `MCP_API.md` as a complete reference for MCP tools, schemas, examples, and agent guidance
 - Added `GETTING_STARTED.md` with a step-by-step Docker-to-chat onboarding flow
 - Updated the default chat system prompt to restrict model conversation to the selected database, its structure, contents, and relationships
@@ -61,6 +62,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Updated chat prompt guidance to tell models to execute allowed Tablix query-tool calls when the user asks for data that can be answered from the selected database
 - Changed model provider defaults so `UseNativeToolCalls` is enabled automatically when `SupportsNativeToolCalls` is enabled
 - Changed dashboard table views to use wider layouts and shared viewport-positioned overflow action menus
+- Changed the dashboard language selector width so longer native language labels are visible in the topbar
 - Moved configured databases and model providers out of `tablix.json` and into `tablix.db`
 - Updated Docker Compose to mount `tablix.db` as the product-state database
 - Added direct `SQLitePCLRaw.lib.e_sqlite3` package override to resolve the transitive vulnerability warning from 2.1.11

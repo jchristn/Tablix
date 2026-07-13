@@ -68,6 +68,7 @@ The quickest way to get Tablix running is with Docker Compose. The setup include
 ```bash
 git clone https://github.com/jchristn/Tablix.git
 cd Tablix/docker
+docker compose pull
 docker compose up -d
 ```
 
@@ -129,7 +130,15 @@ reset.bat       # Windows
 
 #### Building Images
 
-To build and push Docker images from source:
+To build and push the release Docker images from source, use the aggregate script from the repository root:
+
+```bash
+build-all.bat v0.2.0
+```
+
+The aggregate script runs the dashboard and server image builds in order and pushes both `v0.2.0` and `latest` tags for `jchristn77/tablix-ui` and `jchristn77/tablix-server`. It expects Docker Buildx to have access to the configured builder `cloud-jchristn77-jchristn77` and Docker Hub push permissions for the `jchristn77` repositories.
+
+The individual image scripts remain available when only one image needs to be rebuilt:
 
 ```bash
 build-server.bat v0.2.0
@@ -146,7 +155,11 @@ dotnet run --project Tablix.Server
 
 The server creates a default `tablix.json` on first run for bootstrap settings and initializes `tablix.db` with default model providers, a sample SQLite database connection, setup state, and persistence schema. Swagger UI is available at http://localhost:9100/swagger.
 
-The dashboard includes Databases, Query, Chat, Models, and Settings pages plus a first-run setup wizard. The database detail view shows saved database context from database-scope `context_records` in `tablix.db`, supports inline context edits through `POST /v1/database/{id}/context`, displays table-level context editors, can generate one table context through `POST /v1/database/{id}/table-context/{tableId}/build`, and uses `POST /v1/database/{id}/crawl/stream` to show schema crawl progress in real time with per-table status. The setup wizard generates table context with one request per table, up to the selected provider's `MaxConcurrentRequests`, and fills each table's context editor as soon as that table completes. The Models page manages model providers and connectivity tests. The Databases page exposes row actions from an overflow menu, including Build Context and Delete. Build Context lets a user edit model instructions, generate context from the last successful crawl through a configured provider, and persist the result to SQLite. The Query page can copy result JSON or download result rows as CSV. The Chat page selects a database and provider, supports streaming and non-streaming responses, renders markdown, can execute permitted queries through PolyPrompt native tool calls or server-side fallback planning, displays inline tool calls, shows the execution path, and exposes per-message telemetry. The Settings page edits form-based bootstrap/server settings, prompt-processing settings, and chat-tool settings, and annotates values that are saved immediately but require server restart to affect active listeners, logging, or persistence filename/type.
+The dashboard includes Databases, Query, Chat, Models, and Settings pages plus a first-run setup wizard. On first sign-in, the wizard can validate a model provider, validate a database connection, crawl schema metadata, generate database context, generate table context, and leave the user ready for Chat. Users can skip the wizard and perform the same work from the main pages.
+
+The database detail view shows saved database context from database-scope `context_records` in `tablix.db`, supports inline context edits through `POST /v1/database/{id}/context`, displays table-level context editors, can generate one table context through `POST /v1/database/{id}/table-context/{tableId}/build`, and uses `POST /v1/database/{id}/crawl/stream` to show schema crawl progress in real time with per-table status. The setup wizard generates table context with one request per table, up to the selected provider's `MaxConcurrentRequests`, and fills each table's context editor as soon as that table completes.
+
+The Models page manages model providers, provider-specific system prompt overrides, native-tool settings, per-request timeouts, concurrency limits, and connectivity tests. The Databases page exposes row actions from an overflow menu, including Build Context and Delete. Build Context lets a user edit model instructions, generate context from the last successful crawl through a configured provider, and persist the result to SQLite. The Query page can copy result JSON or download result rows as CSV. The Chat page selects a database and provider, supports streaming and non-streaming responses, renders markdown, can execute permitted queries through PolyPrompt native tool calls or server-side fallback planning, displays inline tool calls, shows the execution path, and exposes per-message telemetry. The Settings page edits form-based bootstrap/server settings, prompt-processing settings, and chat-tool settings, and annotates values that are saved immediately but require server restart to affect active listeners, logging, or persistence filename/type.
 
 Dashboard localization covers static visible labels, control help/tooltips, placeholders, and accessibility labels for English, Spanish, French, Italian, Portuguese, Mandarin, Cantonese, a Kanji-labeled Japanese option, Japanese, and Farsi. Farsi switches the document direction to RTL. Dynamic database names, query results, generated chat content, markdown responses, context text, and server-returned errors are intentionally left as authored or returned.
 
