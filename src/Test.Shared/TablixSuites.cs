@@ -2292,18 +2292,35 @@ namespace Test.Shared
                         string tooltipManager = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "LocalizedTooltipManager.tsx"));
                         string i18n = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "i18n.ts"));
 
+                        Contains(navbar, "dashboardLanguages.map", "Navbar language selector should expose every supported language option.");
                         Contains(navbar, "translateTooltip('nav.databases', language)", "Navbar table of contents should use selected language tooltips.");
                         Contains(navbar, "className=\"language-select\"", "Dashboard should expose a selected-language control.");
                         Contains(modelsPage, "translateTooltip('models.systemPrompt')", "Model prompt override tooltip should be localized.");
                         Contains(chatPage, "translateTooltip('chat.streaming')", "Chat streaming control tooltip should be localized.");
                         Contains(setupWizard, "translateTooltip('models.concurrency')", "Setup wizard provider controls should use localized tooltips.");
                         Contains(tooltipManager, "querySelectorAll(controlSelector)", "Dashboard should apply fallback tooltips to all interactive controls.");
+                        Contains(tooltipManager, "applyVisibleText(document.body, language)", "Dashboard should localize rendered static text, not only tooltips.");
+                        Contains(tooltipManager, "applyAttributes(language)", "Dashboard should localize titles, placeholders, and aria labels.");
+                        Contains(tooltipManager, "characterData: true", "Dashboard should relocalize dynamic text node changes.");
+                        Contains(tooltipManager, "document.documentElement.dir = getLanguageDirection(language)", "Dashboard should update document direction for RTL languages.");
                         Contains(tooltipManager, "tablix-language-changed", "Dashboard tooltips should update when the selected language changes.");
                         Contains(i18n, "generic.button", "Tooltip localization should include fallback button help.");
                         Contains(i18n, "generic.input", "Tooltip localization should include fallback input help.");
                         Contains(i18n, "export type DashboardLanguage", "Tooltip localization should define supported dashboard languages.");
-                        Contains(i18n, "en: {", "Tooltip localization should include English strings.");
-                        Contains(i18n, "es: {", "Tooltip localization should include Spanish strings.");
+                        Contains(i18n, "'en' | 'es' | 'fr' | 'it' | 'pt' | 'zh' | 'yue' | 'ja-kanji' | 'ja' | 'fa'", "Dashboard localization should support all requested languages.");
+                        Contains(i18n, "NativeLabel: 'Español'", "Dashboard localization should use readable native language labels.");
+                        Contains(i18n, "NativeLabel: 'Français'", "Dashboard localization should include French.");
+                        Contains(i18n, "NativeLabel: 'Italiano'", "Dashboard localization should include Italian.");
+                        Contains(i18n, "NativeLabel: 'Português'", "Dashboard localization should include Portuguese.");
+                        Contains(i18n, "NativeLabel: '普通话'", "Dashboard localization should include Mandarin.");
+                        Contains(i18n, "NativeLabel: '廣東話'", "Dashboard localization should include Cantonese.");
+                        Contains(i18n, "NativeLabel: '日本語（漢字）'", "Dashboard localization should include a Kanji-labeled Japanese option.");
+                        Contains(i18n, "NativeLabel: '日本語'", "Dashboard localization should include Japanese.");
+                        Contains(i18n, "NativeLabel: 'فارسی'", "Dashboard localization should include Farsi.");
+                        Contains(i18n, "Direction: 'rtl'", "Dashboard localization should mark Farsi as RTL.");
+                        Contains(i18n, "translateVisibleText", "Dashboard localization should expose visible text translation.");
+                        Contains(i18n, "translateAttributeValue", "Dashboard localization should expose attribute translation.");
+                        DoesNotContain(i18n, "generaciÃ", "Localized strings should not contain mojibake.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "TableViewsUseSharedActionMenus", "Dashboard table row actions use shared overflow menus above the workspace", ct =>

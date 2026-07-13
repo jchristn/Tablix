@@ -1,28 +1,80 @@
 import { useEffect } from 'react';
-import { getLanguage, translateTooltip, type DashboardLanguage } from '../i18n';
+import {
+  formatLocalizedTooltip,
+  getLanguage,
+  getLanguageDirection,
+  translateAttributeValue,
+  translateTooltip,
+  translateVisibleText,
+  type DashboardLanguage
+} from '../i18n';
 
 const controlSelector = 'button, a, input, select, textarea, [role="button"], [tabindex="0"]';
+const attributeSelector = '[title], [placeholder], [aria-label]';
 
 export default function LocalizedTooltipManager() {
   useEffect(() => {
-    function applyTooltips() {
+    function applyLocalization() {
       const language = getLanguage();
+      document.documentElement.lang = language;
+      document.documentElement.dir = getLanguageDirection(language);
+
+      applyVisibleText(document.body, language);
+      applyAttributes(language);
+
       const controls: Element[] = Array.from(document.querySelectorAll(controlSelector));
       controls.forEach(control => applyTooltip(control, language));
     }
 
-    const observer = new MutationObserver(() => applyTooltips());
-    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label', 'placeholder', 'data-tooltip-key', 'disabled'] });
-    window.addEventListener('tablix-language-changed', applyTooltips);
-    applyTooltips();
+    const observer = new MutationObserver(() => applyLocalization());
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['aria-label', 'placeholder', 'title', 'data-tooltip-key', 'disabled'] });
+    window.addEventListener('tablix-language-changed', applyLocalization);
+    applyLocalization();
 
     return () => {
       observer.disconnect();
-      window.removeEventListener('tablix-language-changed', applyTooltips);
+      window.removeEventListener('tablix-language-changed', applyLocalization);
     };
   }, []);
 
   return null;
+}
+
+function applyVisibleText(root: HTMLElement, language: DashboardLanguage) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!(node instanceof Text)) return NodeFilter.FILTER_REJECT;
+      if (!node.textContent || !node.textContent.trim()) return NodeFilter.FILTER_REJECT;
+      if (shouldSkipTextNode(node)) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+
+  const nodes: Text[] = [];
+  let current = walker.nextNode();
+  while (current) {
+    if (current instanceof Text) nodes.push(current);
+    current = walker.nextNode();
+  }
+
+  nodes.forEach(node => {
+    const current = node.textContent || '';
+    const translated = translateVisibleText(current, language);
+    if (translated !== node.textContent) {
+      node.textContent = translated;
+    }
+  });
+}
+
+function applyAttributes(language: DashboardLanguage) {
+  const elements: Element[] = Array.from(document.querySelectorAll(attributeSelector));
+  elements.forEach(element => {
+    if (!(element instanceof HTMLElement)) return;
+    if (shouldSkipAttributeElement(element)) return;
+    translateAttribute(element, 'title', language);
+    translateAttribute(element, 'placeholder', language);
+    translateAttribute(element, 'aria-label', language);
+  });
 }
 
 function applyTooltip(control: Element, language: DashboardLanguage) {
@@ -40,7 +92,7 @@ function applyTooltip(control: Element, language: DashboardLanguage) {
 function buildFallbackTooltip(control: HTMLElement, language: DashboardLanguage) {
   const label = extractLabel(control);
   if (control instanceof HTMLAnchorElement)
-    return formatTooltip('generic.link', label, language);
+    return formatLocalizedTooltip('generic.link', label, language);
 
   if (control instanceof HTMLTextAreaElement)
     return translateTooltip('generic.textarea', language);
@@ -55,13 +107,9 @@ function buildFallbackTooltip(control: HTMLElement, language: DashboardLanguage)
   }
 
   if (control instanceof HTMLButtonElement)
-    return formatTooltip('generic.button', label, language);
+    return formatLocalizedTooltip('generic.button', label, language);
 
   return translateTooltip('generic.control', language);
-}
-
-function formatTooltip(key: string, label: string, language: DashboardLanguage) {
-  return translateTooltip(key, language).replace('{label}', label || 'control');
 }
 
 function extractLabel(control: HTMLElement) {
@@ -81,4 +129,28 @@ function extractLabel(control: HTMLElement) {
   if (id && id.trim()) return id.trim();
 
   return 'control';
+}
+
+function translateAttribute(element: HTMLElement, attribute: string, language: DashboardLanguage) {
+  const current = element.getAttribute(attribute);
+  if (!current) return;
+
+  const translated = translateAttributeValue(current, language);
+  if (translated !== current) {
+    element.setAttribute(attribute, translated);
+  }
+}
+
+function shouldSkipTextNode(node: Text) {
+  const parent = node.parentElement;
+  if (!parent) return true;
+  return shouldSkipElement(parent);
+}
+
+function shouldSkipElement(element: HTMLElement) {
+  return Boolean(element.closest('script, style, svg, pre, code, textarea, input, .markdown-body, .database-context-display, .query-results, .result-table, .monaco-editor, [data-i18n-skip="true"]'));
+}
+
+function shouldSkipAttributeElement(element: HTMLElement) {
+  return Boolean(element.closest('script, style, svg, pre, code, .markdown-body, .database-context-display, .query-results, .result-table, .monaco-editor, [data-i18n-skip="true"]'));
 }

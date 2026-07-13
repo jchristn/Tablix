@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getDisplayServerUrl } from '../api/client';
-import { getLanguage, setLanguage, translateTooltip, type DashboardLanguage } from '../i18n';
+import { dashboardLanguages, getLanguage, setLanguage, translateTooltip, type DashboardLanguage } from '../i18n';
 import iconImg from '../assets/icon.png';
 
 export default function Navbar() {
@@ -96,8 +96,9 @@ export default function Navbar() {
           aria-label="Dashboard help language"
           onChange={event => handleLanguageChanged(event.target.value as DashboardLanguage)}
         >
-          <option value="en">EN</option>
-          <option value="es">ES</option>
+          {dashboardLanguages.map(option => (
+            <option key={option.Code} value={option.Code}>{option.NativeLabel}</option>
+          ))}
         </select>
 
         <button

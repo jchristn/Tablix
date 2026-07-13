@@ -44,7 +44,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Clarified MCP query guidance so data-answer or action requests such as counts, totals, lists, "show me", add, update, and delete should execute permitted queries instead of only returning SQL text
 - Added persisted model provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini
 - Added provider-specific system prompt overrides to the dashboard Models workflow, allowing one model endpoint to replace the global chat prompt when explicitly configured
-- Added selected-language-aware dashboard tooltip infrastructure and a compact language selector for localized control help
+- Added selected-language-aware dashboard localization infrastructure and a compact language selector for English, Spanish, French, Italian, Portuguese, Mandarin, Cantonese, Kanji-labeled Japanese, Japanese, and Farsi visible text, control help, placeholders, aria labels, and tooltips
 
 ### Changed
 
