@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import ClipboardButton from '../components/ClipboardButton';
 import ConfirmDialog from '../components/ConfirmDialog';
+import RecordViewModal, { isInteractiveRowClick, type RecordViewRow } from '../components/RecordViewModal';
 import type {
   BuildContextResponse,
   BuildTableContextResponse,
@@ -46,6 +47,7 @@ export default function DatabaseDetailPage() {
   const [tableContextDrafts, setTableContextDrafts] = useState<Record<string, string>>({});
   const [savingTableContext, setSavingTableContext] = useState<string | null>(null);
   const [buildingTableContext, setBuildingTableContext] = useState<string | null>(null);
+  const [viewRecord, setViewRecord] = useState<DetailViewRecord | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
@@ -392,6 +394,11 @@ export default function DatabaseDetailPage() {
     window.setTimeout(() => sessionStorage.removeItem(key), 1500);
   }
 
+  function openDetailRecord(title: string, rows: RecordViewRow[], event: React.MouseEvent<HTMLTableRowElement>) {
+    if (isInteractiveRowClick(event)) return;
+    setViewRecord({ Title: title, Rows: rows });
+  }
+
   if (error) return <p className="error-text">{error}</p>;
   if (!detail) return <p className="muted-text">Loading...</p>;
 
@@ -501,10 +508,14 @@ export default function DatabaseDetailPage() {
       <div className="card" style={{ marginBottom: '16px' }}>
         <table>
           <tbody>
-            <tr><td title="Unique identifier for this database entry" style={{ fontWeight: 500, width: '140px' }}>ID</td><td>{detail.DatabaseId}</td></tr>
-            <tr><td title="Database engine type" style={{ fontWeight: 500 }}>Type</td><td>{detail.Type}</td></tr>
-            <tr><td title="Database schema name" style={{ fontWeight: 500 }}>Schema</td><td>{detail.Schema || '-'}</td></tr>
-            <tr>
+            <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Database ID', [{ Label: 'ID', Value: detail.DatabaseId }], event)}><td title="Unique identifier for this database entry" style={{ fontWeight: 500, width: '140px' }}>ID</td><td>{detail.DatabaseId}</td></tr>
+            <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Database Type', [{ Label: 'Type', Value: detail.Type }], event)}><td title="Database engine type" style={{ fontWeight: 500 }}>Type</td><td>{detail.Type}</td></tr>
+            <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Database Schema', [{ Label: 'Schema', Value: detail.Schema }], event)}><td title="Database schema name" style={{ fontWeight: 500 }}>Schema</td><td>{detail.Schema || '-'}</td></tr>
+            <tr title="Click to view crawl status" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Crawl Status', [
+              { Label: 'Crawled', Value: detail.IsCrawled },
+              { Label: 'Last Crawl', Value: detail.CrawledUtc ? new Date(detail.CrawledUtc).toLocaleString() : null },
+              { Label: 'Crawl Error', Value: detail.CrawlError },
+            ], event)}>
               <td title="Whether the schema has been successfully crawled" style={{ fontWeight: 500 }}>Status</td>
               <td>
                 {detail.IsCrawled
@@ -513,8 +524,8 @@ export default function DatabaseDetailPage() {
                 }
               </td>
             </tr>
-            {detail.CrawledUtc && <tr><td title="Timestamp of the last successful crawl" style={{ fontWeight: 500 }}>Last Crawl</td><td>{new Date(detail.CrawledUtc).toLocaleString()}</td></tr>}
-            {detail.CrawlError && <tr><td title="Error from the last crawl attempt" style={{ fontWeight: 500 }}>Error</td><td className="error-text">{detail.CrawlError}</td></tr>}
+            {detail.CrawledUtc && <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Last Crawl', [{ Label: 'Last Crawl', Value: new Date(detail.CrawledUtc as string).toLocaleString() }], event)}><td title="Timestamp of the last successful crawl" style={{ fontWeight: 500 }}>Last Crawl</td><td>{new Date(detail.CrawledUtc).toLocaleString()}</td></tr>}
+            {detail.CrawlError && <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Crawl Error', [{ Label: 'Error', Value: detail.CrawlError }], event)}><td title="Error from the last crawl attempt" style={{ fontWeight: 500 }}>Error</td><td className="error-text">{detail.CrawlError}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -606,7 +617,20 @@ export default function DatabaseDetailPage() {
                 </thead>
                 <tbody>
                   {table.Columns.map(col => (
-                    <tr key={col.ColumnName} title={col.ColumnName + ' (' + col.DataType + ')'}>
+                    <tr
+                      key={col.ColumnName}
+                      title={col.ColumnName + ' (' + col.DataType + ')'}
+                      style={{ cursor: 'pointer' }}
+                      onClick={event => openDetailRecord(`${table.SchemaName}.${table.TableName}.${col.ColumnName}`, [
+                        { Label: 'Table', Value: `${table.SchemaName}.${table.TableName}` },
+                        { Label: 'Column', Value: col.ColumnName },
+                        { Label: 'Type', Value: col.DataType },
+                        { Label: 'Primary Key', Value: col.IsPrimaryKey },
+                        { Label: 'Nullable', Value: col.IsNullable },
+                        { Label: 'Default', Value: col.DefaultValue },
+                        { Label: 'Max Length', Value: col.MaxLength },
+                      ], event)}
+                    >
                       <td>{col.ColumnName}</td>
                       <td style={{ fontFamily: 'var(--font-mono)', fontSize: '13px' }}>{col.DataType}</td>
                       <td>{col.IsPrimaryKey ? 'Yes' : ''}</td>
@@ -636,8 +660,20 @@ export default function DatabaseDetailPage() {
           ))}
         </div>
       )}
+
+      <RecordViewModal
+        Open={viewRecord != null}
+        Title={viewRecord?.Title || 'Record'}
+        Rows={viewRecord?.Rows || []}
+        OnClose={() => setViewRecord(null)}
+      />
     </div>
   );
+}
+
+interface DetailViewRecord {
+  Title: string;
+  Rows: RecordViewRow[];
 }
 
 function CrawlStatusPanel({ events }: { events: CrawlProgressEvent[] }) {

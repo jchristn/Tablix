@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import ResultActions from '../components/ResultActions';
+import RecordViewModal, { isInteractiveRowClick } from '../components/RecordViewModal';
 import type { DatabaseEntry, EnumerationResult, QueryResult } from '../types';
 
 export default function QueryPage() {
@@ -10,6 +11,7 @@ export default function QueryPage() {
   const [selectedDb, setSelectedDb] = useState('');
   const [query, setQuery] = useState('');
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [viewRow, setViewRow] = useState<QueryResultRowView | null>(null);
   const [error, setError] = useState('');
   const [executing, setExecuting] = useState(false);
 
@@ -121,7 +123,15 @@ export default function QueryPage() {
               </thead>
               <tbody>
                 {rows.map((row, i) => (
-                  <tr key={i}>
+                  <tr
+                    key={i}
+                    title="Click to view result row"
+                    style={{ cursor: 'pointer' }}
+                    onClick={event => {
+                      if (isInteractiveRowClick(event)) return;
+                      setViewRow({ Index: i + 1, Row: row });
+                    }}
+                  >
                     {columns.map(col => {
                       const raw = row[col.Name];
                       const isNull = raw === null || raw === undefined;
@@ -146,8 +156,21 @@ export default function QueryPage() {
           </div>
         </div>
       )}
+
+      <RecordViewModal
+        Open={viewRow != null}
+        Title={`Result Row ${viewRow?.Index || ''}`.trim()}
+        Subtitle={selectedDb}
+        Rows={viewRow ? columns.map(column => ({ Label: column.Name, Value: viewRow.Row[column.Name] })) : []}
+        OnClose={() => setViewRow(null)}
+      />
     </div>
   );
+}
+
+interface QueryResultRowView {
+  Index: number;
+  Row: Record<string, unknown>;
 }
 
 function toCsv(columns: string[], rows: Record<string, unknown>[]) {

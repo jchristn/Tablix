@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import ActionMenu, { EllipsisIcon, openActionMenuFromButton, type ActionMenuState } from '../components/ActionMenu';
 import ConfirmDialog from '../components/ConfirmDialog';
+import { isInteractiveRowClick } from '../components/RecordViewModal';
 import { translateTooltip } from '../i18n';
 import type {
   EnumerationResult,
@@ -176,6 +177,11 @@ export default function ModelsPage() {
     setActionMenu({ ...openActionMenuFromButton(event.currentTarget), Model: model });
   }
 
+  function openModelRow(model: ModelProviderSummary, event: React.MouseEvent<HTMLTableRowElement>) {
+    if (isInteractiveRowClick(event)) return;
+    openEdit(model.Id);
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -201,7 +207,7 @@ export default function ModelsPage() {
           </thead>
           <tbody>
             {models.map(model => (
-              <tr key={model.Id}>
+              <tr key={model.Id} title="Click to edit model provider" style={{ cursor: 'pointer' }} onClick={event => openModelRow(model, event)}>
                 <td>
                   <strong>{model.Name || model.Id}</strong>
                   <div className="muted-text">{model.Id}</div>
