@@ -2177,6 +2177,22 @@ namespace Test.Shared
                         Contains(stylesheet, "flex: 0 0 auto;", "Chat messages should not shrink and clip inside the transcript.");
                         return Task.CompletedTask;
                     }),
+                    Case("DashboardApiContract", "ChatEmptyStateIsCentered", "Chat empty state is centered in the transcript", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ChatPage.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(chatPage, "className=\"chat-empty\"", "Chat page should render a dedicated empty-state container.");
+                        Contains(chatPage, "Ask about the selected database.", "Chat empty state should include the primary instruction.");
+                        Contains(chatPage, "Responses can include markdown, SQL, tables, and lists.", "Chat empty state should include the response capability note.");
+                        Contains(stylesheet, ".chat-transcript-content", "Chat transcript content should provide the centering container.");
+                        Contains(stylesheet, "min-height: 100%;", "Chat transcript content should fill the available transcript height.");
+                        Contains(stylesheet, ".chat-empty", "Chat empty state should have dedicated styling.");
+                        Contains(stylesheet, "margin: auto;", "Chat empty state should center vertically and horizontally inside the transcript.");
+                        DoesNotContain(stylesheet, "margin: 80px auto;", "Chat empty state should not use a fixed top offset.");
+                        return Task.CompletedTask;
+                    }),
                     Case("DashboardApiContract", "ChatSelectorsResetConversation", "Changing chat database or provider clears the conversation", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();

@@ -24,7 +24,7 @@ v0.2.0 turns Tablix into a more complete database-agent workspace: product state
 - **Guided first-run setup:** the setup wizard walks through model provider validation, database validation, crawl, database context, and table context generation.
 - **Database chat:** the Chat page uses PolyPrompt providers, markdown rendering, native tool calls when supported, server-side fallback execution, inline tool-call displays, and per-message telemetry.
 - **Provider throughput controls:** `RequestTimeoutMs` applies to one provider request, while `MaxConcurrentRequests` caps parallel provider calls for batch operations such as table-context generation.
-- **Dashboard productivity controls:** crawl progress streams table-level status, table-context generation updates rows as individual tables complete, query results can be copied as JSON or downloaded as CSV, and the login page shows the configured server URL.
+- **Dashboard productivity controls:** crawl progress streams table-level status, table-context generation updates rows as individual tables complete, query results can be copied as JSON or downloaded as CSV, the empty Chat state is centered in the transcript, and the login page shows the configured server URL.
 - **Touchstone test infrastructure:** shared tests now run through the CLI, xUnit, and NUnit from one source of truth.
 
 ## What Is Tablix?

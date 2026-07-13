@@ -73,6 +73,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Fixed the Docker Compose dashboard server URL to use `http://tablix-server:9100`
 - Fixed the Docker dashboard nginx proxy so `/v1/...` API requests preserve their full path and query string when forwarded to the Tablix server
 - Fixed Chat page layout so transcript scrolling is constrained to the chat window while the composer remains visible
+- Fixed Chat page empty state so the introductory copy is centered vertically and horizontally in the transcript when no messages exist
 - Fixed Chat transcript scrolling after expanding or collapsing tool-call details so users can always reach the top and bottom of the conversation
 - Fixed Chat page behavior so changing the selected database or provider clears the current conversation
 - Fixed Dashboard topbar sizing so route content and chat scrolling cannot shrink its vertical height
