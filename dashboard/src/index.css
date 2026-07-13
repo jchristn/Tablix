@@ -708,7 +708,6 @@ tr:hover {
 .chat-execution-note span:first-child {
   color: var(--text-secondary);
   font-weight: 600;
-  text-transform: capitalize;
 }
 
 .chat-transcript {
@@ -1129,6 +1128,20 @@ tr:hover {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.confirm-dialog {
+  width: min(460px, 100%);
+  max-height: calc(100vh - 48px);
+}
+
+.confirm-dialog .modal-header {
+  margin-bottom: 20px;
+}
+
+.confirm-dialog .modal-actions {
+  border-top: 1px solid var(--border-color);
+  padding-top: 16px;
 }
 
 .tool-call-list {

@@ -526,11 +526,17 @@ function selectAvailableProviderId(options: ChatOptionsResponse) {
 }
 
 function formatExecutionPath(value: string) {
-  if (value === 'native_tool_calls') return 'Native tool calls';
-  if (value === 'server_fallback') return 'Server fallback';
-  if (value === 'plain') return 'Plain response';
-  if (value === 'execution_disabled') return 'Execution disabled';
-  return value.replace(/_/g, ' ');
+  if (value === 'native_tool_calls') return 'A database tool was used to answer this message.';
+  if (value === 'server_fallback') return 'Tablix ran a database query to answer this message.';
+  if (value === 'plain') return 'The assistant answered without running a database query.';
+  if (value === 'execution_disabled') return 'Database query execution is disabled for this chat.';
+  if (value === 'native_failed_plain') return 'Tool execution failed; the assistant returned a plain model response.';
+  if (value === 'native_tool_call_failed') return 'The requested database tool call failed.';
+  if (value === 'native_no_response') return 'The model did not return a usable response.';
+  if (value === 'native_final_failed') return 'The final answer after tool execution failed.';
+  if (value === 'fallback_planner_failed') return 'Tablix could not plan a database query for this request.';
+  if (value === 'fallback_no_plan') return 'No database query was run for this request.';
+  return 'Execution status: ' + value.replace(/_/g, ' ');
 }
 
 function formatExecutionNotes(message: ChatUiMessage) {
@@ -543,11 +549,22 @@ function formatExecutionNotes(message: ChatUiMessage) {
     notes.push(formatExecutionPath(message.ExecutionPath));
   }
 
-  if (message.CapabilityNotice) {
-    notes.push(message.CapabilityNotice);
+  const capabilityNotice = formatCapabilityNotice(message.CapabilityNotice);
+  if (capabilityNotice) {
+    notes.push(capabilityNotice);
   }
 
   return notes;
+}
+
+function formatCapabilityNotice(value: string | null) {
+  if (!value) return null;
+  if (value.includes('Native tool calls are enabled for this provider')) return null;
+  if (value.includes('The model did not request a native tool for this data question')) {
+    return 'The model did not request a database tool, so Tablix used server-side query execution.';
+  }
+
+  return value;
 }
 
 function TelemetryIcon({ telemetry }: { telemetry: ChatTelemetry }) {

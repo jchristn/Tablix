@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import ActionMenu, { EllipsisIcon, openActionMenuFromButton, type ActionMenuState } from '../components/ActionMenu';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { translateTooltip } from '../i18n';
 import type {
   EnumerationResult,
@@ -47,6 +48,7 @@ export default function ModelsPage() {
   const [provider, setProvider] = useState<ModelProviderUpdate>({ ...emptyProvider });
   const [testResult, setTestResult] = useState<ProviderConnectivityTestResponse | null>(null);
   const [actionMenu, setActionMenu] = useState<ModelActionMenuState | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ModelProviderSummary | null>(null);
 
   useEffect(() => { loadModels(); }, []);
 
@@ -111,13 +113,31 @@ export default function ModelsPage() {
     }
   }
 
-  async function deleteProvider(id: string) {
-    if (!confirm('Delete this model provider?')) return;
-    const response = await apiFetch(`/v1/model/${id}`, { method: 'DELETE' });
-    if (response.status === 401) { navigate('/login'); return; }
-    if (!response.ok) { setError('Failed to delete provider.'); return; }
-    setMessage('Model provider deleted.');
-    await loadModels();
+  function requestDeleteProvider(model: ModelProviderSummary) {
+    setActionMenu(null);
+    setDeleteTarget(model);
+  }
+
+  async function deleteProvider() {
+    if (!deleteTarget) return;
+    const id = deleteTarget.Id;
+    setBusy(true);
+    setError('');
+    try {
+      const response = await apiFetch(`/v1/model/${id}`, { method: 'DELETE' });
+      if (response.status === 401) { navigate('/login'); return; }
+      if (!response.ok) {
+        setError('Failed to delete provider.');
+        return;
+      }
+      setMessage('Model provider deleted.');
+      setDeleteTarget(null);
+      await loadModels();
+    } catch {
+      setError('Could not connect to server.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function testProvider(id?: string) {
@@ -237,9 +257,20 @@ export default function ModelsPage() {
             Label: 'Delete',
             TooltipKey: 'actions.delete',
             Danger: true,
-            OnClick: () => deleteProvider(actionMenu.Model.Id)
+            OnClick: () => requestDeleteProvider(actionMenu.Model)
           }
         ] : []}
+      />
+
+      <ConfirmDialog
+        Open={deleteTarget != null}
+        Title="Delete Model Provider"
+        Message={`Delete model provider '${deleteTarget?.Name || deleteTarget?.Id || ''}'? Chat and context generation can no longer use it.`}
+        ConfirmLabel="Delete"
+        Busy={busy}
+        Danger={true}
+        OnConfirm={deleteProvider}
+        OnCancel={() => !busy && setDeleteTarget(null)}
       />
 
       {modalOpen && (

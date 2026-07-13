@@ -628,9 +628,9 @@ namespace Tablix.Server.Handlers
 
         private async Task<DatabaseDetail> GetOrCrawlDetailAsync(DatabaseEntry entry)
         {
-            DatabaseDetail detail = _CrawlCache.Get(entry.Id);
+            DatabaseDetail detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(entry.Id).ConfigureAwait(false);
             if (detail == null)
-                detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(entry.Id).ConfigureAwait(false);
+                detail = _CrawlCache.Get(entry.Id);
             if (detail == null)
             {
                 detail = await _CrawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
@@ -642,9 +642,9 @@ namespace Tablix.Server.Handlers
 
         private async Task<DatabaseDetail> GetPersistedOrCachedDetailAsync(string databaseId, CancellationToken token)
         {
-            DatabaseDetail detail = _CrawlCache.Get(databaseId);
+            DatabaseDetail detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(databaseId, token).ConfigureAwait(false);
             if (detail != null) return detail;
-            return await _Persistence.DatabaseMetadata.ReadDetailAsync(databaseId, token).ConfigureAwait(false);
+            return _CrawlCache.Get(databaseId);
         }
 
         private async Task CrawlAndPersistAsync(DatabaseEntry entry, CancellationToken token)

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import ClipboardButton from '../components/ClipboardButton';
+import ConfirmDialog from '../components/ConfirmDialog';
 import type {
   BuildContextResponse,
   BuildTableContextResponse,
@@ -45,6 +46,8 @@ export default function DatabaseDetailPage() {
   const [tableContextDrafts, setTableContextDrafts] = useState<Record<string, string>>({});
   const [savingTableContext, setSavingTableContext] = useState<string | null>(null);
   const [buildingTableContext, setBuildingTableContext] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   useEffect(() => { loadDetail(); }, [id]);
   useEffect(() => { loadChatOptions(); }, []);
@@ -156,15 +159,19 @@ export default function DatabaseDetailPage() {
   }
 
   async function handleDelete() {
-    if (!confirm('Delete this database entry?')) return;
-    const response = await apiFetch(`/v1/database/${id}`, { method: 'DELETE' });
-    if (response.status === 401) { navigate('/login'); return; }
-    if (!response.ok) {
-      const message = await response.text();
-      setError(message || 'Failed to delete database.');
-      return;
+    setDeleteBusy(true);
+    try {
+      const response = await apiFetch(`/v1/database/${id}`, { method: 'DELETE' });
+      if (response.status === 401) { navigate('/login'); return; }
+      if (!response.ok) {
+        const message = await response.text();
+        setError(message || 'Failed to delete database.');
+        return;
+      }
+      navigate('/');
+    } finally {
+      setDeleteBusy(false);
     }
-    navigate('/');
   }
 
   function handleStartContextEdit() {
@@ -419,9 +426,20 @@ export default function DatabaseDetailPage() {
             {testingConnection ? 'Testing...' : 'Test'}
           </button>
           <button className="btn-secondary" title="Edit this database entry's connection settings and context" onClick={() => navigate(`/databases/${id}/edit`)}>Edit</button>
-          <button className="btn-danger" title="Permanently remove this database entry from the configuration" onClick={handleDelete}>Delete</button>
+          <button className="btn-danger" title="Permanently remove this database entry from the configuration" onClick={() => setDeleteOpen(true)}>Delete</button>
         </div>
       </div>
+
+      <ConfirmDialog
+        Open={deleteOpen}
+        Title="Delete Database"
+        Message={`Delete database '${detail.Name || detail.DatabaseName || detail.DatabaseId}'? Saved crawl metadata and context for this connection will be removed.`}
+        ConfirmLabel="Delete"
+        Busy={deleteBusy}
+        Danger={true}
+        OnConfirm={handleDelete}
+        OnCancel={() => !deleteBusy && setDeleteOpen(false)}
+      />
 
       {buildContextOpen && (
         <div className="modal-backdrop" role="presentation" onClick={closeBuildContext}>

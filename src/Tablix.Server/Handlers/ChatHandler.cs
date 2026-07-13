@@ -71,9 +71,9 @@ namespace Tablix.Server.Handlers
             List<DatabaseSummary> databaseSummaries = new List<DatabaseSummary>();
             foreach (DatabaseEntry database in databases)
             {
-                DatabaseDetail detail = _CrawlCache.Get(database.Id);
+                DatabaseDetail detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
                 if (detail == null)
-                    detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
+                    detail = _CrawlCache.Get(database.Id);
                 databaseSummaries.Add(DatabaseSummary.From(database, detail));
             }
 
@@ -119,9 +119,9 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
             }
 
-            DatabaseDetail detail = _CrawlCache.Get(database.Id);
+            DatabaseDetail detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
             if (detail == null || !detail.IsCrawled)
-                detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
+                detail = _CrawlCache.Get(database.Id);
             if (detail == null || !detail.IsCrawled)
             {
                 req.Http.Response.StatusCode = 409;
@@ -391,9 +391,9 @@ namespace Tablix.Server.Handlers
                 return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.NotFound, "Provider '" + errorProviderId + "' not found or disabled."));
             }
 
-            DatabaseDetail detail = _CrawlCache.Get(database.Id);
+            DatabaseDetail detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
             if (detail == null)
-                detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken).ConfigureAwait(false);
+                detail = _CrawlCache.Get(database.Id);
             if (detail == null)
             {
                 detail = await _CrawlCache.CrawlOneAsync(database).ConfigureAwait(false);

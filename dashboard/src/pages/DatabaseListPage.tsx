@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import ActionMenu, { EllipsisIcon, openActionMenuFromButton, type ActionMenuState } from '../components/ActionMenu';
+import ConfirmDialog from '../components/ConfirmDialog';
 import { translateTooltip } from '../i18n';
 import type { BuildContextResponse, ChatOptionsResponse, DatabaseSummary, EnumerationResult, ModelProviderSummary } from '../types';
 
@@ -19,6 +20,8 @@ export default function DatabaseListPage() {
   const [contextError, setContextError] = useState('');
   const [contextResult, setContextResult] = useState('');
   const [actionMenu, setActionMenu] = useState<DatabaseActionMenuState | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DatabaseSummary | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
   const maxResults = 20;
   const navigate = useNavigate();
 
@@ -90,17 +93,25 @@ export default function DatabaseListPage() {
     setActionMenu({ ...openActionMenuFromButton(e.currentTarget), Database: db });
   }
 
-  async function deleteDatabase(db: DatabaseSummary) {
+  function requestDeleteDatabase(db: DatabaseSummary) {
     setActionMenu(null);
-    if (!confirm(`Delete database '${db.Id}'?`)) return;
+    setDeleteTarget(db);
+  }
 
+  async function deleteDatabase() {
+    if (!deleteTarget) return;
+
+    setDeleteBusy(true);
     try {
-      const response = await apiFetch(`/v1/database/${db.Id}`, { method: 'DELETE' });
+      const response = await apiFetch(`/v1/database/${deleteTarget.Id}`, { method: 'DELETE' });
       if (response.status === 401) { navigate('/login'); return; }
       if (!response.ok) { setError('Failed to delete database.'); return; }
+      setDeleteTarget(null);
       await loadDatabases();
     } catch {
       setError('Could not connect to server.');
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -259,9 +270,20 @@ export default function DatabaseListPage() {
             Label: 'Delete',
             TooltipKey: 'actions.delete',
             Danger: true,
-            OnClick: () => deleteDatabase(actionMenu.Database)
+            OnClick: () => requestDeleteDatabase(actionMenu.Database)
           }
         ] : []}
+      />
+
+      <ConfirmDialog
+        Open={deleteTarget != null}
+        Title="Delete Database"
+        Message={`Delete database '${deleteTarget?.Name || deleteTarget?.Id || ''}'? Saved crawl metadata and context for this connection will be removed.`}
+        ConfirmLabel="Delete"
+        Busy={deleteBusy}
+        Danger={true}
+        OnConfirm={deleteDatabase}
+        OnCancel={() => !deleteBusy && setDeleteTarget(null)}
       />
 
       {contextTarget && (

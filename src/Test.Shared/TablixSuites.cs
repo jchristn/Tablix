@@ -2107,6 +2107,19 @@ namespace Test.Shared
                         Contains(tableContextMethods, "TableExistsAsync", "Table context writes should verify persisted table metadata before insert.");
                         return Task.CompletedTask;
                     }),
+                    Case("DashboardApiContract", "PersistedMetadataPreferredOverCrawlCache", "Dashboard and chat reads prefer persisted metadata over stale crawl cache", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string databaseHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "DatabaseHandler.cs"));
+                        string chatHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
+
+                        Contains(databaseHandler, "DatabaseDetail detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(databaseId, token)", "Database detail reads should load persisted metadata before crawl cache.");
+                        Contains(databaseHandler, "return _CrawlCache.Get(databaseId);", "Database detail reads should use crawl cache only as a fallback.");
+                        Contains(databaseHandler, "DatabaseDetail detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(entry.Id)", "Table and relationship reads should prefer persisted crawl metadata.");
+                        Contains(chatHandler, "DatabaseDetail detail = await _Persistence.DatabaseMetadata.ReadDetailAsync(database.Id, req.CancellationToken)", "Chat and context build paths should prefer persisted metadata with saved context records.");
+                        Contains(chatHandler, "detail = _CrawlCache.Get(database.Id);", "Chat and context build paths should use crawl cache only as fallback.");
+                        return Task.CompletedTask;
+                    }),
                     Case("DashboardApiContract", "TableContextGenerationUsesProviderConcurrency", "Table context generation uses bounded provider concurrency", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();
@@ -2214,9 +2227,14 @@ namespace Test.Shared
                         Contains(chatPage, "chat-execution-note", "Chat page should show response execution notes.");
                         Contains(chatPage, "ExecutionPath", "Chat page should consume execution path.");
                         Contains(chatPage, "The model did not request a tool call.", "Chat page should render native_no_tool_call as a complete user-facing sentence.");
+                        Contains(chatPage, "Tool execution failed; the assistant returned a plain model response.", "Chat page should render native_failed_plain as a user-facing sentence.");
+                        Contains(chatPage, "Tablix could not plan a database query for this request.", "Chat page should render fallback planner failures as user-facing text.");
+                        Contains(chatPage, "function formatCapabilityNotice", "Chat page should normalize capability notices before display.");
+                        Contains(chatPage, "return null;", "Chat page should suppress redundant provider capability notices.");
                         Contains(chatPage, "CapabilityNotice", "Chat page should consume capability notice.");
                         Contains(stylesheet, ".chat-capability-notice", "Capability notice should be styled.");
                         Contains(stylesheet, ".chat-execution-note", "Execution note should be styled.");
+                        DoesNotContain(stylesheet, "text-transform: capitalize;", "Chat execution notes should preserve sentence casing.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "ChatStreamingUsesPolyPromptChunks", "Streaming chat sends PolyPrompt chunks instead of one completed message", ct =>
@@ -2288,6 +2306,26 @@ namespace Test.Shared
                         Contains(stylesheet, "position: fixed;", "Action menu should render relative to the viewport.");
                         Contains(stylesheet, "z-index: 950;", "Action menu should render above workspace content.");
                         Contains(stylesheet, ".wide-table", "Stylesheet should define wide table behavior.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "DashboardUsesCustomConfirmDialogs", "Dashboard destructive confirmations use custom modal dialogs", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string confirmDialog = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "ConfirmDialog.tsx"));
+                        string databaseListPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "DatabaseListPage.tsx"));
+                        string databaseDetailPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "DatabaseDetailPage.tsx"));
+                        string modelsPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ModelsPage.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+                        string dashboardSource = confirmDialog + databaseListPage + databaseDetailPage + modelsPage;
+
+                        Contains(confirmDialog, "role=\"alertdialog\"", "ConfirmDialog should render an accessible alert dialog.");
+                        Contains(confirmDialog, "Danger", "ConfirmDialog should support destructive action styling.");
+                        Contains(databaseListPage, "<ConfirmDialog", "Database list delete should use the shared confirmation dialog.");
+                        Contains(databaseDetailPage, "<ConfirmDialog", "Database detail delete should use the shared confirmation dialog.");
+                        Contains(modelsPage, "<ConfirmDialog", "Models delete should use the shared confirmation dialog.");
+                        Contains(stylesheet, ".confirm-dialog", "Confirm dialog should have dedicated modal sizing.");
+                        DoesNotContain(dashboardSource, "confirm(", "Dashboard code should not use browser confirm dialogs.");
+                        DoesNotContain(dashboardSource, "alert(", "Dashboard code should not use browser alert dialogs.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "SettingsExposePromptProcessing", "Settings page exposes prompt processing and native tool provider settings", ct =>
