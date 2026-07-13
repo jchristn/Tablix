@@ -82,7 +82,7 @@ export default function ChatPage() {
       const data: ChatOptionsResponse = await response.json();
       setOptions(data);
       setDatabaseId(data.Databases[0]?.Id || '');
-      setProviderId(data.DefaultProviderId || data.Providers[0]?.Id || '');
+      setProviderId(selectAvailableProviderId(data));
       setStreaming(data.DefaultStreaming);
       setError('');
     } catch {
@@ -515,6 +515,14 @@ function formatJsonish(value: string) {
   } catch {
     return value;
   }
+}
+
+function selectAvailableProviderId(options: ChatOptionsResponse) {
+  if (options.DefaultProviderId && options.Providers.some(provider => provider.Id === options.DefaultProviderId)) {
+    return options.DefaultProviderId;
+  }
+
+  return options.Providers[0]?.Id || '';
 }
 
 function formatExecutionPath(value: string) {

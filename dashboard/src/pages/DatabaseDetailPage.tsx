@@ -71,7 +71,7 @@ export default function DatabaseDetailPage() {
 
       const data: ChatOptionsResponse = await response.json();
       setProviders(data.Providers || []);
-      setDefaultProviderId(data.DefaultProviderId || data.Providers?.[0]?.Id || '');
+      setDefaultProviderId(selectAvailableProviderId(data));
     } catch {
       // Chat options are optional for database detail rendering.
     }
@@ -713,6 +713,14 @@ function createTableContextDrafts(detail: DatabaseDetail) {
     }
   });
   return drafts;
+}
+
+function selectAvailableProviderId(options: ChatOptionsResponse) {
+  if (options.DefaultProviderId && options.Providers.some(provider => provider.Id === options.DefaultProviderId)) {
+    return options.DefaultProviderId;
+  }
+
+  return options.Providers[0]?.Id || '';
 }
 
 function CloseIcon() {

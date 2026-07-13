@@ -302,7 +302,7 @@ namespace Tablix.Server
             // Register handlers
             _DatabaseHandler = new DatabaseHandler(_SettingsManager, _Persistence, _CrawlCache);
             _ChatHandler = new ChatHandler(_SettingsManager, _Persistence, _CrawlCache, _Logging);
-            _ModelProviderHandler = new ModelProviderHandler(_Persistence, _Logging);
+            _ModelProviderHandler = new ModelProviderHandler(_SettingsManager, _Persistence, _Logging);
             _SetupHandler = new SetupHandler(_Persistence);
             _SettingsHandler = new SettingsHandler(_SettingsManager, _Persistence);
 

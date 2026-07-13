@@ -22,16 +22,19 @@ namespace Tablix.Server.Handlers
     /// </summary>
     public class ModelProviderHandler
     {
+        private readonly SettingsManager _SettingsManager;
         private readonly DatabaseDriverBase _Persistence;
         private readonly LoggingModule _Logging;
 
         /// <summary>
         /// Instantiate.
         /// </summary>
+        /// <param name="settingsManager">Settings manager.</param>
         /// <param name="persistence">Persistence driver.</param>
         /// <param name="logging">Logging module.</param>
-        public ModelProviderHandler(DatabaseDriverBase persistence, LoggingModule logging)
+        public ModelProviderHandler(SettingsManager settingsManager, DatabaseDriverBase persistence, LoggingModule logging)
         {
+            _SettingsManager = settingsManager ?? throw new ArgumentNullException(nameof(settingsManager));
             _Persistence = persistence ?? throw new ArgumentNullException(nameof(persistence));
             _Logging = logging ?? new LoggingModule();
         }
@@ -102,6 +105,7 @@ namespace Tablix.Server.Handlers
             {
                 ModelProviderSettings provider = ToSettings(request);
                 ModelProviderSettings created = await _Persistence.ModelProviders.CreateAsync(provider, req.CancellationToken).ConfigureAwait(false);
+                await RepairDefaultProviderIdAsync(req.CancellationToken).ConfigureAwait(false);
                 req.Http.Response.StatusCode = 201;
                 return ModelProviderSummary.From(created);
             }
@@ -147,6 +151,7 @@ namespace Tablix.Server.Handlers
                 provider.ApiKey = existing.ApiKey;
 
             ModelProviderSettings updated = await _Persistence.ModelProviders.UpdateAsync(provider, true, req.CancellationToken).ConfigureAwait(false);
+            await RepairDefaultProviderIdAsync(req.CancellationToken).ConfigureAwait(false);
             return ModelProviderSummary.From(updated);
         }
 
@@ -165,6 +170,7 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.NotFound, "Provider '" + id + "' not found.");
             }
 
+            await RepairDefaultProviderIdAsync(req.CancellationToken).ConfigureAwait(false);
             req.Http.Response.StatusCode = 204;
             return null;
         }
@@ -201,7 +207,20 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.BadRequest, "Provider settings are required.");
             }
 
-            return await TestProviderAsync(request.Provider, req.CancellationToken).ConfigureAwait(false);
+            ModelProviderSettings provider = await ResolveProviderForTestAsync(request.Provider, req.CancellationToken).ConfigureAwait(false);
+            return await TestProviderAsync(provider, req.CancellationToken).ConfigureAwait(false);
+        }
+
+        private async Task<ModelProviderSettings> ResolveProviderForTestAsync(ModelProviderSettings provider, CancellationToken token)
+        {
+            if (provider == null) throw new ArgumentNullException(nameof(provider));
+            if (!String.IsNullOrWhiteSpace(provider.ApiKey) || String.IsNullOrWhiteSpace(provider.Id)) return provider;
+
+            ModelProviderSettings existing = await _Persistence.ModelProviders.ReadAsync(provider.Id, token).ConfigureAwait(false);
+            if (existing == null || String.IsNullOrWhiteSpace(existing.ApiKey)) return provider;
+
+            provider.ApiKey = existing.ApiKey;
+            return provider;
         }
 
         private async Task<ProviderConnectivityTestResponse> TestProviderAsync(ModelProviderSettings provider, CancellationToken token)
@@ -311,6 +330,25 @@ namespace Tablix.Server.Handlers
                 RequestTimeoutMs = request.RequestTimeoutMs,
                 MaxConcurrentRequests = request.MaxConcurrentRequests
             };
+        }
+
+        private async Task RepairDefaultProviderIdAsync(CancellationToken token)
+        {
+            TablixSettings settings = _SettingsManager.Settings;
+            ModelProviderSettings currentDefault = null;
+            if (!String.IsNullOrWhiteSpace(settings.Chat.DefaultProviderId))
+                currentDefault = await _Persistence.ModelProviders.ReadAsync(settings.Chat.DefaultProviderId, token).ConfigureAwait(false);
+
+            if (currentDefault != null && currentDefault.Enabled)
+                return;
+
+            List<ModelProviderSettings> enabledProviders = await _Persistence.ModelProviders.EnumerateAsync(1000, 0, null, true, token).ConfigureAwait(false);
+            string replacementProviderId = enabledProviders.Count > 0 ? enabledProviders[0].Id : null;
+            if (String.Equals(settings.Chat.DefaultProviderId, replacementProviderId, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            settings.Chat.DefaultProviderId = replacementProviderId;
+            _SettingsManager.UpdateSettings(settings);
         }
 
         private static void ReadEnumerationQuery(AppRequest req, out int maxResults, out int skip, out string filter, out bool? enabled)

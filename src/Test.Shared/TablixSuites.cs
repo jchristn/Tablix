@@ -2178,6 +2178,29 @@ namespace Test.Shared
                         Contains(chatPage, "onChange={event => handleProviderChanged(event.target.value)}", "Provider selector should reset the conversation when changed.");
                         return Task.CompletedTask;
                     }),
+                    Case("DashboardApiContract", "ChatDefaultProviderIgnoresStaleSettings", "Chat default provider ignores stale settings values", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
+                        string modelProviderHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ModelProviderHandler.cs"));
+                        string tablixServer = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "TablixServer.cs"));
+                        string chatPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ChatPage.tsx"));
+                        string databaseListPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "DatabaseListPage.tsx"));
+                        string databaseDetailPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "DatabaseDetailPage.tsx"));
+
+                        Contains(chatHandler, "SelectEffectiveDefaultProviderId(settings.Chat.DefaultProviderId, providers)", "Chat options should return an enabled provider as the effective default.");
+                        Contains(chatHandler, "ResolveProviderAsync(providerId, settings.Chat.DefaultProviderId", "Chat handlers should resolve stale configured defaults to an enabled provider.");
+                        Contains(chatHandler, "selectedIsConfiguredDefault", "Provider fallback should be limited to the configured default path.");
+                        Contains(modelProviderHandler, "RepairDefaultProviderIdAsync", "Model provider changes should repair stale default provider settings.");
+                        Contains(modelProviderHandler, "settings.Chat.DefaultProviderId = replacementProviderId", "Default provider repair should persist the replacement provider ID.");
+                        Contains(modelProviderHandler, "ResolveProviderForTestAsync", "Model provider tests should resolve stored secrets for redacted edit forms.");
+                        Contains(modelProviderHandler, "provider.ApiKey = existing.ApiKey", "Model provider draft tests should reuse the stored API key when the edit form leaves it blank.");
+                        Contains(tablixServer, "new ModelProviderHandler(_SettingsManager, _Persistence, _Logging)", "Model provider handler should have settings access for default repair.");
+                        Contains(chatPage, "function selectAvailableProviderId", "Chat page should validate default provider IDs against returned providers.");
+                        Contains(databaseListPage, "function selectAvailableProviderId", "Database list context builder should validate default provider IDs.");
+                        Contains(databaseDetailPage, "function selectAvailableProviderId", "Database detail context builder should validate default provider IDs.");
+                        return Task.CompletedTask;
+                    }),
                     Case("DashboardApiContract", "ChatExecutionPathVisible", "Chat page displays tool execution path and capability notices", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();

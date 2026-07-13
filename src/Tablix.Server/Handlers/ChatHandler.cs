@@ -80,7 +80,7 @@ namespace Tablix.Server.Handlers
             ChatOptionsResponse response = new ChatOptionsResponse
             {
                 Enabled = settings.Chat.Enabled,
-                DefaultProviderId = settings.Chat.DefaultProviderId,
+                DefaultProviderId = SelectEffectiveDefaultProviderId(settings.Chat.DefaultProviderId, providers),
                 DefaultStreaming = settings.Chat.DefaultStreaming,
                 Databases = databaseSummaries,
                 Providers = providers
@@ -128,12 +128,13 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.Conflict, "A successful crawl is required before building context.");
             }
 
-            string providerId = String.IsNullOrWhiteSpace(request.ProviderId) ? settings.Chat.DefaultProviderId : request.ProviderId;
-            ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(providerId, req.CancellationToken).ConfigureAwait(false);
+            string providerId = request.ProviderId;
+            ModelProviderSettings provider = await ResolveProviderAsync(providerId, settings.Chat.DefaultProviderId, req.CancellationToken).ConfigureAwait(false);
             if (provider == null || !provider.Enabled)
             {
                 req.Http.Response.StatusCode = 404;
-                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Provider '" + providerId + "' not found or disabled.");
+                string errorProviderId = String.IsNullOrWhiteSpace(providerId) ? settings.Chat.DefaultProviderId : providerId;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Provider '" + errorProviderId + "' not found or disabled.");
             }
 
             string instructions = String.IsNullOrWhiteSpace(request.Prompt) ? DefaultContextBuildInstructions() : request.Prompt.Trim();
@@ -381,12 +382,13 @@ namespace Tablix.Server.Handlers
                 return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + request.DatabaseId + "' not found."));
             }
 
-            string providerId = String.IsNullOrWhiteSpace(request.ProviderId) ? settings.Chat.DefaultProviderId : request.ProviderId;
-            ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(providerId, req.CancellationToken).ConfigureAwait(false);
+            string providerId = request.ProviderId;
+            ModelProviderSettings provider = await ResolveProviderAsync(providerId, settings.Chat.DefaultProviderId, req.CancellationToken).ConfigureAwait(false);
             if (provider == null || !provider.Enabled)
             {
                 req.Http.Response.StatusCode = 404;
-                return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.NotFound, "Provider '" + providerId + "' not found or disabled."));
+                string errorProviderId = String.IsNullOrWhiteSpace(providerId) ? settings.Chat.DefaultProviderId : providerId;
+                return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.NotFound, "Provider '" + errorProviderId + "' not found or disabled."));
             }
 
             DatabaseDetail detail = _CrawlCache.Get(database.Id);
@@ -437,11 +439,11 @@ namespace Tablix.Server.Handlers
                 return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.Conflict, "A successful crawl is required before building context."));
             }
 
-            string selectedProviderId = String.IsNullOrWhiteSpace(providerId) ? settings.Chat.DefaultProviderId : providerId;
-            ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(selectedProviderId, req.CancellationToken).ConfigureAwait(false);
+            ModelProviderSettings provider = await ResolveProviderAsync(providerId, settings.Chat.DefaultProviderId, req.CancellationToken).ConfigureAwait(false);
             if (provider == null || !provider.Enabled)
             {
                 req.Http.Response.StatusCode = 404;
+                string selectedProviderId = String.IsNullOrWhiteSpace(providerId) ? settings.Chat.DefaultProviderId : providerId;
                 return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.NotFound, "Provider '" + selectedProviderId + "' not found or disabled."));
             }
 
@@ -639,6 +641,40 @@ namespace Tablix.Server.Handlers
         {
             if (detail == null || detail.Tables == null || String.IsNullOrWhiteSpace(tableId)) return null;
             return detail.Tables.FirstOrDefault(table => String.Equals(table.TableId, tableId, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private async Task<ModelProviderSettings> ResolveProviderAsync(string requestedProviderId, string configuredDefaultProviderId, CancellationToken token)
+        {
+            string selectedProviderId = String.IsNullOrWhiteSpace(requestedProviderId) ? configuredDefaultProviderId : requestedProviderId;
+            if (!String.IsNullOrWhiteSpace(selectedProviderId))
+            {
+                ModelProviderSettings selectedProvider = await _Persistence.ModelProviders.ReadAsync(selectedProviderId, token).ConfigureAwait(false);
+                if (selectedProvider != null && selectedProvider.Enabled)
+                    return selectedProvider;
+
+                bool selectedIsConfiguredDefault = String.Equals(selectedProviderId, configuredDefaultProviderId, StringComparison.OrdinalIgnoreCase);
+                if (!selectedIsConfiguredDefault)
+                    return null;
+            }
+
+            List<ModelProviderSettings> enabledProviders = await _Persistence.ModelProviders.EnumerateAsync(1000, 0, null, true, token).ConfigureAwait(false);
+            if (enabledProviders == null || enabledProviders.Count == 0) return null;
+            return enabledProviders[0];
+        }
+
+        private static string SelectEffectiveDefaultProviderId(string configuredDefaultProviderId, List<ModelProviderSettings> enabledProviders)
+        {
+            if (enabledProviders == null || enabledProviders.Count == 0) return configuredDefaultProviderId;
+
+            foreach (ModelProviderSettings provider in enabledProviders)
+            {
+                if (provider == null) continue;
+                if (String.Equals(provider.Id, configuredDefaultProviderId, StringComparison.OrdinalIgnoreCase))
+                    return provider.Id;
+            }
+
+            ModelProviderSettings firstEnabledProvider = enabledProviders[0];
+            return firstEnabledProvider == null ? configuredDefaultProviderId : firstEnabledProvider.Id;
         }
 
         private CompletionClientBase CreateClient(ModelProviderSettings provider)

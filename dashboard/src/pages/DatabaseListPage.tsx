@@ -44,7 +44,7 @@ export default function DatabaseListPage() {
 
       const data: ChatOptionsResponse = await response.json();
       setProviders(data.Providers || []);
-      setDefaultProviderId(data.DefaultProviderId || data.Providers?.[0]?.Id || '');
+      setDefaultProviderId(selectAvailableProviderId(data));
     } catch {
       // Chat options are optional for list rendering.
     }
@@ -335,6 +335,14 @@ Include:
 - Safe query guidance that respects the configured allowed query types.
 
 Do not include credentials, secrets, raw result rows, or unrelated commentary.`;
+}
+
+function selectAvailableProviderId(options: ChatOptionsResponse) {
+  if (options.DefaultProviderId && options.Providers.some(provider => provider.Id === options.DefaultProviderId)) {
+    return options.DefaultProviderId;
+  }
+
+  return options.Providers[0]?.Id || '';
 }
 
 function CloseIcon() {
