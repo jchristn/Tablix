@@ -27,6 +27,7 @@ export default function ChatPage() {
   const transcriptContentRef = useRef<HTMLDivElement | null>(null);
   const stickToBottomRef = useRef(true);
   const scrollFrameRef = useRef<number | null>(null);
+  const activeRequestRef = useRef<AbortController | null>(null);
   const [options, setOptions] = useState<ChatOptionsResponse | null>(null);
   const [databaseId, setDatabaseId] = useState('');
   const [providerId, setProviderId] = useState('');
@@ -65,6 +66,7 @@ export default function ChatPage() {
       if (scrollFrameRef.current != null) {
         cancelAnimationFrame(scrollFrameRef.current);
       }
+      activeRequestRef.current?.abort();
     };
   }, []);
 
@@ -120,6 +122,8 @@ export default function ChatPage() {
     setInput('');
     setSending(true);
     setError('');
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
 
     const request: ChatRequest = {
       DatabaseId: databaseId,
@@ -128,20 +132,30 @@ export default function ChatPage() {
       Streaming: streaming,
     };
 
-    if (streaming) {
-      await sendStreaming(request, assistantId);
-    } else {
-      await sendNonStreaming(request, assistantId);
+    try {
+      if (streaming) {
+        await sendStreaming(request, assistantId, controller.signal);
+      } else {
+        await sendNonStreaming(request, assistantId, controller.signal);
+      }
+    } finally {
+      if (activeRequestRef.current === controller) {
+        activeRequestRef.current = null;
+      }
+      setSending(false);
     }
-
-    setSending(false);
   }
 
-  async function sendNonStreaming(request: ChatRequest, assistantId: string) {
+  function stopGeneration() {
+    activeRequestRef.current?.abort();
+  }
+
+  async function sendNonStreaming(request: ChatRequest, assistantId: string, signal: AbortSignal) {
     try {
       const response = await apiFetch('/v1/chat', {
         method: 'POST',
         body: JSON.stringify(request),
+        signal,
       });
 
       if (response.status === 401) { navigate('/login'); return; }
@@ -155,16 +169,21 @@ export default function ChatPage() {
       setMessages(previous => previous.map(message => message.Id === assistantId
         ? { ...message, Content: result.Message || '', Telemetry: result.Telemetry, ToolCalls: result.ToolCalls || [], ExecutionPath: result.ExecutionPath, CapabilityNotice: result.CapabilityNotice }
         : message));
-    } catch {
+    } catch (ex) {
+      if (isAbortError(ex)) {
+        stopAssistant(assistantId);
+        return;
+      }
       failAssistant(assistantId, 'Could not connect to server.');
     }
   }
 
-  async function sendStreaming(request: ChatRequest, assistantId: string) {
+  async function sendStreaming(request: ChatRequest, assistantId: string, signal: AbortSignal) {
     try {
       const response = await apiFetch('/v1/chat/stream', {
         method: 'POST',
         body: JSON.stringify(request),
+        signal,
       });
 
       if (response.status === 401) { navigate('/login'); return; }
@@ -193,7 +212,11 @@ export default function ChatPage() {
       if (buffer.trim()) {
         handleStreamFrame(buffer, assistantId);
       }
-    } catch {
+    } catch (ex) {
+      if (isAbortError(ex)) {
+        stopAssistant(assistantId);
+        return;
+      }
       failAssistant(assistantId, 'Could not connect to server.');
     }
   }
@@ -244,6 +267,18 @@ export default function ChatPage() {
     setMessages(previous => previous.map(item => item.Id === assistantId
       ? { ...item, Content: 'Request failed: ' + message }
       : item));
+  }
+
+  function stopAssistant(assistantId: string) {
+    setError('');
+    setMessages(previous => previous.map(item => {
+      if (item.Id !== assistantId) return item;
+      return {
+        ...item,
+        Content: item.Content || 'Generation stopped.',
+        CapabilityNotice: item.Content ? 'Generation stopped.' : item.CapabilityNotice,
+      };
+    }));
   }
 
   function mergeToolCall(existing: ChatToolCall[], next: ChatToolCall) {
@@ -437,8 +472,14 @@ export default function ChatPage() {
             <span className="chat-input-help">Enter to send, Shift+Enter for newline</span>
           </div>
           <div className="chat-send-column">
-            <button className="btn-primary" title={translateTooltip('chat.send')} type="submit" disabled={sending || !input.trim() || !databaseId || !providerId || !options?.Enabled}>
-              {sending ? 'Sending...' : 'Send'}
+            <button
+              className={sending ? 'btn-secondary' : 'btn-primary'}
+              title={sending ? 'Stop generation' : translateTooltip('chat.send')}
+              type={sending ? 'button' : 'submit'}
+              onClick={sending ? stopGeneration : undefined}
+              disabled={!sending && (!input.trim() || !databaseId || !providerId || !options?.Enabled)}
+            >
+              {sending ? 'Stop' : 'Send'}
             </button>
           </div>
         </form>
@@ -515,6 +556,10 @@ function formatJsonish(value: string) {
   } catch {
     return value;
   }
+}
+
+function isAbortError(value: unknown) {
+  return value instanceof DOMException && value.name === 'AbortError';
 }
 
 function selectAvailableProviderId(options: ChatOptionsResponse) {
