@@ -21,29 +21,6 @@ const networkDefaults: Record<string, { Port: number; User: string; Schema: stri
   SqlServer: { Port: 1433, User: 'sa', Schema: 'dbo' },
 };
 
-const initialProvider: ModelProviderUpdate = {
-  Id: 'provider_ollama_local',
-  Name: 'Local Ollama',
-  Type: 'Ollama',
-  Endpoint: 'http://ollama:11434',
-  ApiKey: '',
-  HasApiKey: false,
-  Model: 'gemma3:4b',
-  SystemPrompt: null,
-  Enabled: true,
-  DefaultStreaming: true,
-  SupportsNativeToolCalls: true,
-  UseNativeToolCalls: true,
-  SupportsStrictJson: false,
-  ToolCapabilityNote: null,
-  Temperature: 0.2,
-  TopP: null,
-  MaxTokens: 4096,
-  RequestTimeoutMs: 120000,
-  MaxConcurrentRequests: 1,
-  ClearApiKey: false,
-};
-
 const initialDatabase: DatabaseEntry = {
   Id: 'db_sample_sqlite',
   Name: 'Sample E-Commerce',
@@ -62,7 +39,7 @@ const initialDatabase: DatabaseEntry = {
 export default function SetupWizard() {
   const [visible, setVisible] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
-  const [provider, setProvider] = useState<ModelProviderUpdate>({ ...initialProvider });
+  const [provider, setProvider] = useState<ModelProviderUpdate>(createProviderDefaults('Ollama'));
   const [database, setDatabase] = useState<DatabaseEntry>({ ...initialDatabase });
   const [detail, setDetail] = useState<DatabaseDetail | null>(null);
   const [providerTest, setProviderTest] = useState<ProviderConnectivityTestResponse | null>(null);
@@ -396,6 +373,12 @@ export default function SetupWizard() {
     }));
   }
 
+  function updateProviderType(type: string) {
+    setProvider(createProviderDefaults(type));
+    setProviderTest(null);
+    setError('');
+  }
+
   function buildDatabaseCandidate(): DatabaseEntry {
     if (database.Type === 'Sqlite') {
       return {
@@ -445,7 +428,7 @@ export default function SetupWizard() {
               <Field label="Provider ID" tooltipKey="models.id"><input title={translateTooltip('models.id')} value={provider.Id} onChange={event => setProvider(previous => ({ ...previous, Id: event.target.value }))} /></Field>
               <Field label="Name" tooltipKey="models.name"><input title={translateTooltip('models.name')} value={provider.Name || ''} onChange={event => setProvider(previous => ({ ...previous, Name: event.target.value }))} /></Field>
               <Field label="Type">
-                <select title={translateTooltip('models.type')} value={provider.Type} onChange={event => setProvider(previous => ({ ...previous, Type: event.target.value }))}>
+                <select title={translateTooltip('models.type')} value={provider.Type} onChange={event => updateProviderType(event.target.value)}>
                   <option value="Ollama">Ollama</option>
                   <option value="OpenAI">OpenAI</option>
                   <option value="OpenAICompatible">OpenAI Compatible</option>
@@ -605,6 +588,74 @@ export default function SetupWizard() {
 
 function Field({ label, tooltipKey, children }: { label: string; tooltipKey?: string; children: React.ReactNode }) {
   return <div className="form-group"><label title={tooltipKey ? translateTooltip(tooltipKey) : undefined}>{label}</label>{children}</div>;
+}
+
+function createProviderDefaults(type: string): ModelProviderUpdate {
+  const common = {
+    ApiKey: '',
+    HasApiKey: false,
+    SystemPrompt: null,
+    Enabled: true,
+    DefaultStreaming: true,
+    SupportsNativeToolCalls: true,
+    UseNativeToolCalls: true,
+    ToolCapabilityNote: null,
+    Temperature: 0.2,
+    TopP: null,
+    MaxTokens: 4096,
+    RequestTimeoutMs: 120000,
+    ClearApiKey: false,
+  };
+
+  if (type === 'OpenAI') {
+    return {
+      ...common,
+      Id: 'provider_openai',
+      Name: 'OpenAI',
+      Type: 'OpenAI',
+      Endpoint: 'https://api.openai.com',
+      Model: 'gpt-4o-mini',
+      SupportsStrictJson: true,
+      MaxConcurrentRequests: 4,
+    };
+  }
+
+  if (type === 'OpenAICompatible') {
+    return {
+      ...common,
+      Id: 'provider_openai_compatible',
+      Name: 'OpenAI Compatible',
+      Type: 'OpenAICompatible',
+      Endpoint: 'http://localhost:1234',
+      Model: 'local-model',
+      SupportsStrictJson: false,
+      MaxConcurrentRequests: 1,
+    };
+  }
+
+  if (type === 'Gemini') {
+    return {
+      ...common,
+      Id: 'provider_gemini',
+      Name: 'Gemini',
+      Type: 'Gemini',
+      Endpoint: 'https://generativelanguage.googleapis.com',
+      Model: 'gemini-2.5-flash',
+      SupportsStrictJson: true,
+      MaxConcurrentRequests: 4,
+    };
+  }
+
+  return {
+    ...common,
+    Id: 'provider_ollama_local',
+    Name: 'Local Ollama',
+    Type: 'Ollama',
+    Endpoint: 'http://ollama:11434',
+    Model: 'gemma3:4b',
+    SupportsStrictJson: false,
+    MaxConcurrentRequests: 1,
+  };
 }
 
 function TestResult({ result }: { result: ProviderConnectivityTestResponse | DatabaseConnectivityTestResponse | null }) {

@@ -2304,6 +2304,11 @@ namespace Test.Shared
                         Contains(setupWizard, "allowedQueryOptions.map", "Setup wizard should render allowed queries as checkboxes.");
                         Contains(setupWizard, "AllowedQueries: [...allowedQueryOptions]", "Setup wizard should check every allowed operation by default for new database setup.");
                         Contains(setupWizard, "type=\"checkbox\"", "Allowed query operations should be checkbox inputs.");
+                        Contains(setupWizard, "function updateProviderType", "Setup wizard should centralize provider type changes.");
+                        Contains(setupWizard, "setProvider(createProviderDefaults(type))", "Setup wizard should replace provider defaults when provider type changes.");
+                        Contains(setupWizard, "https://generativelanguage.googleapis.com", "Setup wizard should default Gemini to the Gemini API endpoint.");
+                        Contains(setupWizard, "gemini-2.5-flash", "Setup wizard should default Gemini to a Gemini model.");
+                        Contains(setupWizard, "gpt-4o-mini", "Setup wizard should default OpenAI to an OpenAI model.");
                         Contains(setupWizard, "buildDatabaseCandidate", "Setup wizard should sanitize database payloads before test/save.");
                         Contains(stylesheet, ".allowed-query-options", "Allowed query checkbox group should be styled.");
                         return Task.CompletedTask;
