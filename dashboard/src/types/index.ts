@@ -198,6 +198,23 @@ export interface ChatToolCall {
   Phase: string | null;
 }
 
+export interface VerifiedAnswer {
+  State: 'verified' | 'partial' | 'blocked' | 'ambiguous' | string;
+  Summary: string | null;
+  Sql: string | null;
+  ToolCallId: string | null;
+  RowsReturned: number | null;
+  Evidence: string[];
+  Error: string | null;
+}
+
+export interface AmbiguitySignal {
+  Term: string | null;
+  Reason: string | null;
+  Question: string | null;
+  Candidates: string[];
+}
+
 export interface ChatResponseResult {
   Success: boolean;
   DatabaseId: string;
@@ -206,6 +223,8 @@ export interface ChatResponseResult {
   Message: string | null;
   Telemetry: ChatTelemetry | null;
   ToolCalls: ChatToolCall[];
+  VerifiedAnswer: VerifiedAnswer | null;
+  Ambiguities: AmbiguitySignal[];
   ExecutionPath: string | null;
   CapabilityNotice: string | null;
   Error: string | null;
@@ -220,10 +239,82 @@ export interface ChatStreamEvent {
   Model: string | null;
   Telemetry: ChatTelemetry | null;
   ToolCall: ChatToolCall | null;
+  VerifiedAnswer: VerifiedAnswer | null;
+  Ambiguities: AmbiguitySignal[];
   ExecutionPath: string | null;
   CapabilityNotice: string | null;
   Done: boolean;
   Error: string | null;
+}
+
+export interface DomainEntity {
+  TableId: string | null;
+  SchemaName: string | null;
+  TableName: string | null;
+  Role: string | null;
+  Summary: string | null;
+  KeyColumns: string[];
+  HasContext: boolean;
+}
+
+export interface DomainIntelligence {
+  Summary: string | null;
+  Entities: DomainEntity[];
+  Workflows: string[];
+  Metrics: string[];
+  CommonFilters: string[];
+  FreshnessColumns: string[];
+  TenantColumns: string[];
+  SoftDeleteColumns: string[];
+}
+
+export interface RelationshipDetail {
+  FromSchema: string | null;
+  FromTable: string | null;
+  FromColumn: string | null;
+  ToSchema: string | null;
+  ToTable: string | null;
+  ToColumn: string | null;
+  ConstraintName: string | null;
+  Source: string;
+  Confidence: number;
+}
+
+export interface ContextQualitySignal {
+  Key: string | null;
+  Severity: string | null;
+  Message: string | null;
+  Recommendation: string | null;
+}
+
+export interface ContextQualityScore {
+  Score: number;
+  Label: string | null;
+  TablesWithContext: number;
+  TotalTables: number;
+  DeclaredRelationships: number;
+  InferredRelationships: number;
+  Signals: ContextQualitySignal[];
+}
+
+export interface AgentPackResponse {
+  Success: boolean;
+  DatabaseId: string | null;
+  GeneratedUtc: string;
+  Markdown: string | null;
+  Instructions: string[];
+  SuggestedQuestions: string[];
+}
+
+export interface DatabaseIntelligenceResponse {
+  Success: boolean;
+  DatabaseId: string | null;
+  Domain: DomainIntelligence | null;
+  Relationships: RelationshipDetail[];
+  Ambiguities: AmbiguitySignal[];
+  ContextQuality: ContextQualityScore | null;
+  AgentPack: AgentPackResponse | null;
+  TotalMs: number;
 }
 
 export interface RestSettings {

@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import { translateTooltip } from '../i18n';
-import type { ChatMessageRequest, ChatOptionsResponse, ChatRequest, ChatResponseResult, ChatStreamEvent, ChatTelemetry, ChatToolCall } from '../types';
+import type { AmbiguitySignal, ChatMessageRequest, ChatOptionsResponse, ChatRequest, ChatResponseResult, ChatStreamEvent, ChatTelemetry, ChatToolCall, VerifiedAnswer } from '../types';
 
 interface ChatUiMessage {
   Id: string;
@@ -12,6 +12,8 @@ interface ChatUiMessage {
   Content: string;
   Telemetry: ChatTelemetry | null;
   ToolCalls: ChatToolCall[];
+  VerifiedAnswer: VerifiedAnswer | null;
+  Ambiguities: AmbiguitySignal[];
   ExecutionPath: string | null;
   CapabilityNotice: string | null;
 }
@@ -103,6 +105,8 @@ export default function ChatPage() {
       Content: trimmed,
       Telemetry: null,
       ToolCalls: [],
+      VerifiedAnswer: null,
+      Ambiguities: [],
       ExecutionPath: null,
       CapabilityNotice: null,
     };
@@ -113,6 +117,8 @@ export default function ChatPage() {
       Content: '',
       Telemetry: null,
       ToolCalls: [],
+      VerifiedAnswer: null,
+      Ambiguities: [],
       ExecutionPath: null,
       CapabilityNotice: null,
     };
@@ -167,7 +173,7 @@ export default function ChatPage() {
 
       const result: ChatResponseResult = await response.json();
       setMessages(previous => previous.map(message => message.Id === assistantId
-        ? { ...message, Content: result.Message || '', Telemetry: result.Telemetry, ToolCalls: result.ToolCalls || [], ExecutionPath: result.ExecutionPath, CapabilityNotice: result.CapabilityNotice }
+        ? { ...message, Content: result.Message || '', Telemetry: result.Telemetry, ToolCalls: result.ToolCalls || [], VerifiedAnswer: result.VerifiedAnswer, Ambiguities: result.Ambiguities || [], ExecutionPath: result.ExecutionPath, CapabilityNotice: result.CapabilityNotice }
         : message));
     } catch (ex) {
       if (isAbortError(ex)) {
@@ -232,7 +238,7 @@ export default function ChatPage() {
         : message));
     } else if (event.EventType === 'completed') {
       setMessages(previous => previous.map(message => message.Id === assistantId
-        ? { ...message, Content: event.Message || message.Content, Telemetry: event.Telemetry, ExecutionPath: event.ExecutionPath || message.ExecutionPath, CapabilityNotice: event.CapabilityNotice || message.CapabilityNotice }
+        ? { ...message, Content: event.Message || message.Content, Telemetry: event.Telemetry, VerifiedAnswer: event.VerifiedAnswer || message.VerifiedAnswer, Ambiguities: event.Ambiguities || message.Ambiguities, ExecutionPath: event.ExecutionPath || message.ExecutionPath, CapabilityNotice: event.CapabilityNotice || message.CapabilityNotice }
         : message));
     } else if ((event.EventType === 'tool_started' || event.EventType === 'tool_completed') && event.ToolCall) {
       setMessages(previous => previous.map(message => message.Id === assistantId
@@ -317,7 +323,7 @@ export default function ChatPage() {
 
   function toRequestMessage(message: ChatUiMessage): ChatMessageRequest {
     return {
-      Role: message.Role,
+    Role: message.Role,
       Content: message.Content,
     };
   }
@@ -444,6 +450,9 @@ export default function ChatPage() {
                       onToolCallToggled={handleTranscriptContentToggled}
                     />
                   )}
+                  {message.Role === 'assistant' && message.VerifiedAnswer && (
+                    <VerificationPanel verifiedAnswer={message.VerifiedAnswer} ambiguities={message.Ambiguities} />
+                  )}
                   {message.Role === 'assistant' && (message.ExecutionPath || message.CapabilityNotice) && (
                     <div className="chat-execution-note">
                       {formatExecutionNotes(message).map(note => <span key={note}>{note}</span>)}
@@ -550,6 +559,42 @@ function AssistantWaitingIndicator() {
   );
 }
 
+function VerificationPanel({ verifiedAnswer, ambiguities }: { verifiedAnswer: VerifiedAnswer; ambiguities: AmbiguitySignal[] }) {
+  return (
+    <div className={`verification-panel ${verifiedAnswer.State || 'partial'}`}>
+      <div className="verification-header">
+        <span className="verification-state">{formatVerificationState(verifiedAnswer.State)}</span>
+        {verifiedAnswer.RowsReturned != null && <span>{verifiedAnswer.RowsReturned} row(s)</span>}
+      </div>
+      {verifiedAnswer.Summary && <p>{verifiedAnswer.Summary}</p>}
+      {verifiedAnswer.Sql && <pre>{verifiedAnswer.Sql}</pre>}
+      {verifiedAnswer.Evidence?.length > 0 && (
+        <ul>
+          {verifiedAnswer.Evidence.slice(0, 4).map(item => <li key={item}>{item}</li>)}
+        </ul>
+      )}
+      {verifiedAnswer.Error && <p className="error-text">{verifiedAnswer.Error}</p>}
+      {ambiguities?.length > 0 && (
+        <div className="ambiguity-list">
+          {ambiguities.slice(0, 3).map(signal => (
+            <div key={`${signal.Term}-${signal.Question}`}>
+              <strong>{signal.Question || signal.Term}</strong>
+              {signal.Candidates.length > 0 && <span>{signal.Candidates.slice(0, 5).join('; ')}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatVerificationState(value: string | null) {
+  if (value === 'verified') return 'Verified';
+  if (value === 'blocked') return 'Blocked';
+  if (value === 'ambiguous') return 'Ambiguous';
+  return 'Partial';
+}
+
 function formatJsonish(value: string) {
   try {
     return JSON.stringify(JSON.parse(value), null, 2);
@@ -581,6 +626,7 @@ function formatExecutionPath(value: string) {
   if (value === 'native_final_failed') return 'The final answer after tool execution failed.';
   if (value === 'fallback_planner_failed') return 'Tablix could not plan a database query for this request.';
   if (value === 'fallback_no_plan') return 'No database query was run for this request.';
+  if (value === 'ambiguity_check') return 'Tablix asked for clarification before running SQL.';
   return 'Execution status: ' + value.replace(/_/g, ' ');
 }
 

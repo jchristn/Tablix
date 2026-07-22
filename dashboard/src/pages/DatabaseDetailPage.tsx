@@ -13,6 +13,7 @@ import type {
   CrawlProgressEvent,
   DatabaseDetail,
   DatabaseConnectivityTestResponse,
+  DatabaseIntelligenceResponse,
   ModelProviderSummary,
   TableDetail,
   TableContextRead,
@@ -50,6 +51,8 @@ export default function DatabaseDetailPage() {
   const [viewRecord, setViewRecord] = useState<DetailViewRecord | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [intelligence, setIntelligence] = useState<DatabaseIntelligenceResponse | null>(null);
+  const [intelligenceError, setIntelligenceError] = useState('');
 
   useEffect(() => { loadDetail(); }, [id]);
   useEffect(() => { loadChatOptions(); }, []);
@@ -63,9 +66,27 @@ export default function DatabaseDetailPage() {
       setDetail(data);
       setContextDraft(data.Context || '');
       setTableContextDrafts(createTableContextDrafts(data));
+      loadIntelligence(data.DatabaseId);
       setError('');
     } catch {
       setError('Could not connect to server.');
+    }
+  }
+
+  async function loadIntelligence(databaseId: string) {
+    setIntelligenceError('');
+    try {
+      const response = await apiFetch(`/v1/database/${databaseId}/intelligence`);
+      if (response.status === 401) { navigate('/login'); return; }
+      if (!response.ok) {
+        setIntelligenceError('Failed to load database intelligence.');
+        return;
+      }
+
+      const data: DatabaseIntelligenceResponse = await response.json();
+      setIntelligence(data);
+    } catch {
+      setIntelligenceError('Could not load database intelligence.');
     }
   }
 
@@ -136,6 +157,10 @@ export default function DatabaseDetailPage() {
       if (!editingContext) {
         setContextDraft(event.Detail.Context || '');
       }
+    }
+
+    if (event.Terminal && event.DatabaseId) {
+      loadIntelligence(event.DatabaseId);
     }
 
     setError('');
@@ -222,6 +247,7 @@ export default function DatabaseDetailPage() {
       setContextDraft(result.Context || '');
       setEditingContext(false);
       setContextMessage('Context saved.');
+      if (detail?.DatabaseId) loadIntelligence(detail.DatabaseId);
     } catch {
       setContextError('Could not connect to server.');
     } finally {
@@ -278,6 +304,7 @@ export default function DatabaseDetailPage() {
       setEditingContext(false);
       setContextMessage('Context built and saved.');
       setBuildContextOpen(false);
+      if (detail.DatabaseId) loadIntelligence(detail.DatabaseId);
     } catch {
       setBuildContextError('Could not connect to server.');
     } finally {
@@ -334,6 +361,7 @@ export default function DatabaseDetailPage() {
           Tables: previous.Tables.map(existing => existing.TableId === tableId ? { ...existing, Context: updated.Context } : existing),
         };
       });
+      if (detail?.DatabaseId) loadIntelligence(detail.DatabaseId);
       setMessageForTable(tableId, 'Saved');
     } catch {
       setError('Could not connect to server.');
@@ -380,6 +408,7 @@ export default function DatabaseDetailPage() {
           Tables: previous.Tables.map(existing => existing.TableId === tableId ? { ...existing, Context: updated.Context } : existing),
         };
       });
+      if (detail.DatabaseId) loadIntelligence(detail.DatabaseId);
       setMessageForTable(tableId, 'Built');
     } catch {
       setError('Could not connect to server.');
@@ -530,6 +559,11 @@ export default function DatabaseDetailPage() {
         </table>
       </div>
 
+      {intelligence && (
+        <IntelligencePanel intelligence={intelligence} />
+      )}
+      {intelligenceError && <p className="error-text" style={{ marginBottom: '16px' }}>{intelligenceError}</p>}
+
       <div className="card" style={{ marginBottom: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
           <h3 title="User-supplied description of the database for AI agents" style={{ fontSize: '14px', margin: 0, color: 'var(--text-secondary)' }}>Context</h3>
@@ -674,6 +708,101 @@ export default function DatabaseDetailPage() {
 interface DetailViewRecord {
   Title: string;
   Rows: RecordViewRow[];
+}
+
+function IntelligencePanel({ intelligence }: { intelligence: DatabaseIntelligenceResponse }) {
+  const quality = intelligence.ContextQuality;
+  const domain = intelligence.Domain;
+  const relationships = intelligence.Relationships || [];
+  const inferred = relationships.filter(relationship => relationship.Source !== 'declared_fk');
+  const declared = relationships.filter(relationship => relationship.Source === 'declared_fk');
+
+  return (
+    <div className="card intelligence-panel" style={{ marginBottom: '16px' }}>
+      <div className="intelligence-header">
+        <div>
+          <h3 title="Schema-derived domain intelligence for agents">Database Intelligence</h3>
+          {domain?.Summary && <p className="muted-text">{domain.Summary}</p>}
+        </div>
+        {quality && (
+          <div className={`quality-score ${quality.Label === 'Strong' ? 'strong' : quality.Label === 'Good' ? 'good' : 'needs-work'}`}>
+            <strong>{quality.Score}</strong>
+            <span>{quality.Label || 'Quality'}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="intelligence-grid">
+        <section>
+          <h4>Context Quality</h4>
+          {quality ? (
+            <>
+              <p className="muted-text">{quality.TablesWithContext} of {quality.TotalTables} table(s) have context. {quality.DeclaredRelationships} declared and {quality.InferredRelationships} inferred relationship(s).</p>
+              <ul>
+                {quality.Signals.slice(0, 4).map(signal => (
+                  <li key={`${signal.Key}-${signal.Message}`}>{signal.Message} {signal.Recommendation}</li>
+                ))}
+                {quality.Signals.length === 0 && <li>No quality warnings.</li>}
+              </ul>
+            </>
+          ) : <p className="muted-text">No quality score available.</p>}
+        </section>
+
+        <section>
+          <h4>Main Entities</h4>
+          <ul>
+            {(domain?.Entities || []).slice(0, 8).map(entity => (
+              <li key={entity.TableId || `${entity.SchemaName}.${entity.TableName}`}>
+                <strong>{entity.SchemaName}.{entity.TableName}</strong> <span className="muted-text">{entity.Role}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section>
+          <h4>Relationship Intelligence</h4>
+          <p className="muted-text">{declared.length} declared, {inferred.length} inferred.</p>
+          <ul>
+            {relationships.slice(0, 8).map(relationship => (
+              <li key={`${relationship.FromSchema}.${relationship.FromTable}.${relationship.FromColumn}-${relationship.ToTable}.${relationship.ToColumn}-${relationship.Source}`}>
+                {relationship.FromSchema}.{relationship.FromTable}.{relationship.FromColumn}{' -> '}{relationship.ToSchema || '-'}.{relationship.ToTable}.{relationship.ToColumn}
+                <span className="muted-text"> {relationship.Source} {relationship.Confidence.toFixed(2)}</span>
+              </li>
+            ))}
+            {relationships.length === 0 && <li>No relationships found.</li>}
+          </ul>
+        </section>
+
+        <section>
+          <h4>Ambiguity Handling</h4>
+          <ul>
+            {(intelligence.Ambiguities || []).slice(0, 5).map(signal => (
+              <li key={`${signal.Term}-${signal.Question}`}>
+                {signal.Question}
+                {signal.Candidates.length > 0 && <span className="muted-text"> {signal.Candidates.slice(0, 4).join('; ')}</span>}
+              </li>
+            ))}
+            {intelligence.Ambiguities.length === 0 && <li>No high-signal ambiguities detected.</li>}
+          </ul>
+        </section>
+      </div>
+
+      {intelligence.AgentPack && (
+        <div className="agent-pack-panel">
+          <div className="table-list-header">
+            <h4>Agent Pack</h4>
+            <ClipboardButton text={intelligence.AgentPack.Markdown || ''} title="Copy agent pack" label="Copy agent pack" />
+          </div>
+          <div className="agent-pack-questions">
+            {intelligence.AgentPack.SuggestedQuestions.slice(0, 6).map(question => (
+              <span key={question}>{question}</span>
+            ))}
+          </div>
+          <pre>{intelligence.AgentPack.Markdown}</pre>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function CrawlStatusPanel({ events }: { events: CrawlProgressEvent[] }) {

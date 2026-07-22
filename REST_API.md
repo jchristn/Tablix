@@ -46,6 +46,8 @@ Database connection records, crawl metadata, table metadata, relationships, and 
 | `POST` | `/v1/database/{id}/test` | Test a saved database connection |
 | `GET` | `/v1/database/{id}/tables` | List crawled table summaries |
 | `GET` | `/v1/database/{id}/relationships` | List crawled relationship summaries |
+| `GET` | `/v1/database/{id}/intelligence` | Read domain intelligence, relationship candidates, ambiguity signals, context quality, and optional agent pack |
+| `GET` | `/v1/database/{id}/agent-pack` | Read MCP-ready agent instructions and starter questions |
 | `POST` | `/v1/database/{id}/crawl` | Re-crawl database schema |
 | `POST` | `/v1/database/{id}/crawl/stream` | Re-crawl database schema with SSE progress |
 | `POST` | `/v1/database/{id}/query` | Execute a permitted query |
@@ -223,7 +225,7 @@ Paginated responses use `EnumerationResult<T>` fields:
 
 `TableDetail` fields are `TableId`, `TableName`, `SchemaName`, `Context`, `Columns`, `ForeignKeys`, and `Indexes`. `Context` is the current table-scope `context_records` value when one exists.
 
-`RelationshipDetail` fields are `FromSchema`, `FromTable`, `FromColumn`, `ToSchema`, `ToTable`, `ToColumn`, `ConstraintName`, `Source`, and `Confidence`.
+`RelationshipDetail` fields are `FromSchema`, `FromTable`, `FromColumn`, `ToSchema`, `ToTable`, `ToColumn`, `ConstraintName`, `Source`, and `Confidence`. `Source` is `declared_fk` for database-declared foreign keys and `inferred_name_match` for name-based inferred candidates.
 
 ### Chat Schemas
 
@@ -657,7 +659,7 @@ List crawled tables for a database with pagination and optional filtering. This 
 
 ### `GET /v1/database/{id}/relationships`
 
-List compact relationship edges for a database with pagination and optional filtering. The current implementation returns declared foreign keys; inferred relationships are reserved for future use.
+List compact relationship edges for a database with pagination and optional filtering. Declared foreign keys are always returned. Set `includeInferred=true` to include name-based inferred relationship candidates with confidence scores.
 
 **Path Parameters**
 
@@ -673,7 +675,7 @@ List compact relationship edges for a database with pagination and optional filt
 | `skip` | integer | 0 | Number of relationships to skip |
 | `filter` | string | - | Filter by table, column, schema, or constraint name |
 | `schema` | string | - | Filter by source or target schema |
-| `includeInferred` | boolean | false | Reserved for inferred relationships; currently returns declared FKs only |
+| `includeInferred` | boolean | false | Include name-based inferred relationship candidates |
 
 **Response** `200 OK`
 
@@ -686,10 +688,10 @@ List compact relationship edges for a database with pagination and optional filt
   "TableCount": 3,
   "Filter": null,
   "Schema": null,
-  "IncludeInferred": false,
+  "IncludeInferred": true,
   "MaxResults": 100,
   "Skip": 0,
-  "TotalRecords": 2,
+  "TotalRecords": 3,
   "RecordsRemaining": 0,
   "EndOfResults": true,
   "NextSkip": null,
@@ -705,6 +707,16 @@ List compact relationship edges for a database with pagination and optional filt
       "ConstraintName": "fk_orders_users",
       "Source": "declared_fk",
       "Confidence": 1.0
+    },
+    {
+      "FromSchema": "main",
+      "FromTable": "orders",
+      "FromColumn": "customer_id",
+      "ToSchema": "main",
+      "ToTable": "customers",
+      "ToColumn": "id",
+      "Source": "inferred_name_match",
+      "Confidence": 0.90
     }
   ]
 }
@@ -715,6 +727,103 @@ List compact relationship edges for a database with pagination and optional filt
 | Status | Condition |
 |--------|-----------|
 | 404 | Database ID not found |
+
+### `GET /v1/database/{id}/intelligence`
+
+Derive schema-to-domain intelligence from the last crawl and saved context. This response is deterministic and does not require a model provider.
+
+**Query Parameters**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `includeAgentPack` | boolean | true | Include `AgentPack.Markdown`, instructions, and starter questions |
+
+**Response** `200 OK`
+
+```json
+{
+  "Success": true,
+  "DatabaseId": "db_sample_sqlite",
+  "Domain": {
+    "Summary": "Crawled 3 table(s), 2 declared relationship(s), and 1 inferred relationship candidate(s). Saved database context is available.",
+    "Entities": [
+      {
+        "TableId": "tbl_db_sample_sqlite_main_orders",
+        "SchemaName": "main",
+        "TableName": "orders",
+        "Role": "entity",
+        "Summary": "Contains 5 column(s), 1 declared FK(s), saved context.",
+        "KeyColumns": ["Id", "UserId", "CreatedAt", "TotalAmount"],
+        "HasContext": true
+      }
+    ],
+    "Workflows": ["main.orders joins to main.users through UserId -> Id"],
+    "Metrics": ["main.orders.TotalAmount"],
+    "CommonFilters": ["main.orders.CreatedAt"],
+    "FreshnessColumns": ["main.orders.CreatedAt"],
+    "TenantColumns": [],
+    "SoftDeleteColumns": []
+  },
+  "Relationships": [
+    {
+      "FromSchema": "main",
+      "FromTable": "orders",
+      "FromColumn": "UserId",
+      "ToSchema": "main",
+      "ToTable": "users",
+      "ToColumn": "Id",
+      "Source": "declared_fk",
+      "Confidence": 1.0
+    }
+  ],
+  "Ambiguities": [
+    {
+      "Term": "latest",
+      "Reason": "Multiple timestamp columns could define latest records.",
+      "Question": "Which timestamp defines latest?",
+      "Candidates": ["main.orders.CreatedAt", "main.orders.UpdatedAt"]
+    }
+  ],
+  "ContextQuality": {
+    "Score": 78,
+    "Label": "Good",
+    "TablesWithContext": 2,
+    "TotalTables": 3,
+    "DeclaredRelationships": 2,
+    "InferredRelationships": 1,
+    "Signals": []
+  },
+  "AgentPack": {
+    "Success": true,
+    "DatabaseId": "db_sample_sqlite",
+    "Markdown": "# Tablix Agent Pack: Sample E-Commerce\n...",
+    "Instructions": ["Start with tablix_discover_databases and select databaseId db_sample_sqlite."],
+    "SuggestedQuestions": ["How many records are in main.orders?"]
+  },
+  "TotalMs": 1.2
+}
+```
+
+### `GET /v1/database/{id}/agent-pack`
+
+Return only the MCP-ready agent pack for one database. The pack includes selected-database instructions, safe discovery guidance, major entities, declared and inferred relationship notes, ambiguity warnings, and starter questions.
+
+**Response** `200 OK`
+
+```json
+{
+  "Success": true,
+  "DatabaseId": "db_sample_sqlite",
+  "GeneratedUtc": "2026-07-22T14:12:00Z",
+  "Markdown": "# Tablix Agent Pack: Sample E-Commerce\n...",
+  "Instructions": [
+    "Start with tablix_discover_databases and select databaseId db_sample_sqlite."
+  ],
+  "SuggestedQuestions": [
+    "How many records are in main.orders?"
+  ]
+}
+```
 
 ### `POST /v1/database`
 
@@ -1107,10 +1216,10 @@ Delete a database entry and remove it from the crawl cache.
 For large schemas, prefer the compact discovery flow:
 
 1. Use `GET /v1/database/{id}/tables` to page through table summaries.
-2. Use `GET /v1/database/{id}/relationships` to page through declared foreign-key edges.
+2. Use `GET /v1/database/{id}/relationships` to page through declared foreign-key edges, and set `includeInferred=true` when declared relationships are incomplete.
 3. Use `GET /v1/database/{id}` or MCP `tablix_discover_table` only for the specific table geometry needed.
 
-Follow `NextSkip` until `EndOfResults` is true. Relationship results currently represent declared foreign keys only; absent edges do not prove tables are unrelated.
+Follow `NextSkip` until `EndOfResults` is true. Treat `Source = declared_fk` as declared evidence and `Source = inferred_name_match` as a candidate until confirmed by context, schema inspection, or user approval.
 
 ### `POST /v1/database/{id}/crawl`
 
@@ -1236,9 +1345,9 @@ Execute a SQL query against a database.
 
 ## Chat
 
-Chat endpoints use the selected database's saved database/table context, allowed query policy, crawl state, table geometry, and declared foreign keys to build a database-aware model prompt. The default `Chat.SystemPrompt` restricts model conversation to the selected database, its structure, its contents, and their relationships. It tells the model to use database context for database-wide guidance, table context for table-specific guidance, and schema discovery as the source of truth for table names, column names, keys, indexes, and data types. It also tells the model to execute an allowed query through the available Tablix query tool when the user asks for data that can be answered from the database, rather than merely returning SQL for the user to run, and to never fabricate result rows, counts, names, dates, metrics, or other database facts. If query execution reports a bad or unknown column, missing column, or column type mismatch, the prompt tells the model to refresh schema by crawling or discovering relevant tables, then update database or table context when refreshed schema proves saved context stale. Tablix appends mandatory query-execution and no-fabrication rules to every effective chat system prompt, including provider-specific prompts. Providers are stored in `tablix.db` and executed through PolyPrompt.
+Chat endpoints use the selected database's saved database/table context, allowed query policy, crawl state, table geometry, relationship intelligence, and ambiguity signals to build a database-aware model prompt. The default `Chat.SystemPrompt` restricts model conversation to the selected database, its structure, its contents, and their relationships. It tells the model to use database context for database-wide guidance, table context for table-specific guidance, and schema discovery as the source of truth for table names, column names, keys, indexes, and data types. It also tells the model to execute an allowed query through the available Tablix query tool when the user asks for data that can be answered from the database, rather than merely returning SQL for the user to run, and to never fabricate result rows, counts, names, dates, metrics, or other database facts. If query execution reports a bad or unknown column, missing column, or column type mismatch, the prompt tells the model to refresh schema by crawling or discovering relevant tables, then update database or table context when refreshed schema proves saved context stale. Tablix appends mandatory query-execution and no-fabrication rules to every effective chat system prompt, including provider-specific prompts. Providers are stored in `tablix.db` and executed through PolyPrompt.
 
-Tablix uses PolyPrompt `1.5.0` native tool chat when `Chat.PromptProcessing.PreferNativeToolCalls` and the selected persisted provider's native tool settings are enabled. Tablix defines `tablix_execute_query` plus `tablix_update_database_context` and `tablix_update_table_context` when `Chat.Tools.AllowContextUpdates` is enabled. Tablix receives model-requested tool calls, validates the selected database and query or context target, executes queries through the same validator/crawler path used by `POST /v1/database/{id}/query`, persists context updates through existing context storage, appends the tool result, and asks the model for a final answer. If native tool calls are unavailable or the model does not request a tool, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` allows Tablix to ask the model planner to classify intent and generate one permitted query only when execution is appropriate. Tool calls are returned in JSON responses and streamed as SSE events. For `/v1/chat/stream`, plain responses and final post-tool summaries are emitted as token chunks from PolyPrompt streaming APIs instead of one full completed message.
+Tablix uses PolyPrompt `1.5.0` native tool chat when `Chat.PromptProcessing.PreferNativeToolCalls` and the selected persisted provider's native tool settings are enabled. Tablix defines `tablix_execute_query` plus `tablix_update_database_context` and `tablix_update_table_context` when `Chat.Tools.AllowContextUpdates` is enabled. Tablix receives model-requested tool calls, validates the selected database and query or context target, executes queries through the same validator/crawler path used by `POST /v1/database/{id}/query`, persists context updates through existing context storage, appends the tool result, and asks the model for a final answer. If native tool calls are unavailable or the model does not request a tool, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` allows Tablix to ask the model planner to classify intent and generate one permitted query only when execution is appropriate. When Tablix detects ambiguous request terms such as active, latest, revenue, status, owner, or customer, chat returns a clarification question instead of executing speculative SQL. Tool calls, verified-answer metadata, and ambiguity signals are returned in JSON responses and streamed as SSE events. For `/v1/chat/stream`, plain responses and final post-tool summaries are emitted as token chunks from PolyPrompt streaming APIs instead of one full completed message.
 
 ### `GET /v1/chat/options`
 
@@ -1320,10 +1429,24 @@ Send a non-streaming chat request.
       "Phase": "native"
     }
   ],
+  "VerifiedAnswer": {
+    "State": "verified",
+    "Summary": "Verified by SQL execution through Tablix.",
+    "Sql": "SELECT COUNT(*) AS total_users FROM users",
+    "ToolCallId": "9f4c2a9c8c474a2eaf35f38db88c1310",
+    "RowsReturned": 1,
+    "Evidence": [
+      "Tablix executed one permitted SQL statement against the selected database.",
+      "Rows returned: 1."
+    ]
+  },
+  "Ambiguities": [],
   "ExecutionPath": "native_tool_calls",
   "CapabilityNotice": "Native tool calls are enabled for this provider. Tablix still validates every database query before execution."
 }
 ```
+
+`VerifiedAnswer.State` is one of `verified`, `partial`, `blocked`, or `ambiguous`. `verified` means Tablix executed a successful SQL query and includes the SQL and evidence. `ambiguous` means no SQL was run because clarification is required. `blocked` means Tablix could not verify a row-dependent answer. `partial` means no row-data query was required and the answer is based on schema or saved context.
 
 ### `POST /v1/chat/stream`
 
@@ -1350,7 +1473,7 @@ event: token
 data: {"EventType":"token","Delta":"5 users.","Done":false}
 
 event: completed
-data: {"EventType":"completed","Message":"There are 5 users.","Telemetry":{"TimeToFirstTokenMs":120,"TotalStreamingTimeMs":1800,"InputTokens":512,"OutputTokens":96,"TotalTokens":608,"EstimatedTokens":false},"Done":true}
+data: {"EventType":"completed","Message":"There are 5 users.","VerifiedAnswer":{"State":"verified","Summary":"Verified by SQL execution through Tablix.","Sql":"SELECT COUNT(*) AS total_users FROM users","RowsReturned":1},"Telemetry":{"TimeToFirstTokenMs":120,"TotalStreamingTimeMs":1800,"InputTokens":512,"OutputTokens":96,"TotalTokens":608,"EstimatedTokens":false},"Done":true}
 ```
 
 **Errors**

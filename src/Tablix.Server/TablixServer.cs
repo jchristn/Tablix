@@ -419,8 +419,23 @@ namespace Tablix.Server
                     .WithParameter(OpenApiParameterMetadata.Query("skip", "Records to skip", false))
                     .WithParameter(OpenApiParameterMetadata.Query("filter", "Filter by table, column, or constraint name", false))
                     .WithParameter(OpenApiParameterMetadata.Query("schema", "Filter by source or target schema", false))
-                    .WithParameter(OpenApiParameterMetadata.Query("includeInferred", "Reserved for inferred relationships; currently returns declared foreign keys only", false))
+                    .WithParameter(OpenApiParameterMetadata.Query("includeInferred", "Include inferred relationship candidates derived from column and table names", false))
                     .WithResponse(200, OpenApiResponseMetadata.Json<DatabaseRelationshipListResult>("Paginated relationship list"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Get("/v1/database/{id}/intelligence", _DatabaseHandler.GetIntelligenceAsync,
+                api => api.WithTag("Intelligence").WithSummary("Get domain intelligence, relationship candidates, ambiguity signals, context quality, and agent pack")
+                    .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
+                    .WithParameter(OpenApiParameterMetadata.Query("includeAgentPack", "Include markdown agent pack in the response", false))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<DatabaseIntelligenceResponse>("Database intelligence"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Get("/v1/database/{id}/agent-pack", _DatabaseHandler.GetAgentPackAsync,
+                api => api.WithTag("Intelligence").WithSummary("Get MCP-ready agent instructions for one database")
+                    .WithParameter(OpenApiParameterMetadata.Path("id", "Database entry ID"))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<AgentPackResponse>("Agent pack"))
                     .WithResponse(404, OpenApiResponseMetadata.NotFound("Database not found"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
 

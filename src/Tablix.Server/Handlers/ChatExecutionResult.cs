@@ -44,6 +44,20 @@ namespace Tablix.Server.Handlers
         public ChatTelemetry Telemetry { get; set; } = null;
 
         /// <summary>
+        /// Verification metadata.
+        /// </summary>
+        public VerifiedAnswer VerifiedAnswer { get; set; } = null;
+
+        /// <summary>
+        /// Ambiguity signals.
+        /// </summary>
+        public List<AmbiguitySignal> Ambiguities
+        {
+            get { return _Ambiguities; }
+            set { _Ambiguities = value ?? new List<AmbiguitySignal>(); }
+        }
+
+        /// <summary>
         /// Tool calls.
         /// </summary>
         public List<ChatToolCall> ToolCalls
@@ -53,6 +67,7 @@ namespace Tablix.Server.Handlers
         }
 
         private List<ChatToolCall> _ToolCalls = new List<ChatToolCall>();
+        private List<AmbiguitySignal> _Ambiguities = new List<AmbiguitySignal>();
 
         /// <summary>
         /// Instantiate.

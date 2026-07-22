@@ -31,7 +31,7 @@ Do not save secrets, raw query result data, access tokens, connection strings, o
 |------|---------|
 | `tablix_discover_databases` | List configured databases with redacted metadata, crawl state, query permissions, and saved context |
 | `tablix_list_tables` | Page through compact table summaries |
-| `tablix_list_relationships` | Page through compact declared foreign-key relationship edges |
+| `tablix_list_relationships` | Page through compact declared and optionally inferred relationship edges |
 | `tablix_discover_table` | Retrieve full geometry for one table |
 | `tablix_execute_query` | Execute one SQL statement against a database |
 | `tablix_get_database_context` | Read database-level context for one database, multiple databases, or a paged set |
@@ -40,6 +40,8 @@ Do not save secrets, raw query result data, access tokens, connection strings, o
 | `tablix_update_database_context` | Persist curated database-level context |
 | `tablix_update_table_context` | Persist curated table-level context |
 | `tablix_discover_database` | Retrieve full database geometry, optionally paged by table |
+| `tablix_get_database_intelligence` | Read domain entities, inferred relationships, ambiguity signals, context quality, and optionally an agent pack |
+| `tablix_get_agent_pack` | Read MCP-ready agent instructions and starter questions for one database |
 
 ## Recommended Agent Workflow
 
@@ -51,12 +53,14 @@ Restrict conversation to the selected database, its structure, its contents, and
 4. When context quality matters, call `tablix_get_database_context` for the selected database to retrieve the current durable database-level context explicitly.
 5. For unknown or large schemas, call `tablix_list_tables` with a conservative `maxResults`, such as `50`.
 6. Continue paging by passing the previous response's `NextSkip` as `skip` until `EndOfResults` is `true`.
-7. Call `tablix_list_relationships` the same way to collect declared foreign-key edges.
-8. Before using specific tables, call `tablix_get_table_context` for those table IDs or names to retrieve durable table-specific guidance. Use `includeEmpty: true` when you need to know which selected tables have no table context yet.
-9. Call `tablix_discover_table` for every table needed for SQL generation; table context does not replace column/key/index discovery.
-10. Run `tablix_execute_query` after confirming the statement type is listed in `AllowedQueries` when the user asks for actual data, counts, lists, totals, computed answers, or an explicit database change.
-11. If a query fails because of a bad or unknown column, missing column, or column type mismatch, refresh schema by re-discovering the relevant table or database before retrying.
-12. Use `tablix_update_database_context` or `tablix_update_table_context` when the user explicitly asks to save context, the workflow clearly requires persisted analysis, or refreshed schema proves saved context has stale column names, stale column types, or stale relationship guidance.
+7. Call `tablix_get_database_intelligence` or `tablix_get_agent_pack` when you need a compact domain brief, context quality score, ambiguity warnings, or starter questions.
+8. Call `tablix_list_relationships` the same way to collect declared foreign-key edges; set `includeInferred: true` when declared FKs are incomplete.
+9. Before using specific tables, call `tablix_get_table_context` for those table IDs or names to retrieve durable table-specific guidance. Use `includeEmpty: true` when you need to know which selected tables have no table context yet.
+10. Call `tablix_discover_table` for every table needed for SQL generation; table context does not replace column/key/index discovery.
+11. Ask a clarifying question before executing SQL when intelligence or the user request exposes ambiguity around active, latest, revenue, status, owner, customer, or other business definitions.
+12. Run `tablix_execute_query` after confirming the statement type is listed in `AllowedQueries` when the user asks for actual data, counts, lists, totals, computed answers, or an explicit database change.
+13. If a query fails because of a bad or unknown column, missing column, or column type mismatch, refresh schema by re-discovering the relevant table or database before retrying.
+14. Use `tablix_update_database_context` or `tablix_update_table_context` when the user explicitly asks to save context, the workflow clearly requires persisted analysis, or refreshed schema proves saved context has stale column names, stale column types, or stale relationship guidance.
 
 Use `tablix_discover_database` only for small databases, explicit full-schema requests, or carefully paged full-geometry retrieval.
 
@@ -175,8 +179,36 @@ Returned by `tablix_list_relationships`.
 | `ToTable` | string | Referenced table |
 | `ToColumn` | string | Referenced column |
 | `ConstraintName` | string or null | Foreign-key constraint name |
-| `Source` | string | Relationship source; currently `declared_fk` |
-| `Confidence` | number | Confidence from `0.0` to `1.0`; declared FKs use `1.0` |
+| `Source` | string | Relationship source: `declared_fk` or `inferred_name_match` |
+| `Confidence` | number | Confidence from `0.0` to `1.0`; declared FKs use `1.0`, inferred candidates use lower scores |
+
+### DatabaseIntelligenceResponse
+
+Returned by `tablix_get_database_intelligence`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Success` | boolean | Whether the response succeeded |
+| `DatabaseId` | string | Database entry ID |
+| `Domain` | object | Schema-to-domain summary, entities, workflows, metrics, filters, and freshness columns |
+| `Relationships` | `RelationshipDetail[]` | Declared and inferred relationship candidates |
+| `Ambiguities` | object[] | Terms that should be clarified before executing SQL |
+| `ContextQuality` | object | Score, label, coverage counts, relationship counts, and improvement signals |
+| `AgentPack` | object or null | Markdown agent pack when requested |
+| `TotalMs` | number | Server-side elapsed time |
+
+### AgentPackResponse
+
+Returned by `tablix_get_agent_pack` and optionally by `tablix_get_database_intelligence`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Success` | boolean | Whether the response succeeded |
+| `DatabaseId` | string | Database entry ID |
+| `GeneratedUtc` | string | Generation timestamp |
+| `Markdown` | string | MCP-ready agent brief |
+| `Instructions` | string[] | Short instruction bullets |
+| `SuggestedQuestions` | string[] | Useful starter questions generated from schema |
 
 ### TableDetail
 
@@ -343,7 +375,7 @@ Returns `DatabaseTableListResult`, which extends `EnumerationResult<TableSummary
 
 ### `tablix_list_relationships`
 
-Lists compact relationship edges. The current implementation returns declared foreign keys only.
+Lists compact relationship edges. Declared foreign keys are always returned. Set `includeInferred` to include name-based inferred relationship candidates.
 
 #### Input
 
@@ -354,7 +386,7 @@ Lists compact relationship edges. The current implementation returns declared fo
 | `skip` | integer | No | `0` | Number of relationship edges to skip |
 | `filter` | string | No | null | Case-insensitive filter by table, column, schema, or constraint name |
 | `schema` | string | No | null | Case-insensitive source or target schema filter |
-| `includeInferred` | boolean | No | `false` | Reserved for future inferred relationships; currently ignored |
+| `includeInferred` | boolean | No | `false` | Include name-based inferred relationship candidates with confidence scores |
 
 #### Example Request
 
@@ -364,7 +396,7 @@ Lists compact relationship edges. The current implementation returns declared fo
   "maxResults": 100,
   "skip": 0,
   "filter": "customer",
-  "includeInferred": false
+  "includeInferred": true
 }
 ```
 
@@ -381,10 +413,10 @@ Returns `DatabaseRelationshipListResult`, which extends `EnumerationResult<Relat
   "TableCount": 120,
   "Filter": "customer",
   "Schema": null,
-  "IncludeInferred": false,
+  "IncludeInferred": true,
   "MaxResults": 100,
   "Skip": 0,
-  "TotalRecords": 1,
+  "TotalRecords": 2,
   "RecordsRemaining": 0,
   "EndOfResults": true,
   "NextSkip": null,
@@ -400,6 +432,16 @@ Returns `DatabaseRelationshipListResult`, which extends `EnumerationResult<Relat
       "ConstraintName": "fk_orders_customers",
       "Source": "declared_fk",
       "Confidence": 1.0
+    },
+    {
+      "FromSchema": "public",
+      "FromTable": "orders",
+      "FromColumn": "customer_id",
+      "ToSchema": "public",
+      "ToTable": "customers",
+      "ToColumn": "id",
+      "Source": "inferred_name_match",
+      "Confidence": 0.90
     }
   ]
 }
@@ -407,9 +449,121 @@ Returns `DatabaseRelationshipListResult`, which extends `EnumerationResult<Relat
 
 #### Guidance
 
-- Absence of an edge means no declared foreign key was discovered; it does not prove tables are unrelated.
-- If inferring relationships from names or business context, clearly label them as inferred in answers and saved context.
+- Absence of a declared edge means no declared foreign key was discovered; it does not prove tables are unrelated.
+- Treat `Source = inferred_name_match` as a candidate until saved context, schema inspection, or a user confirms it.
+- Clearly label inferred relationships in answers and saved context.
 - Continue paging with `NextSkip` until `EndOfResults` is true.
+
+### `tablix_get_database_intelligence`
+
+Returns domain entities, relationship candidates, ambiguity signals, context quality, and optionally an agent pack for one database.
+
+#### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `databaseId` | string | Yes | n/a | Database entry ID |
+| `includeAgentPack` | boolean | No | `true` | Include markdown agent pack |
+
+#### Example Request
+
+```json
+{
+  "databaseId": "db_orders",
+  "includeAgentPack": true
+}
+```
+
+#### Response
+
+Returns `DatabaseIntelligenceResponse`.
+
+```json
+{
+  "Success": true,
+  "DatabaseId": "db_orders",
+  "Domain": {
+    "Summary": "Crawled 120 table(s), 84 declared relationship(s), and 36 inferred relationship candidate(s). Saved database context is available.",
+    "Entities": [
+      {
+        "TableId": "tbl_db_orders_public_orders",
+        "SchemaName": "public",
+        "TableName": "orders",
+        "Role": "entity",
+        "Summary": "Contains 18 column(s), 2 declared FK(s), saved context.",
+        "KeyColumns": ["Id", "CustomerId", "Status", "CreatedAt"],
+        "HasContext": true
+      }
+    ],
+    "Metrics": ["public.orders.TotalAmount"],
+    "CommonFilters": ["public.orders.Status", "public.orders.CreatedAt"],
+    "FreshnessColumns": ["public.orders.CreatedAt"]
+  },
+  "Ambiguities": [
+    {
+      "Term": "latest",
+      "Reason": "Multiple timestamp columns could define latest records.",
+      "Question": "Which timestamp defines latest?",
+      "Candidates": ["public.orders.CreatedAt", "public.orders.UpdatedAt"]
+    }
+  ],
+  "ContextQuality": {
+    "Score": 78,
+    "Label": "Good",
+    "TablesWithContext": 72,
+    "TotalTables": 120,
+    "DeclaredRelationships": 84,
+    "InferredRelationships": 36
+  }
+}
+```
+
+#### Guidance
+
+- Use this tool before generating SQL when a compact domain readout is more useful than raw schema.
+- Clarify ambiguity signals before executing SQL that depends on the ambiguous term.
+- Treat inferred relationship candidates as guidance, not proof, until confirmed.
+
+### `tablix_get_agent_pack`
+
+Returns MCP-ready instructions and starter questions for one database.
+
+#### Input
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `databaseId` | string | Yes | n/a | Database entry ID |
+
+#### Example Request
+
+```json
+{
+  "databaseId": "db_orders"
+}
+```
+
+#### Response
+
+Returns `AgentPackResponse`.
+
+```json
+{
+  "Success": true,
+  "DatabaseId": "db_orders",
+  "Markdown": "# Tablix Agent Pack: Orders\n...",
+  "Instructions": [
+    "Start with tablix_discover_databases and select databaseId db_orders."
+  ],
+  "SuggestedQuestions": [
+    "How many records are in public.orders?"
+  ]
+}
+```
+
+#### Guidance
+
+- Use the agent pack as a brief, not a substitute for table geometry validation.
+- Preserve the selected database ID and allowed query rules when executing SQL.
 
 ### `tablix_discover_table`
 

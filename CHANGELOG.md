@@ -4,6 +4,12 @@
 
 ### Added
 
+- Added verified-answer metadata to REST chat responses and streaming completion events, including verification state, SQL, row counts, and evidence when Tablix executed a query.
+- Added deterministic schema-to-domain intelligence through REST `GET /v1/database/{id}/intelligence` and dashboard Database Detail: domain entities, metrics, filters, freshness columns, ambiguity signals, context quality, and agent pack.
+- Added REST `GET /v1/database/{id}/agent-pack` for MCP-ready database instructions and starter questions.
+- Added name-based inferred relationship candidates behind `includeInferred` for REST and MCP relationship listing.
+- Added MCP `tablix_get_database_intelligence` and `tablix_get_agent_pack`.
+- Added chat ambiguity detection for terms such as active, latest, revenue, status, owner, and customer; Tablix asks a clarification question instead of executing speculative SQL.
 - Added REST chat native tool exposure for `tablix_update_database_context` and `tablix_update_table_context` when `Chat.Tools.AllowContextUpdates` is enabled.
 - Added typed chat context update arguments and result models for provider tool calls.
 - Added dashboard contract tests covering chat context tool exposure, exact routing, typed payloads, persistence hooks, and no dynamic JSON DOM usage.
@@ -125,7 +131,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Prefer `tablix_list_tables`, `tablix_list_relationships`, and `tablix_discover_table` for agent workflows against unknown or large schemas. Keep `tablix_discover_database` for small databases or explicit full-schema requests.
 - Paginated list responses expose continuation through `NextSkip`. Continue paging until `EndOfResults` is true.
 - `tablix_list_tables` returns compact summaries, not full table geometry. Agents should call `tablix_discover_table` before generating SQL against a table.
-- `tablix_list_relationships` currently reports declared foreign keys. Missing edges do not prove that two tables are unrelated.
+- `tablix_list_relationships` reports declared foreign keys by default and can include name-based inferred relationship candidates with `includeInferred`; missing declared edges do not prove that two tables are unrelated.
 - `tablix_update_database_context` and `tablix_update_table_context` write back to `tablix.db`; callers should use them only for human-approved or workflow-approved context and should not store secrets or raw query results. `tablix_update_context` remains available as a generic scoped compatibility tool.
 - Database discovery and REST read responses are redacted: `User` and `Password` are accepted only in write requests and are represented in read responses as `HasUser` and `HasPassword`.
 - Existing pre-persistence `tablix.json` files can be imported into an empty `tablix.db`; new default JSON files no longer contain providers or configured databases.

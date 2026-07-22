@@ -41,6 +41,7 @@ namespace Test.Shared
                     SqliteCrawlerSuite(),
                     SqliteAdvancedSuite(),
                     SchemaProjectionSuite(),
+                    DatabaseIntelligenceSuite(),
                     ModelGuardSuite(),
                     CrawlerFactorySuite(),
                     CrawlCacheSuite(),
@@ -1211,6 +1212,67 @@ namespace Test.Shared
         }
 
         /// <summary>
+        /// Database intelligence tests.
+        /// </summary>
+        /// <returns>Suite descriptor.</returns>
+        public static TestSuiteDescriptor DatabaseIntelligenceSuite()
+        {
+            return new TestSuiteDescriptor(
+                suiteId: "DatabaseIntelligence",
+                displayName: "Database Intelligence",
+                cases: new List<TestCaseDescriptor>
+                {
+                    Case("DatabaseIntelligence", "RelationshipListIncludesInferred", "Relationship projection includes inferred candidates when requested", ct =>
+                    {
+                        DatabaseDetail detail = SampleDetail();
+                        detail.Tables.Add(new TableDetail
+                        {
+                            SchemaName = "main",
+                            TableName = "profiles",
+                            Columns = new List<ColumnDetail>
+                            {
+                                new ColumnDetail { ColumnName = "Id" },
+                                new ColumnDetail { ColumnName = "UserId" }
+                            }
+                        });
+
+                        DatabaseRelationshipListResult result = SchemaProjection.CreateRelationshipListResult("sample", detail, 100, 0, null, null, true);
+                        True(result.Objects.Any(relationship => relationship.Source == "inferred_name_match" && relationship.FromTable == "profiles" && relationship.ToTable == "users"), "Inferred profiles to users relationship missing.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DatabaseIntelligence", "BuildsQualityAndAgentPack", "Database intelligence builds quality score and agent pack", ct =>
+                    {
+                        DatabaseDetail detail = SampleDetail();
+                        DatabaseEntry entry = new DatabaseEntry
+                        {
+                            Id = "sample",
+                            Name = "Sample",
+                            AllowedQueries = new List<string> { "SELECT" },
+                            Context = "Sample order database."
+                        };
+
+                        DatabaseIntelligenceResponse response = DatabaseIntelligenceBuilder.Build(entry, detail, true);
+                        NotNull(response.ContextQuality, "ContextQuality should be present.");
+                        NotNull(response.AgentPack, "AgentPack should be present.");
+                        True(response.Domain.Entities.Count > 0, "Domain entities should be present.");
+                        Contains(response.AgentPack.Markdown, "sample", "Agent pack should include database ID.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DatabaseIntelligence", "DetectsLatestAmbiguity", "Prompt ambiguity detects latest when multiple timestamp columns exist", ct =>
+                    {
+                        DatabaseDetail detail = SampleDetail();
+                        TableDetail orders = detail.Tables.First(table => table.TableName == "orders");
+                        orders.Columns.Add(new ColumnDetail { ColumnName = "CreatedAt", DataType = "datetime" });
+                        orders.Columns.Add(new ColumnDetail { ColumnName = "UpdatedAt", DataType = "datetime" });
+
+                        List<AmbiguitySignal> signals = DatabaseIntelligenceBuilder.FindPromptAmbiguities(detail, null, "Show me the latest orders");
+                        True(signals.Any(signal => signal.Term == "latest"), "Latest ambiguity should be detected.");
+                        return Task.CompletedTask;
+                    })
+                });
+        }
+
+        /// <summary>
         /// Model null guard and default behavior tests.
         /// </summary>
         /// <returns>Suite descriptor.</returns>
@@ -1687,12 +1749,14 @@ namespace Test.Shared
                         await WithTempPersistenceAsync(async persistence =>
                         {
                             Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
-                            Equal(11, tools.Count, "Tool count mismatch.");
+                            Equal(13, tools.Count, "Tool count mismatch.");
                             True(tools.ContainsKey("tablix_discover_databases"), "discover databases missing.");
                             True(tools.ContainsKey("tablix_discover_database"), "discover database missing.");
                             True(tools.ContainsKey("tablix_list_tables"), "list tables missing.");
                             True(tools.ContainsKey("tablix_discover_table"), "discover table missing.");
                             True(tools.ContainsKey("tablix_list_relationships"), "list relationships missing.");
+                            True(tools.ContainsKey("tablix_get_database_intelligence"), "get database intelligence missing.");
+                            True(tools.ContainsKey("tablix_get_agent_pack"), "get agent pack missing.");
                             True(tools.ContainsKey("tablix_execute_query"), "execute query missing.");
                             True(tools.ContainsKey("tablix_get_database_context"), "get database context missing.");
                             True(tools.ContainsKey("tablix_get_table_context"), "get table context missing.");

@@ -100,7 +100,7 @@ namespace Tablix.Core.Helpers
         /// <param name="skip">Records to skip. Negative values are treated as 0.</param>
         /// <param name="filter">Optional filter for table, column, or constraint names.</param>
         /// <param name="schema">Optional schema filter.</param>
-        /// <param name="includeInferred">Whether inferred relationships were requested. Only declared foreign keys are currently returned.</param>
+        /// <param name="includeInferred">Whether inferred relationship candidates should be included.</param>
         /// <returns>Paginated relationship response.</returns>
         /// <exception cref="ArgumentNullException">Thrown when detail is null.</exception>
         public static DatabaseRelationshipListResult CreateRelationshipListResult(
@@ -118,29 +118,7 @@ namespace Tablix.Core.Helpers
             int normalizedMaxResults = Math.Clamp(maxResults, 1, 1000);
             int normalizedSkip = Math.Max(skip, 0);
 
-            List<RelationshipDetail> relationships = new List<RelationshipDetail>();
-
-            foreach (TableDetail table in detail.Tables)
-            {
-                foreach (ForeignKeyDetail foreignKey in table.ForeignKeys)
-                {
-                    TableDetail referencedTable = detail.Tables.FirstOrDefault(t =>
-                        String.Equals(t.TableName, foreignKey.ReferencedTable, StringComparison.OrdinalIgnoreCase));
-
-                    relationships.Add(new RelationshipDetail
-                    {
-                        FromSchema = table.SchemaName,
-                        FromTable = table.TableName,
-                        FromColumn = foreignKey.ColumnName,
-                        ToSchema = referencedTable != null ? referencedTable.SchemaName : null,
-                        ToTable = foreignKey.ReferencedTable,
-                        ToColumn = foreignKey.ReferencedColumn,
-                        ConstraintName = foreignKey.ConstraintName,
-                        Source = "declared_fk",
-                        Confidence = 1.0
-                    });
-                }
-            }
+            List<RelationshipDetail> relationships = DatabaseIntelligenceBuilder.BuildRelationships(detail, includeInferred);
 
             relationships = relationships
                 .OrderBy(r => r.FromSchema)

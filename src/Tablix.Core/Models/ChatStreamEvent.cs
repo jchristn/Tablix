@@ -48,6 +48,20 @@ namespace Tablix.Core.Models
         public ChatToolCall ToolCall { get; set; } = null;
 
         /// <summary>
+        /// Verification metadata for completed events.
+        /// </summary>
+        public VerifiedAnswer VerifiedAnswer { get; set; } = null;
+
+        /// <summary>
+        /// Ambiguity signals detected before answer generation.
+        /// </summary>
+        public System.Collections.Generic.List<AmbiguitySignal> Ambiguities
+        {
+            get { return _Ambiguities; }
+            set { _Ambiguities = value ?? new System.Collections.Generic.List<AmbiguitySignal>(); }
+        }
+
+        /// <summary>
         /// Execution path used for this response.
         /// </summary>
         public string ExecutionPath { get; set; } = null;
@@ -66,6 +80,12 @@ namespace Tablix.Core.Models
         /// Error message when EventType is error.
         /// </summary>
         public string Error { get; set; } = null;
+
+        #endregion
+
+        #region Private-Members
+
+        private System.Collections.Generic.List<AmbiguitySignal> _Ambiguities = new System.Collections.Generic.List<AmbiguitySignal>();
 
         #endregion
 

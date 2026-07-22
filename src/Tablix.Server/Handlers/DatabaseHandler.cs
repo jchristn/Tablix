@@ -202,6 +202,52 @@ namespace Tablix.Server.Handlers
         }
 
         /// <summary>
+        /// GET /v1/database/{id}/intelligence - derive domain, relationship, ambiguity, and quality guidance.
+        /// </summary>
+        public async Task<object> GetIntelligenceAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+            }
+
+            bool includeAgentPack = true;
+            string includeAgentPackStr = req.Http.Request.Query.Elements.Get("includeAgentPack");
+            if (!String.IsNullOrEmpty(includeAgentPackStr) && Boolean.TryParse(includeAgentPackStr, out bool parsedIncludeAgentPack))
+                includeAgentPack = parsedIncludeAgentPack;
+
+            DatabaseDetail detail = await GetOrCrawlDetailAsync(entry).ConfigureAwait(false);
+            if (detail != null)
+                detail.Context = entry.Context;
+
+            return DatabaseIntelligenceBuilder.Build(entry, detail, includeAgentPack);
+        }
+
+        /// <summary>
+        /// GET /v1/database/{id}/agent-pack - derive MCP-ready agent instructions.
+        /// </summary>
+        public async Task<object> GetAgentPackAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
+            if (entry == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
+            }
+
+            DatabaseDetail detail = await GetOrCrawlDetailAsync(entry).ConfigureAwait(false);
+            if (detail != null)
+                detail.Context = entry.Context;
+
+            DatabaseIntelligenceResponse intelligence = DatabaseIntelligenceBuilder.Build(entry, detail, true);
+            return intelligence.AgentPack;
+        }
+
+        /// <summary>
         /// GET /v1/database/{id}/table-context - list table contexts for a database.
         /// </summary>
         public async Task<object> ListTableContextsAsync(AppRequest req)

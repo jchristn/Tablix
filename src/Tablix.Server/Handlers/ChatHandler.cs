@@ -259,6 +259,7 @@ namespace Tablix.Server.Handlers
                 request,
                 req.CancellationToken,
                 null).ConfigureAwait(false);
+            FinalizeExecution(preparation, execution);
 
             if (!execution.Success)
             {
@@ -275,6 +276,8 @@ namespace Tablix.Server.Handlers
                 Message = execution.Message,
                 Telemetry = execution.Telemetry,
                 ToolCalls = execution.ToolCalls,
+                VerifiedAnswer = execution.VerifiedAnswer,
+                Ambiguities = execution.Ambiguities,
                 ExecutionPath = execution.ExecutionPath,
                 CapabilityNotice = execution.CapabilityNotice
             };
@@ -312,6 +315,7 @@ namespace Tablix.Server.Handlers
                 request,
                 req.CancellationToken,
                 async (evt) => await SendChatEventAsync(req, evt, false).ConfigureAwait(false)).ConfigureAwait(false);
+            FinalizeExecution(preparation, execution);
 
             if (!execution.Success)
             {
@@ -337,6 +341,8 @@ namespace Tablix.Server.Handlers
                 Model = execution.Model,
                 Message = execution.Message,
                 Telemetry = execution.Telemetry,
+                VerifiedAnswer = execution.VerifiedAnswer,
+                Ambiguities = execution.Ambiguities,
                 ExecutionPath = execution.ExecutionPath,
                 CapabilityNotice = execution.CapabilityNotice,
                 Done = true
@@ -402,7 +408,12 @@ namespace Tablix.Server.Handlers
             }
 
             string systemPrompt = BuildEffectiveSystemPrompt(settings, provider);
-            string prompt = BuildPrompt(settings, database, detail, request.Messages);
+            string latestUserMessage = request.Messages
+                .Where(message => String.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
+                .Select(message => message.Content)
+                .LastOrDefault();
+            List<AmbiguitySignal> ambiguities = DatabaseIntelligenceBuilder.FindPromptAmbiguities(detail, database.Context, latestUserMessage);
+            string prompt = BuildPrompt(settings, database, detail, request.Messages, ambiguities);
 
             return new ChatPreparation
             {
@@ -411,7 +422,9 @@ namespace Tablix.Server.Handlers
                 Detail = detail,
                 Settings = settings,
                 SystemPrompt = systemPrompt,
-                Prompt = prompt
+                Prompt = prompt,
+                LatestUserMessage = latestUserMessage,
+                Ambiguities = ambiguities
             };
         }
 
@@ -718,7 +731,7 @@ namespace Tablix.Server.Handlers
             return configuredPrompt.Trim() + Environment.NewLine + Environment.NewLine + MandatoryExecutionSystemPrompt;
         }
 
-        private static string BuildPrompt(TablixSettings settings, DatabaseEntry database, DatabaseDetail detail, List<CoreChatMessage> messages)
+        private static string BuildPrompt(TablixSettings settings, DatabaseEntry database, DatabaseDetail detail, List<CoreChatMessage> messages, List<AmbiguitySignal> ambiguities)
         {
             StringBuilder builder = new StringBuilder();
             builder.AppendLine("You are answering questions about a configured Tablix database.");
@@ -766,6 +779,17 @@ namespace Tablix.Server.Handlers
 
             if (detail.Tables.Count > tableLimit)
                 builder.AppendLine("Additional tables were omitted from prompt context. Ask the user to narrow the task or inspect specific tables.");
+
+            if (ambiguities != null && ambiguities.Count > 0)
+            {
+                builder.AppendLine();
+                builder.AppendLine("Ambiguity signals:");
+                foreach (AmbiguitySignal ambiguity in ambiguities)
+                {
+                    builder.AppendLine("- " + ambiguity.Term + ": " + ambiguity.Question + " Candidates: " + String.Join("; ", ambiguity.Candidates.Take(8)));
+                }
+                builder.AppendLine("If an ambiguity signal affects the user's request, ask the clarifying question before executing SQL.");
+            }
 
             builder.AppendLine();
             builder.AppendLine("Conversation:");
@@ -900,6 +924,9 @@ namespace Tablix.Server.Handlers
             Func<ChatStreamEvent, Task> sendEventAsync)
         {
             ChatExecutionPolicy policy = BuildExecutionPolicy(preparation, request);
+            if (ShouldClarifyAmbiguity(preparation))
+                return BuildAmbiguityClarificationResult(preparation, policy.CapabilityNotice);
+
             if (!policy.ToolsEnabled)
             {
                 return await ExecutePlainChatAsync(client, preparation, "execution_disabled", policy.CapabilityNotice, token).ConfigureAwait(false);
@@ -937,6 +964,9 @@ namespace Tablix.Server.Handlers
             Func<ChatStreamEvent, Task> sendEventAsync)
         {
             ChatExecutionPolicy policy = BuildExecutionPolicy(preparation, request);
+            if (ShouldClarifyAmbiguity(preparation))
+                return BuildAmbiguityClarificationResult(preparation, policy.CapabilityNotice);
+
             if (!policy.ToolsEnabled)
             {
                 return await ExecutePlainChatStreamingAsync(client, preparation, "execution_disabled", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
@@ -1798,6 +1828,189 @@ namespace Tablix.Server.Handlers
             };
 
             return Serializer.SerializeJson(envelope, false);
+        }
+
+        private static void FinalizeExecution(ChatPreparation preparation, ChatExecutionResult execution)
+        {
+            if (execution == null) return;
+
+            if (execution.Ambiguities.Count == 0 && preparation.Ambiguities != null)
+                execution.Ambiguities = preparation.Ambiguities;
+
+            if (execution.VerifiedAnswer == null)
+                execution.VerifiedAnswer = BuildVerifiedAnswer(preparation, execution);
+        }
+
+        private static bool ShouldClarifyAmbiguity(ChatPreparation preparation)
+        {
+            if (preparation == null || preparation.Ambiguities == null || preparation.Ambiguities.Count == 0) return false;
+            if (!LooksLikeDataRequest(preparation.LatestUserMessage)) return false;
+
+            return true;
+        }
+
+        private static ChatExecutionResult BuildAmbiguityClarificationResult(ChatPreparation preparation, string capabilityNotice)
+        {
+            string message = BuildAmbiguityClarificationMessage(preparation.Ambiguities);
+            VerifiedAnswer verifiedAnswer = new VerifiedAnswer
+            {
+                State = "ambiguous",
+                Summary = "Tablix did not execute SQL because the request has multiple plausible database interpretations.",
+                Evidence = preparation.Ambiguities.Select(ambiguity => ambiguity.Question).ToList()
+            };
+
+            return new ChatExecutionResult
+            {
+                Success = true,
+                Message = message,
+                Model = preparation.Provider.Model,
+                ExecutionPath = "ambiguity_check",
+                CapabilityNotice = capabilityNotice,
+                Ambiguities = preparation.Ambiguities,
+                VerifiedAnswer = verifiedAnswer,
+                Telemetry = CreateTelemetry(0, 0, preparation.Prompt, message, null)
+            };
+        }
+
+        private static string BuildAmbiguityClarificationMessage(List<AmbiguitySignal> ambiguities)
+        {
+            StringBuilder builder = new StringBuilder();
+            builder.AppendLine("I need one clarification before I run SQL.");
+            builder.AppendLine();
+
+            foreach (AmbiguitySignal ambiguity in ambiguities.Take(3))
+            {
+                builder.AppendLine("- " + ambiguity.Question);
+                if (ambiguity.Candidates.Count > 0)
+                    builder.AppendLine("  Candidates: " + String.Join("; ", ambiguity.Candidates.Take(6)));
+            }
+
+            return builder.ToString().Trim();
+        }
+
+        private static VerifiedAnswer BuildVerifiedAnswer(ChatPreparation preparation, ChatExecutionResult execution)
+        {
+            if (execution == null)
+            {
+                return new VerifiedAnswer
+                {
+                    State = "blocked",
+                    Summary = "No execution result was available."
+                };
+            }
+
+            ChatToolCall successfulQuery = execution.ToolCalls.LastOrDefault(toolCall =>
+                String.Equals(toolCall.Name, TablixChatToolDefinitions.ExecuteQueryToolName, StringComparison.Ordinal) &&
+                toolCall.Success);
+
+            if (successfulQuery != null)
+                return BuildVerifiedAnswerFromSuccessfulQuery(successfulQuery);
+
+            ChatToolCall failedQuery = execution.ToolCalls.LastOrDefault(toolCall =>
+                String.Equals(toolCall.Name, TablixChatToolDefinitions.ExecuteQueryToolName, StringComparison.Ordinal));
+
+            if (failedQuery != null)
+                return BuildVerifiedAnswerFromFailedQuery(failedQuery);
+
+            if (preparation.Ambiguities != null && preparation.Ambiguities.Count > 0 && String.Equals(execution.ExecutionPath, "ambiguity_check", StringComparison.OrdinalIgnoreCase))
+            {
+                return new VerifiedAnswer
+                {
+                    State = "ambiguous",
+                    Summary = "No SQL was executed because Tablix needs a clarified database definition.",
+                    Evidence = preparation.Ambiguities.Select(ambiguity => ambiguity.Question).ToList()
+                };
+            }
+
+            if (LooksLikeDataRequest(preparation.LatestUserMessage))
+            {
+                return new VerifiedAnswer
+                {
+                    State = "blocked",
+                    Summary = "No database query was executed, so row-dependent data was not verified.",
+                    Error = execution.CapabilityNotice
+                };
+            }
+
+            return new VerifiedAnswer
+            {
+                State = "partial",
+                Summary = "No SQL execution was required; the answer is based on schema and saved context.",
+                Evidence = new List<string> { "Selected database: " + preparation.Database.Id, "Execution path: " + (execution.ExecutionPath ?? "plain") }
+            };
+        }
+
+        private static VerifiedAnswer BuildVerifiedAnswerFromSuccessfulQuery(ChatToolCall toolCall)
+        {
+            TablixExecuteQueryArguments arguments = TryReadQueryArguments(toolCall.Arguments);
+            ChatQueryToolResult toolResult = TryReadQueryToolResult(toolCall.Result);
+            QueryResult queryResult = toolResult == null ? null : toolResult.QueryResult;
+            List<string> evidence = new List<string>();
+            evidence.Add("Tablix executed one permitted SQL statement against the selected database.");
+            if (queryResult != null)
+            {
+                evidence.Add("Rows returned: " + queryResult.RowsReturned + ".");
+                evidence.Add("Runtime: " + queryResult.TotalMs.ToString("0.0") + " ms.");
+                if (queryResult.Data != null && queryResult.Data.Columns != null && queryResult.Data.Columns.Count > 0)
+                    evidence.Add("Columns: " + String.Join(", ", queryResult.Data.Columns.Select(column => column.Name).Take(12)) + ".");
+            }
+
+            return new VerifiedAnswer
+            {
+                State = "verified",
+                Summary = "Verified by SQL execution through Tablix.",
+                Sql = arguments == null ? null : arguments.Query,
+                ToolCallId = toolCall.Id,
+                RowsReturned = queryResult == null ? null : (int?)queryResult.RowsReturned,
+                Evidence = evidence
+            };
+        }
+
+        private static VerifiedAnswer BuildVerifiedAnswerFromFailedQuery(ChatToolCall toolCall)
+        {
+            TablixExecuteQueryArguments arguments = TryReadQueryArguments(toolCall.Arguments);
+            return new VerifiedAnswer
+            {
+                State = "blocked",
+                Summary = "Tablix attempted to verify the answer with SQL, but execution failed.",
+                Sql = arguments == null ? null : arguments.Query,
+                ToolCallId = toolCall.Id,
+                Error = toolCall.Error,
+                Evidence = new List<string> { "Failed tool phase: " + (toolCall.Phase ?? "unknown") }
+            };
+        }
+
+        private static TablixExecuteQueryArguments TryReadQueryArguments(string json)
+        {
+            try
+            {
+                return Serializer.DeserializeJson<TablixExecuteQueryArguments>(json);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static ChatQueryToolResult TryReadQueryToolResult(string json)
+        {
+            try
+            {
+                return Serializer.DeserializeJson<ChatQueryToolResult>(json);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static bool LooksLikeDataRequest(string message)
+        {
+            if (String.IsNullOrWhiteSpace(message)) return false;
+            return Regex.IsMatch(
+                message,
+                @"\b(show|list|count|total|average|latest|top|find|revenue|active|status)\b|\bhow\s+many\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
 
         private static ChatExecutionPolicy BuildExecutionPolicy(ChatPreparation preparation, ChatRequest request)

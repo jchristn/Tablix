@@ -19,6 +19,10 @@ v0.3.0 turns Tablix into a more complete database-agent workspace: product state
 - **Database and table context:** REST, MCP, and dashboard workflows can read, generate, edit, and persist durable context without returning secrets or raw data.
 - **Guided first-run setup:** the setup wizard walks through model provider validation, database validation, crawl, database context, and table context generation.
 - **NL2SQL-powered database chat:** the Chat page uses PolyPrompt providers, markdown rendering, native tool calls when supported, model-based fallback planning, guarded query execution, inline tool-call displays, and per-message telemetry.
+- **Verified answers:** REST chat responses and streaming completion events now include a verification envelope showing whether the answer was verified, partial, blocked, or ambiguous, plus the SQL, row count, and evidence when Tablix executed a query.
+- **Schema-to-domain intelligence:** database detail, REST, and MCP can derive domain entities, likely metrics, common filters, freshness columns, context quality, and MCP-ready agent packs from crawled schema and saved context.
+- **Inferred relationship candidates:** relationship listing can include name-based inferred join candidates with confidence scores alongside declared foreign keys, making weakly constrained databases easier for agents to navigate.
+- **Ambiguity handling:** Tablix detects ambiguous terms such as active, latest, status, revenue, owner, and customer before data-answer execution and asks a targeted clarification question instead of guessing.
 - **Chat context updates:** dashboard Chat exposes query execution plus database/table context update tools to capable models so durable insights can be persisted without saving secrets, raw rows, or unsupported guesses.
 - **Provider throughput controls:** `RequestTimeoutMs` applies to one provider request, while `MaxConcurrentRequests` caps parallel provider calls for batch operations such as table-context generation.
 - **Dashboard productivity controls:** crawl progress streams table-level status, table-context generation updates rows as individual tables complete, query results can be copied as JSON or downloaded as CSV, the empty Chat state is centered in the transcript, the login page shows the configured server URL, and dashboard labels/help text can be localized.
@@ -36,7 +40,7 @@ A built-in dashboard provides the same workflow for humans: configure databases 
 
 - **Turn natural language into grounded answers.** Agents can use schema discovery, durable context, and NL2SQL generation to answer questions from actual query results, not fabricated rows or unexecuted SQL snippets.
 - **Give agents a controlled database interface.** Connect Tablix via MCP to Claude Code, Cursor, Codex, Gemini, or other tool-capable clients. Agents can discover databases, inspect tables, understand relationships, execute permitted queries, and update durable context when new reusable insights are found.
-- **Make database meaning explicit.** Store database-level and table-level context that explains business purpose, important columns, join paths, filters, caveats, and inferred relationships. That context gives agents more than raw table names without putting secrets or raw rows into prompts.
+- **Make database meaning explicit.** Store database-level and table-level context that explains business purpose, important columns, join paths, filters, caveats, and inferred relationships. Tablix also scores context quality and generates agent packs so context gaps are visible.
 - **Guard query execution.** Each database entry specifies which SQL statement types are allowed (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, etc.). Tablix validates statement type, rejects multi-statement SQL, restricts calls to the selected database, and executes through its own query service.
 - **Use the same gateway from UI or API.** The dashboard supports setup, schema browsing, query execution, model/provider management, context generation, and database chat. REST exposes the same core workflows for automation.
 
@@ -157,9 +161,9 @@ The server creates a default `tablix.json` on first run for bootstrap settings a
 
 The dashboard includes Databases, Query, Chat, Models, and Settings pages plus a first-run setup wizard. On first sign-in, the wizard can validate a model provider, validate a database connection, crawl schema metadata, generate database context, generate table context, and leave the user ready for Chat. Users can skip the wizard and perform the same work from the main pages.
 
-The database detail view shows saved database context from database-scope `context_records` in `tablix.db`, supports inline context edits through `POST /v1/database/{id}/context`, displays table-level context editors, can generate one table context through `POST /v1/database/{id}/table-context/{tableId}/build`, and uses `POST /v1/database/{id}/crawl/stream` to show schema crawl progress in real time with per-table status. The setup wizard generates table context with one request per table, up to the selected provider's `MaxConcurrentRequests`, and fills each table's context editor as soon as that table completes.
+The database detail view shows saved database context from database-scope `context_records` in `tablix.db`, supports inline context edits through `POST /v1/database/{id}/context`, displays table-level context editors, can generate one table context through `POST /v1/database/{id}/table-context/{tableId}/build`, and uses `POST /v1/database/{id}/crawl/stream` to show schema crawl progress in real time with per-table status. It also displays schema-to-domain intelligence from `GET /v1/database/{id}/intelligence`: context quality, inferred relationships, ambiguity signals, domain entities, starter questions, and a copyable agent pack. The setup wizard generates table context with one request per table, up to the selected provider's `MaxConcurrentRequests`, and fills each table's context editor as soon as that table completes.
 
-The Models page manages model providers, provider-specific system prompt overrides, native-tool settings, per-request timeouts, concurrency limits, and connectivity tests. The Databases page exposes row actions from an overflow menu, including Build Context and Delete. Build Context lets a user edit model instructions, generate context from the last successful crawl through a configured provider, and persist the result to SQLite. The Query page can copy result JSON or download result rows as CSV. The Chat page selects a database and provider, supports streaming and non-streaming responses, renders markdown, can execute permitted queries through PolyPrompt native tool calls or server-side fallback planning, displays inline tool calls, shows the execution path, and exposes per-message telemetry. The Settings page edits form-based bootstrap/server settings, prompt-processing settings, and chat-tool settings, and annotates values that are saved immediately but require server restart to affect active listeners, logging, or persistence filename/type.
+The Models page manages model providers, provider-specific system prompt overrides, native-tool settings, per-request timeouts, concurrency limits, and connectivity tests. The Databases page exposes row actions from an overflow menu, including Build Context and Delete. Build Context lets a user edit model instructions, generate context from the last successful crawl through a configured provider, and persist the result to SQLite. The Query page can copy result JSON or download result rows as CSV. The Chat page selects a database and provider, supports streaming and non-streaming responses, renders markdown, can execute permitted queries through PolyPrompt native tool calls or server-side fallback planning, displays inline tool calls, shows the execution path, exposes per-message telemetry, and renders verified-answer metadata. The Settings page edits form-based bootstrap/server settings, prompt-processing settings, and chat-tool settings, and annotates values that are saved immediately but require server restart to affect active listeners, logging, or persistence filename/type.
 
 Dashboard localization covers static visible labels, control help/tooltips, placeholders, and accessibility labels for English, Spanish, French, Italian, Portuguese, Mandarin, Cantonese, a Kanji-labeled Japanese option, Japanese, and Farsi. Farsi switches the document direction to RTL. Dynamic database names, query results, generated chat content, markdown responses, context text, and server-returned errors are intentionally left as authored or returned.
 
@@ -219,13 +223,13 @@ To configure manually, add to your client's MCP settings:
 
 ### MCP Tools
 
-Tablix exposes eleven MCP tools. The recommended discovery flow for AI agents is:
+Tablix exposes thirteen MCP tools. The recommended discovery flow for AI agents is:
 
 See [MCP_API.md](MCP_API.md) for the complete MCP tool contract, response schemas, examples, and model guidance.
 
 1. **`tablix_discover_databases`** - List configured databases
 2. **`tablix_list_tables`** - Page through compact table summaries
-3. **`tablix_list_relationships`** - Page through compact declared relationship edges
+3. **`tablix_list_relationships`** - Page through compact declared and optionally inferred relationship edges
 4. **`tablix_discover_table`** - Get full geometry for specific tables
 5. **`tablix_execute_query`** - Execute a SQL query once the schema is understood
 6. **`tablix_get_database_context`** - Read database context for one or more databases
@@ -234,6 +238,8 @@ See [MCP_API.md](MCP_API.md) for the complete MCP tool contract, response schema
 9. **`tablix_update_table_context`** - Persist analyzed table context back to `tablix.db`
 10. **`tablix_update_context`** - General context update tool with `scope = Database` or `scope = Table`
 11. **`tablix_discover_database`** - Full database geometry for small databases or explicit full-schema requests
+12. **`tablix_get_database_intelligence`** - Read domain entities, inferred relationships, ambiguity signals, context quality, and optionally an agent pack
+13. **`tablix_get_agent_pack`** - Read MCP-ready instructions and starter questions for one database
 
 #### Choosing the Right Discovery Tool
 
@@ -241,6 +247,8 @@ See [MCP_API.md](MCP_API.md) for the complete MCP tool contract, response schema
 |------|-----|-----|
 | Find configured databases | `tablix_discover_databases` | Returns IDs, redacted metadata, allowed query types, crawl state, and saved context |
 | Understand a large database safely | `tablix_list_tables` then `tablix_list_relationships` | Keeps responses compact and pageable |
+| Bootstrap an agent quickly | `tablix_get_agent_pack` | Returns selected-database instructions, entity guidance, relationship notes, ambiguity warnings, and starter questions |
+| Assess context readiness | `tablix_get_database_intelligence` | Returns context quality, ambiguity signals, and domain intelligence |
 | Inspect tables before writing SQL | `tablix_discover_table` | Returns full column, key, foreign-key, and index geometry for one table |
 | Read database context explicitly | `tablix_get_database_context` | Returns durable database-level guidance for one or more databases |
 | Read table context explicitly | `tablix_get_table_context` | Returns durable table-level guidance for one or more tables |
@@ -253,7 +261,7 @@ For large databases, prefer this loop:
 1. Call `tablix_discover_databases` and select the database by `Id`.
 2. Call `tablix_list_tables` with a conservative `maxResults` such as `50`.
 3. If `EndOfResults` is false, call `tablix_list_tables` again with `skip` set to `NextSkip`.
-4. Call `tablix_list_relationships` the same way to collect declared foreign-key edges.
+4. Call `tablix_list_relationships` the same way to collect declared foreign-key edges; set `includeInferred` when declared FKs are incomplete.
 5. Call `tablix_get_table_context` for tables needed by the user's question.
 6. Call `tablix_discover_table` only for tables needed by the user's question.
 7. Execute read-only exploratory SQL only after checking `AllowedQueries` and validating table geometry.
@@ -266,7 +274,8 @@ For large databases, prefer this loop:
 - For large schemas, avoid full-database geometry. Use `tablix_list_tables` and `tablix_list_relationships`, following `NextSkip` until `EndOfResults` is true.
 - Treat `tablix_list_tables` as a compact index, not enough information for most SQL. Call `tablix_discover_table` for every table you plan to select from, join, filter on, insert into, update, or delete from.
 - Use `tablix_get_database_context` for database-level guidance and `tablix_get_table_context` for table-level guidance. Context improves interpretation but does not replace schema validation.
-- Treat `tablix_list_relationships` as declared foreign-key evidence. If no relationship is returned, that only means no declared FK was discovered; implicit relationships may still exist.
+- Treat `tablix_list_relationships` relationships with `Source = declared_fk` as declared evidence. Treat `Source = inferred_name_match` as a candidate until confirmed by context, schema inspection, or user approval.
+- Use `tablix_get_database_intelligence` or `tablix_get_agent_pack` when you need a compact domain brief before deeper inspection.
 - When inferring relationships from column names or business context, clearly label them as inferred in answers and saved context.
 - Prefer `SELECT` for exploration. Only run writes when the user explicitly asks and the database `AllowedQueries` permits the statement type.
 - Use `tablix_update_database_context` for database-level context and `tablix_update_table_context` for table-level context. `tablix_update_context` remains available for generic scoped workflows. Do not store secrets, raw query results, or unsupported guesses as facts.
@@ -307,7 +316,7 @@ Returns `MaxResults`, `Skip`, `TotalRecords`, `RecordsRemaining`, `EndOfResults`
 
 #### `tablix_list_relationships`
 
-List compact relationship edges for a database. The current implementation returns declared foreign keys with `FromTable`, `FromColumn`, `ToTable`, `ToColumn`, `Source`, and `Confidence`. Absence of a relationship means no declared FK was discovered, not proof that tables are unrelated.
+List compact relationship edges for a database. Declared foreign keys are returned with `Source = declared_fk`; when `includeInferred` is true, name-based inferred join candidates are returned with `Source = inferred_name_match` and a confidence score. Absence of a declared relationship means no declared FK was discovered, not proof that tables are unrelated.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -316,7 +325,24 @@ List compact relationship edges for a database. The current implementation retur
 | `skip` | integer | No | Number of relationships to skip (default 0) |
 | `filter` | string | No | Filter by table, column, schema, or constraint name |
 | `schema` | string | No | Filter by source or target schema |
-| `includeInferred` | boolean | No | Reserved for inferred relationships; currently returns declared FKs only |
+| `includeInferred` | boolean | No | Include name-based inferred relationship candidates with confidence scores |
+
+#### `tablix_get_database_intelligence`
+
+Get schema-to-domain intelligence for one database: domain entities, relationship candidates, ambiguity signals, context quality, and an optional agent pack.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `databaseId` | string | Yes | Database entry ID |
+| `includeAgentPack` | boolean | No | Include markdown agent pack in the response |
+
+#### `tablix_get_agent_pack`
+
+Get MCP-ready instructions for one database, including selected database ID, safe discovery loop, major entities, relationship notes, ambiguity warnings, and starter questions.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `databaseId` | string | Yes | Database entry ID |
 
 #### `tablix_discover_table`
 
@@ -639,6 +665,8 @@ All endpoints except health checks require `Authorization: Bearer <api-key>`. Se
 | `GET` | `/v1/database/{id}` | Yes | Get database details and schema geometry |
 | `GET` | `/v1/database/{id}/tables` | Yes | List database tables (paginated) |
 | `GET` | `/v1/database/{id}/relationships` | Yes | List database relationships (paginated) |
+| `GET` | `/v1/database/{id}/intelligence` | Yes | Read domain intelligence, inferred relationship candidates, ambiguity signals, context quality, and optional agent pack |
+| `GET` | `/v1/database/{id}/agent-pack` | Yes | Read MCP-ready agent instructions for one database |
 | `POST` | `/v1/database` | Yes | Add a database entry |
 | `PUT` | `/v1/database/{id}` | Yes | Update a database entry |
 | `POST` | `/v1/database/test` | Yes | Test unsaved database settings |

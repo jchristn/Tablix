@@ -47,6 +47,8 @@ namespace Tablix.Server.Mcp
             RegisterUpdateContext(register, persistence, crawlCache, logDebug);
             RegisterUpdateDatabaseContext(register, persistence, crawlCache, logDebug);
             RegisterUpdateTableContext(register, persistence, crawlCache, logDebug);
+            RegisterDatabaseIntelligence(register, persistence, crawlCache, logDebug);
+            RegisterAgentPack(register, persistence, crawlCache, logDebug);
         }
 
         #endregion
@@ -645,6 +647,71 @@ namespace Tablix.Server.Mcp
                 {
                     logDebug?.Invoke("[MCP] tablix_update_table_context invoked");
                     return (object)await HandleUpdateContextAsync(args, ContextScopeEnum.Table, persistence, crawlCache).ConfigureAwait(false);
+                });
+        }
+
+        private static void RegisterDatabaseIntelligence(RegisterToolDelegate register, DatabaseDriverBase persistence, CrawlCache crawlCache, Action<string> logDebug)
+        {
+            register(
+                "tablix_get_database_intelligence",
+                "Get Tablix's schema-to-domain intelligence for one database: domain entities, inferred relationship candidates, ambiguity signals, context quality score, and an optional agent pack. Use this after tablix_discover_databases when you need a compact domain readout before answering or generating SQL. Treat inferred relationships as candidates unless saved context confirms them.",
+                new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        databaseId = new { type = "string", description = "Database entry ID" },
+                        includeAgentPack = new { type = "boolean", description = "Whether to include the markdown agent pack. Defaults to true." }
+                    },
+                    required = new[] { "databaseId" }
+                },
+                async (args) =>
+                {
+                    logDebug?.Invoke("[MCP] tablix_get_database_intelligence invoked");
+                    McpDatabaseIntelligenceRequest request = ReadRequest<McpDatabaseIntelligenceRequest>(args);
+                    if (String.IsNullOrWhiteSpace(request.DatabaseId))
+                        return (object)new McpErrorResponse("databaseId is required");
+
+                    DatabaseEntry entry = await persistence.DatabaseConnections.ReadAsync(request.DatabaseId).ConfigureAwait(false);
+                    if (entry == null)
+                        return (object)new McpErrorResponse("Database '" + request.DatabaseId + "' not found");
+
+                    DatabaseDetail detail = await ReadDatabaseDetailAsync(persistence, crawlCache, entry).ConfigureAwait(false);
+                    detail.Context = entry.Context;
+                    DatabaseIntelligenceResponse response = DatabaseIntelligenceBuilder.Build(entry, detail, request.IncludeAgentPack);
+                    return (object)response;
+                });
+        }
+
+        private static void RegisterAgentPack(RegisterToolDelegate register, DatabaseDriverBase persistence, CrawlCache crawlCache, Action<string> logDebug)
+        {
+            register(
+                "tablix_get_agent_pack",
+                "Get MCP-ready agent instructions for one database, including the selected databaseId, safe discovery loop, major entities, declared and inferred relationships, ambiguity warnings, and useful starter questions. Use this to brief an agent before deeper schema inspection or query execution.",
+                new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        databaseId = new { type = "string", description = "Database entry ID" }
+                    },
+                    required = new[] { "databaseId" }
+                },
+                async (args) =>
+                {
+                    logDebug?.Invoke("[MCP] tablix_get_agent_pack invoked");
+                    McpDiscoverDatabaseRequest request = ReadRequest<McpDiscoverDatabaseRequest>(args);
+                    if (String.IsNullOrWhiteSpace(request.DatabaseId))
+                        return (object)new McpErrorResponse("databaseId is required");
+
+                    DatabaseEntry entry = await persistence.DatabaseConnections.ReadAsync(request.DatabaseId).ConfigureAwait(false);
+                    if (entry == null)
+                        return (object)new McpErrorResponse("Database '" + request.DatabaseId + "' not found");
+
+                    DatabaseDetail detail = await ReadDatabaseDetailAsync(persistence, crawlCache, entry).ConfigureAwait(false);
+                    detail.Context = entry.Context;
+                    DatabaseIntelligenceResponse intelligence = DatabaseIntelligenceBuilder.Build(entry, detail, true);
+                    return (object)intelligence.AgentPack;
                 });
         }
 

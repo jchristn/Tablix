@@ -39,9 +39,25 @@ namespace Tablix.Server.Handlers
         public string Prompt { get; set; } = null;
 
         /// <summary>
+        /// Latest user message.
+        /// </summary>
+        public string LatestUserMessage { get; set; } = null;
+
+        /// <summary>
+        /// Prompt-specific ambiguity signals.
+        /// </summary>
+        public System.Collections.Generic.List<AmbiguitySignal> Ambiguities
+        {
+            get { return _Ambiguities; }
+            set { _Ambiguities = value ?? new System.Collections.Generic.List<AmbiguitySignal>(); }
+        }
+
+        /// <summary>
         /// Error response when preparation fails.
         /// </summary>
         public object Error { get; set; } = null;
+
+        private System.Collections.Generic.List<AmbiguitySignal> _Ambiguities = new System.Collections.Generic.List<AmbiguitySignal>();
 
         /// <summary>
         /// Create a failed preparation.

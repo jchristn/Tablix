@@ -49,6 +49,20 @@ namespace Tablix.Core.Models
         }
 
         /// <summary>
+        /// Verification metadata for the answer.
+        /// </summary>
+        public VerifiedAnswer VerifiedAnswer { get; set; } = null;
+
+        /// <summary>
+        /// Ambiguity signals detected before answer generation.
+        /// </summary>
+        public List<AmbiguitySignal> Ambiguities
+        {
+            get { return _Ambiguities; }
+            set { _Ambiguities = value ?? new List<AmbiguitySignal>(); }
+        }
+
+        /// <summary>
         /// Execution path used to produce the response.
         /// </summary>
         public string ExecutionPath { get; set; } = null;
@@ -68,6 +82,7 @@ namespace Tablix.Core.Models
         #region Private-Members
 
         private List<ChatToolCall> _ToolCalls = new List<ChatToolCall>();
+        private List<AmbiguitySignal> _Ambiguities = new List<AmbiguitySignal>();
 
         #endregion
 

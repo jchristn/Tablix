@@ -315,6 +315,14 @@ After the context is saved:
 3. Review the saved context.
 4. Use **Copy database context** if you want to inspect or reuse it elsewhere.
 
+The database detail page also shows **Database Intelligence**. This is generated from the crawl and saved context without another model call:
+
+- **Context Quality** shows how ready the database is for agent use.
+- **Main Entities** summarizes likely domain tables.
+- **Relationship Intelligence** shows declared foreign keys and inferred relationship candidates.
+- **Ambiguity Handling** lists terms Tablix should clarify before running SQL, such as active, latest, revenue, status, owner, or customer.
+- **Agent Pack** gives MCP-ready instructions and starter questions that can be copied into an agent workflow.
+
 You can also edit context manually:
 
 1. Open the database detail page.
@@ -371,11 +379,13 @@ The chat page supports:
 - Markdown rendering.
 - Streaming and non-streaming responses.
 - Inline tool call displays.
+- Verified-answer metadata showing whether a response was verified, partial, blocked, or ambiguous.
 - Query execution for permitted query types.
+- Clarification prompts when a data request is ambiguous.
 - Database and table context updates for durable insights when context updates are enabled.
 - Per-message telemetry.
 
-When the assistant executes a query or saves durable context, Tablix prefers PolyPrompt native tool calls when the provider is configured for them. If native tools are unavailable or the model does not call one for a data request, Tablix can use model-based server-side fallback planning to decide whether a query should run. The message shows the tool call, phase, arguments, result, runtime, and any errors.
+When the assistant executes a query or saves durable context, Tablix prefers PolyPrompt native tool calls when the provider is configured for them. If native tools are unavailable or the model does not call one for a data request, Tablix can use model-based server-side fallback planning to decide whether a query should run. The message shows the tool call, phase, arguments, result, runtime, and any errors. If Tablix executes SQL, the verification panel shows the SQL, row count, and evidence used to ground the answer.
 
 ## Step 9: Verify with the Query Page
 
