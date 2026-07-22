@@ -6,10 +6,6 @@
   <b>v0.3.0 - ALPHA</b> - API and structure may change without notice
 </p>
 
-<p align="center">
-  <b>Author:</b> <a href="https://github.com/jchristn">@jchristn</a>
-</p>
-
 # Tablix
 
 Tablix is a database gateway for AI agents, connecting your databases through MCP, REST, and a dashboard with schema discovery, durable context, NL2SQL-powered query generation, guarded execution, and database-aware chat. Tablix helps agents understand what your data means, generate safer SQL, execute permitted queries, and return answers grounded in actual results.
