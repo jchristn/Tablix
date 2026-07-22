@@ -7,12 +7,12 @@
 </p>
 
 <p align="center">
-  <b>Authors:</b> <a href="https://github.com/jchristn">@jchristn</a> <a href="https://github.com/rawingate">@rawingate</a>
+  <b>Author:</b> <a href="https://github.com/jchristn">@jchristn</a>
 </p>
 
 # Tablix
 
-Tablix is a database discovery and query platform that connects your databases to AI agents and humans through REST and MCP interfaces.
+Tablix is a database gateway for AI agents, connecting your databases through MCP, REST, and a dashboard with schema discovery, durable context, NL2SQL-powered query generation, guarded execution, and database-aware chat. Tablix helps agents understand what your data means, generate safer SQL, execute permitted queries, and return answers grounded in actual results.
 
 ## What's New in v0.3.0
 
@@ -22,7 +22,7 @@ v0.3.0 turns Tablix into a more complete database-agent workspace: product state
 - **SQLite-backed product state:** model providers, configured databases, crawl metadata, database context, table context, and setup wizard state are persisted in `tablix.db`; `tablix.json` is now bootstrap/server configuration.
 - **Database and table context:** REST, MCP, and dashboard workflows can read, generate, edit, and persist durable context without returning secrets or raw data.
 - **Guided first-run setup:** the setup wizard walks through model provider validation, database validation, crawl, database context, and table context generation.
-- **Database chat:** the Chat page uses PolyPrompt providers, markdown rendering, native tool calls when supported, server-side fallback execution, inline tool-call displays, and per-message telemetry.
+- **NL2SQL-powered database chat:** the Chat page uses PolyPrompt providers, markdown rendering, native tool calls when supported, model-based fallback planning, guarded query execution, inline tool-call displays, and per-message telemetry.
 - **Chat context updates:** dashboard Chat exposes query execution plus database/table context update tools to capable models so durable insights can be persisted without saving secrets, raw rows, or unsupported guesses.
 - **Provider throughput controls:** `RequestTimeoutMs` applies to one provider request, while `MaxConcurrentRequests` caps parallel provider calls for batch operations such as table-context generation.
 - **Dashboard productivity controls:** crawl progress streams table-level status, table-context generation updates rows as individual tables complete, query results can be copied as JSON or downloaded as CSV, the empty Chat state is centered in the transcript, the login page shows the configured server URL, and dashboard labels/help text can be localized.
@@ -30,25 +30,28 @@ v0.3.0 turns Tablix into a more complete database-agent workspace: product state
 
 ## What Is Tablix?
 
-Tablix sits between your databases and your tools. It crawls database schemas - discovering tables, columns, primary keys, foreign keys, and indexes - and exposes that metadata alongside query execution through a REST API and an MCP server. A built-in dashboard provides a browser-based UI for the same operations.
+Tablix sits between your databases and the agents or people asking questions of them. It crawls schema metadata, stores durable database and table context, exposes MCP and REST APIs, and gives models a controlled tool surface for NL2SQL query generation and execution. Instead of leaving an agent to guess table structure or hand you SQL to run manually, Tablix gives it the schema, context, permissions, and execution path needed to answer from real database results.
+
+A built-in dashboard provides the same workflow for humans: configure databases and model providers, inspect schema, build context, run queries, and chat with a selected database.
 
 **Supported databases:** SQLite, PostgreSQL, MySQL, SQL Server.
 
 ## Why Use Tablix?
 
-- **Give AI agents database access.** Connect Tablix via MCP to Claude Code, Cursor, Codex, or Gemini. Your agent can discover what databases are available, understand their schemas, and run queries to answer your questions - without you writing SQL.
-- **Centralize database discovery.** Configure all your database connections in one place with user-supplied context that describes what each database contains and how its tables relate to one another. AI agents use this context to figure out what queries to run.
-- **Control what's allowed.** Each database entry specifies which SQL statement types are permitted (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, etc.). Tablix validates every query before execution.
-- **Inspect schemas visually.** The dashboard shows crawled table geometry - columns, types, primary keys, foreign keys, and indexes - in a clean, browsable interface with light and dark modes.
-- **Chat with database context.** The dashboard Chat page uses PolyPrompt `1.5.0` providers stored in `tablix.db` to answer natural-language questions using saved database/table context, crawled schema metadata, native tool calls when supported, and model-based server-side fallback planning when a model does not call a tool.
+- **Turn natural language into grounded answers.** Agents can use schema discovery, durable context, and NL2SQL generation to answer questions from actual query results, not fabricated rows or unexecuted SQL snippets.
+- **Give agents a controlled database interface.** Connect Tablix via MCP to Claude Code, Cursor, Codex, Gemini, or other tool-capable clients. Agents can discover databases, inspect tables, understand relationships, execute permitted queries, and update durable context when new reusable insights are found.
+- **Make database meaning explicit.** Store database-level and table-level context that explains business purpose, important columns, join paths, filters, caveats, and inferred relationships. That context gives agents more than raw table names without putting secrets or raw rows into prompts.
+- **Guard query execution.** Each database entry specifies which SQL statement types are allowed (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, etc.). Tablix validates statement type, rejects multi-statement SQL, restricts calls to the selected database, and executes through its own query service.
+- **Use the same gateway from UI or API.** The dashboard supports setup, schema browsing, query execution, model/provider management, context generation, and database chat. REST exposes the same core workflows for automation.
 
 ## How It Works
 
-1. Configure one or more database connections in the setup wizard, dashboard, REST API, or `tablix.db`
-2. Tablix starts REST/MCP immediately, then crawls each configured database in the background and caches schema geometry
-3. AI agents connect via MCP to discover databases and execute queries
-4. Humans use the dashboard or REST API for the same operations
-5. Query validation enforces the `AllowedQueries` list per database
+1. Configure one or more database connections and model providers in the setup wizard, dashboard, REST API, or seeded `tablix.db`.
+2. Tablix crawls schema metadata, stores table geometry and relationships, and persists database/table context in SQLite.
+3. AI agents connect through MCP, while humans use the dashboard or REST API.
+4. For data questions, the model uses context and schema metadata to generate SQL, then calls Tablix tools to execute permitted queries instead of merely returning SQL.
+5. Tablix validates the selected database and allowed statement type, runs the query, returns actual results, and asks the model to answer from those results.
+6. When durable relationships or corrections are discovered, context update tools can persist them for future conversations.
 
 ## API References
 
