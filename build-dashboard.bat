@@ -1,18 +1,24 @@
 @echo off
-if "%1"=="" (
+if "%~1"=="" (
     echo Usage: build-dashboard.bat [version-tag]
-    echo Example: build-dashboard.bat v0.2.0
+    echo Example: build-dashboard.bat v0.3.0
     exit /b 1
 )
 
-echo Building Tablix Dashboard %1...
+set "VERSION_TAG=%~1"
+
+echo Building Tablix Dashboard %VERSION_TAG%...
 docker buildx build ^
-    --builder cloud-jchristn77-jchristn77 ^
     --platform linux/amd64,linux/arm64/v8 ^
-    -t jchristn77/tablix-ui:%1 ^
+    -t jchristn77/tablix-ui:%VERSION_TAG% ^
     -t jchristn77/tablix-ui:latest ^
     -f dashboard/Dockerfile ^
     --push ^
     dashboard/
+if errorlevel 1 (
+    echo Tablix Dashboard build failed.
+    exit /b %errorlevel%
+)
 
 echo Done.
+exit /b 0

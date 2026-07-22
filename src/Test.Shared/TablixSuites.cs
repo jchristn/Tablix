@@ -500,12 +500,15 @@ namespace Test.Shared
                         Contains(settings.Chat.SystemPrompt, "Restrict your conversation to only the selected database", "Default chat prompt should restrict scope.");
                         Contains(settings.Chat.SystemPrompt, "execute the query", "Default chat prompt should tell models to execute answerable data queries.");
                         Contains(settings.Chat.SystemPrompt, "instead of only describing SQL", "Default chat prompt should discourage SQL-only answers when a tool can execute.");
+                        Contains(settings.Chat.SystemPrompt, "Never fabricate table contents", "Default chat prompt should prohibit fabricated database facts.");
+                        Contains(settings.Chat.SystemPrompt, "Return SQL text only when", "Default chat prompt should limit SQL-only answers to explicit requests or unavailable execution.");
                         Contains(settings.Chat.SystemPrompt, "one permitted SQL statement", "Default chat prompt should give concise query tool usage guidance.");
                         Contains(settings.Chat.SystemPrompt, "bad or unknown column", "Default chat prompt should handle unknown column failures.");
                         Contains(settings.Chat.SystemPrompt, "column type mismatch", "Default chat prompt should handle column type failures.");
                         Contains(settings.Chat.SystemPrompt, "update database context", "Default chat prompt should correct stale database context.");
                         Contains(settings.Chat.SystemPrompt, "update table context", "Default chat prompt should correct stale table context.");
                         True(settings.Chat.PromptProcessing.PreferNativeToolCalls, "Prompt processing should prefer native tools by default.");
+                        True(settings.Chat.PromptProcessing.RequireExecutionForDataRequests, "Prompt processing should require execution for data requests by default.");
                         True(settings.Chat.PromptProcessing.FallbackWhenNativeToolNotCalled, "Prompt processing should enable server fallback by default.");
                         return Task.CompletedTask;
                     }),
@@ -2155,6 +2158,68 @@ namespace Test.Shared
                         Contains(postman, "MaxConcurrentRequests", "Postman provider examples should include provider concurrency.");
                         return Task.CompletedTask;
                     }),
+                    Case("DashboardApiContract", "ReleaseVersion030Documented", "Release version 0.3.0 is reflected in docs, compose tags, package metadata, and product constants", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string readme = File.ReadAllText(Path.Combine(repositoryRoot, "README.md"));
+                        string restApi = File.ReadAllText(Path.Combine(repositoryRoot, "REST_API.md"));
+                        string mcpApi = File.ReadAllText(Path.Combine(repositoryRoot, "MCP_API.md"));
+                        string gettingStarted = File.ReadAllText(Path.Combine(repositoryRoot, "GETTING_STARTED.md"));
+                        string changelog = File.ReadAllText(Path.Combine(repositoryRoot, "CHANGELOG.md"));
+                        string compose = File.ReadAllText(Path.Combine(repositoryRoot, "docker", "compose.yaml"));
+                        string buildAll = File.ReadAllText(Path.Combine(repositoryRoot, "build-all.bat"));
+                        string buildServer = File.ReadAllText(Path.Combine(repositoryRoot, "build-server.bat"));
+                        string buildDashboard = File.ReadAllText(Path.Combine(repositoryRoot, "build-dashboard.bat"));
+                        string serverDockerfile = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Dockerfile"));
+                        string constants = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Core", "Helpers", "Constants.cs"));
+                        string oldCloudBuilderName = "cloud-" + "jchristn77-" + "jchristn77";
+                        string builderArgument = "-" + "-builder";
+                        List<string> projectFiles = Directory
+                            .GetFiles(Path.Combine(repositoryRoot, "src"), "*.csproj", SearchOption.AllDirectories)
+                            .OrderBy(filename => filename)
+                            .ToList();
+
+                        Contains(readme, "<b>v0.3.0 - ALPHA</b>", "README should show the current release tag.");
+                        Contains(readme, "## What's New in v0.3.0", "README current release section should be v0.3.0.");
+                        Contains(readme, "jchristn77/tablix-server:v0.3.0", "README server image examples should use v0.3.0.");
+                        Contains(readme, "jchristn77/tablix-ui:v0.3.0", "README UI image examples should use v0.3.0.");
+                        Contains(readme, "build-all.bat v0.3.0", "README build instructions should use v0.3.0.");
+                        DoesNotContain(readme, oldCloudBuilderName, "README build instructions should not require a hard-coded cloud builder.");
+                        DoesNotContain(readme, "v0.2.0", "README current-facing release references should not stay on v0.2.0.");
+
+                        Contains(restApi, "\"Version\": \"0.3.0\"", "REST API health example should use product version 0.3.0.");
+                        Contains(restApi, "tablix_update_database_context", "REST API chat docs should mention database context update tools.");
+                        Contains(restApi, "tablix_update_table_context", "REST API chat docs should mention table context update tools.");
+                        Contains(restApi, "Chat.Tools.AllowContextUpdates", "REST API chat docs should document the context-update gate.");
+                        Contains(mcpApi, "REST chat context updates", "MCP API docs should connect MCP and REST chat context updates.");
+                        Contains(gettingStarted, "Database and table context updates", "Getting started chat docs should mention context update tool calls.");
+                        Contains(changelog, "## v0.3.0 - ALPHA", "Changelog should include the v0.3.0 release.");
+
+                        Contains(compose, "jchristn77/tablix-server:v0.3.0", "Compose server image tag should be v0.3.0.");
+                        Contains(compose, "jchristn77/tablix-ui:v0.3.0", "Compose UI image tag should be v0.3.0.");
+                        DoesNotContain(compose, "v0.2.0", "Compose image tags should not remain on v0.2.0.");
+                        Contains(buildAll, "Example: build-all.bat v0.3.0", "Build-all script example should use v0.3.0.");
+                        Contains(buildServer, "Example: build-server.bat v0.3.0", "Build-server script example should use v0.3.0.");
+                        Contains(buildDashboard, "Example: build-dashboard.bat v0.3.0", "Build-dashboard script example should use v0.3.0.");
+                        DoesNotContain(buildServer, oldCloudBuilderName, "Build-server should not hard-code a Docker cloud builder.");
+                        DoesNotContain(buildDashboard, oldCloudBuilderName, "Build-dashboard should not hard-code a Docker cloud builder.");
+                        DoesNotContain(buildServer, builderArgument, "Build-server should use the active Docker Buildx builder.");
+                        DoesNotContain(buildDashboard, builderArgument, "Build-dashboard should use the active Docker Buildx builder.");
+                        Contains(buildServer, "if errorlevel 1 (", "Build-server should stop when docker buildx fails.");
+                        Contains(buildDashboard, "if errorlevel 1 (", "Build-dashboard should stop when docker buildx fails.");
+                        Contains(buildServer, "exit /b %errorlevel%", "Build-server should propagate docker buildx failures.");
+                        Contains(buildDashboard, "exit /b %errorlevel%", "Build-dashboard should propagate docker buildx failures.");
+                        Contains(serverDockerfile, "https://security.ubuntu.com/ubuntu", "Server Dockerfile should use HTTPS Ubuntu security sources.");
+                        Contains(serverDockerfile, "Acquire::Retries \"5\";", "Server Dockerfile should retry transient apt fetch failures.");
+                        Contains(serverDockerfile, "Acquire::https::Timeout \"30\";", "Server Dockerfile should set an apt HTTPS timeout.");
+                        foreach (string projectFile in projectFiles)
+                        {
+                            string project = File.ReadAllText(projectFile);
+                            Contains(project, "<Version>0.3.0</Version>", Path.GetFileName(projectFile) + " package version should be 0.3.0.");
+                        }
+                        Contains(constants, "ProductVersion = \"0.3.0\"", "Runtime product version should be 0.3.0.");
+                        return Task.CompletedTask;
+                    }),
                     Case("DashboardApiContract", "ApiFetchDoesNotForceJsonOnBodylessRequests", "Dashboard API helper only sends JSON content type with request bodies", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();
@@ -2264,7 +2329,88 @@ namespace Test.Shared
                         Contains(chatHandler, "Delta = chunk.Text", "SSE token events should send individual chunk text.");
                         Contains(chatHandler, "BuildToolFollowupPrompt(preparation.Prompt, executedTools)", "Native tool execution should stream the final post-tool answer.");
                         Contains(chatHandler, "ExecuteFallbackPlanningStreamingAsync", "Fallback tool execution should stream the final post-tool answer.");
+                        Contains(chatHandler, "Message = response.Text ?? String.Empty", "Native no-tool streaming should return the model response without pre-streaming a plain fallback candidate.");
+                        DoesNotContain(chatHandler, "return await ExecutePlainChatStreamingAsync(client, preparation, \"native_no_tool_call\"", "Native no-tool streaming should not stream a plain response before server fallback can run.");
                         DoesNotContain(chatHandler, "Delta = execution.Message", "SSE chat should not send the full completed answer as one token event.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ChatIntentUsesModelPlanning", "Chat fallback intent is decided by model planning rather than substring matching", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
+                        string executionPolicy = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatExecutionPolicy.cs"));
+                        string fallbackPlan = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "FallbackQueryPlan.cs"));
+
+                        Contains(chatHandler, "Classify the latest user message", "Fallback planner should classify the latest user intent.");
+                        Contains(chatHandler, "Intent must be one of", "Fallback planner should use explicit intent labels.");
+                        Contains(chatHandler, "Execute to false", "Fallback planner should allow no-query decisions.");
+                        Contains(executionPolicy, "UseFallbackPlanner", "Execution policy should route to model-based fallback planning.");
+                        Contains(fallbackPlan, "PromptIntentTypeEnum Intent", "Fallback query plan should preserve the model-classified intent.");
+                        DoesNotContain(chatHandler, "user.Contains(", "Chat intent routing should not use substring matching against user prompts.");
+                        DoesNotContain(chatHandler, "UserAskedForData", "Chat intent routing should not keep the old data-request heuristic.");
+                        DoesNotContain(chatHandler, "UserAskedOnlyForSql", "Chat intent routing should not keep the old SQL-only heuristic.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ChatContextUpdateToolsAreExposed", "Chat exposes durable context update tools with typed arguments and exact routing", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatHandler = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
+                        string toolDefinitions = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "TablixChatToolDefinitions.cs"));
+                        string databaseArguments = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "TablixUpdateDatabaseContextArguments.cs"));
+                        string tableArguments = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "TablixUpdateTableContextArguments.cs"));
+                        string updateResult = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Handlers", "ChatContextUpdateToolResult.cs"));
+                        string enabledTools = Serializer.SerializeJson(TablixChatToolDefinitions.Build(true), false);
+                        string disabledTools = Serializer.SerializeJson(TablixChatToolDefinitions.Build(false), false);
+
+                        Contains(enabledTools, "tablix_execute_query", "Native chat should continue exposing the query execution tool.");
+                        Contains(enabledTools, "tablix_update_database_context", "Native chat should expose a database context update tool.");
+                        Contains(enabledTools, "tablix_update_table_context", "Native chat should expose a table context update tool.");
+                        DoesNotContain(disabledTools, "tablix_update_database_context", "Database context updates should not be exposed when disabled.");
+                        DoesNotContain(disabledTools, "tablix_update_table_context", "Table context updates should not be exposed when disabled.");
+
+                        Contains(toolDefinitions, "UpdateDatabaseContextToolName = \"tablix_update_database_context\"", "Database context tool name should be a constant.");
+                        Contains(toolDefinitions, "UpdateTableContextToolName = \"tablix_update_table_context\"", "Table context tool name should be a constant.");
+                        Contains(toolDefinitions, "BuildUpdateDatabaseContextTool()", "Database context tool definition should be explicit.");
+                        Contains(toolDefinitions, "BuildUpdateTableContextTool()", "Table context tool definition should be explicit.");
+                        Contains(toolDefinitions, "Use append for incremental observations", "Context tool descriptions should prefer append for new observations.");
+                        Contains(toolDefinitions, "Do not store secrets", "Context tool descriptions should protect persisted context.");
+                        Contains(toolDefinitions, "raw result rows", "Context tool descriptions should reject raw result persistence.");
+                        Contains(toolDefinitions, "Clearly label inferred relationships", "Context tool descriptions should preserve inferred relationship provenance.");
+
+                        Contains(chatHandler, "Tools = TablixChatToolDefinitions.Build(preparation.Settings.Chat.Tools.AllowContextUpdates)", "Native tool exposure should honor AllowContextUpdates.");
+                        Contains(chatHandler, "ExecuteDatabaseContextUpdateToolCallAsync", "Chat handler should execute database context tool calls.");
+                        Contains(chatHandler, "ExecuteTableContextUpdateToolCallAsync", "Chat handler should execute table context tool calls.");
+                        Contains(chatHandler, "TablixUpdateDatabaseContextArguments arguments;", "Database context tool should deserialize to a named arguments type.");
+                        Contains(chatHandler, "TablixUpdateTableContextArguments arguments;", "Table context tool should deserialize to a named arguments type.");
+                        Contains(chatHandler, "ChatContextUpdateToolResult result = new ChatContextUpdateToolResult", "Context update tool results should use a named result type.");
+                        Contains(chatHandler, "_Persistence.DatabaseContexts.UpsertAsync(", "Database context tool should persist through database context storage.");
+                        Contains(chatHandler, "_Persistence.TableContexts.UpsertAsync(", "Table context tool should persist through table context storage.");
+                        Contains(chatHandler, "\"chat\",", "Chat context updates should be source-labelled as chat updates.");
+                        Contains(chatHandler, "NormalizeContextUpdateMode(arguments.Mode, out error)", "Context update mode should be normalized and validated.");
+                        Contains(chatHandler, "FindTablesByName(detail, arguments.SchemaName, arguments.TableName)", "Table context matching should use schema/table arguments.");
+                        Contains(chatHandler, "Do not persist secrets, credentials, raw result rows", "Chat prompt should instruct the model not to persist sensitive or raw data.");
+
+                        List<string> typedSources = new List<string>
+                        {
+                            chatHandler,
+                            toolDefinitions,
+                            databaseArguments,
+                            tableArguments,
+                            updateResult
+                        };
+
+                        foreach (string source in typedSources)
+                        {
+                            DoesNotContain(source, "JsonNode", "Chat tool path should not use JsonNode.");
+                            DoesNotContain(source, "JsonElement", "Chat tool path should not use JsonElement.");
+                            DoesNotContain(source, "JsonObject", "Chat tool path should not use JsonObject.");
+                            DoesNotContain(source, "JsonArray", "Chat tool path should not use JsonArray.");
+                            DoesNotContain(source, "var ", "Chat tool path should not use var.");
+                            DoesNotContain(source, "Tuple<", "Chat tool path should not use Tuple.");
+                            DoesNotContain(source, "ValueTuple", "Chat tool path should not use ValueTuple.");
+                        }
+
+                        DoesNotContain(chatHandler, ".Contains(", "Chat tool routing and context table matching should not use substring matching.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "ProviderPromptOverrideIsSurfaced", "Model provider prompt overrides are surfaced and documented in the dashboard", ct =>
@@ -2275,7 +2421,9 @@ namespace Test.Shared
                         string readme = File.ReadAllText(Path.Combine(repositoryRoot, "README.md"));
                         string restApi = File.ReadAllText(Path.Combine(repositoryRoot, "REST_API.md"));
 
-                        Contains(chatHandler, "provider.SystemPrompt) ? settings.Chat.SystemPrompt : provider.SystemPrompt", "Provider system prompt should override settings system prompt when set.");
+                        Contains(chatHandler, "BuildEffectiveSystemPrompt(settings, provider)", "Chat preparation should build one effective system prompt for every provider.");
+                        Contains(chatHandler, "MandatoryExecutionSystemPrompt", "Provider prompt overrides should still receive mandatory execution and no-fabrication rules.");
+                        Contains(chatHandler, "Never fabricate table contents", "Mandatory prompt rules should prohibit fabricated database facts.");
                         Contains(modelsPage, "System Prompt Override", "Models page should expose provider-specific system prompt override.");
                         Contains(modelsPage, "models.systemPrompt", "Provider prompt override should have localized tooltip coverage.");
                         Contains(readme, "provider-specific system prompt", "README should explain provider prompt overrides.");

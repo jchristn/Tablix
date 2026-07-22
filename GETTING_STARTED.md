@@ -100,7 +100,7 @@ In the dashboard:
    - **Use native tools** defaults on whenever **Supports native tools** is checked.
    - Turn **Use native tools** off only for a specific provider/model that fails tool-call validation.
    - Keep **Server fallback** enabled under **Prompt Processing** so Tablix can still execute permitted data queries when a model does not call a native tool.
-8. Optionally set **System Prompt Override** for a provider-specific prompt. When set, it replaces the global Settings system prompt for that provider, so preserve the selected-database, query-execution, schema-refresh, and no-secrets rules unless you intentionally need a narrower policy.
+8. Optionally set **System Prompt Override** for a provider-specific base prompt. Tablix appends mandatory selected-database, query-execution, no-fabrication, schema-refresh, and no-secrets rules to provider prompts.
 9. Click **Save**.
 
 ### Option A: Ollama on Your Host Machine
@@ -372,9 +372,10 @@ The chat page supports:
 - Streaming and non-streaming responses.
 - Inline tool call displays.
 - Query execution for permitted query types.
+- Database and table context updates for durable insights when context updates are enabled.
 - Per-message telemetry.
 
-When the assistant executes a query, Tablix prefers PolyPrompt native tool calls when the provider is configured for them. If native tools are unavailable or the model does not call one for a clear data request, Tablix can use server-side fallback planning. The message shows the tool call, phase, arguments, result, runtime, and any errors.
+When the assistant executes a query or saves durable context, Tablix prefers PolyPrompt native tool calls when the provider is configured for them. If native tools are unavailable or the model does not call one for a data request, Tablix can use model-based server-side fallback planning to decide whether a query should run. The message shows the tool call, phase, arguments, result, runtime, and any errors.
 
 ## Step 9: Verify with the Query Page
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.3.0 - ALPHA (2026-07-22)
+
+### Added
+
+- Added REST chat native tool exposure for `tablix_update_database_context` and `tablix_update_table_context` when `Chat.Tools.AllowContextUpdates` is enabled.
+- Added typed chat context update arguments and result models for provider tool calls.
+- Added dashboard contract tests covering chat context tool exposure, exact routing, typed payloads, persistence hooks, and no dynamic JSON DOM usage.
+
+### Changed
+
+- Updated dashboard chat prompt guidance so models persist durable database/table insights through context update tools without storing secrets, raw rows, or unsupported guesses.
+- Updated release docs, Docker Compose image tags, product constants, and package versions for v0.3.0.
+
 ## v0.2.0 - ALPHA (2026-07-11)
 
 SQLite-backed product state, large-schema discovery, persisted context, dashboard chat, setup wizard, and test infrastructure release.

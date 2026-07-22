@@ -253,7 +253,7 @@ const tooltips: Record<string, string> = {
   'models.maxTokens': 'Maximum output size for model responses. Leave blank for provider defaults.',
   'models.timeout': 'Timeout for one provider request, not an entire multi-table batch.',
   'models.concurrency': 'Maximum provider requests Tablix may run in parallel for batch context generation.',
-  'models.systemPrompt': 'Optional provider-specific system prompt. When set, it replaces the Settings system prompt for this provider.',
+  'models.systemPrompt': 'Optional provider-specific base prompt. Tablix appends mandatory query-execution and no-fabrication rules.',
   'models.save': 'Persist the model provider changes to tablix.db.',
   'models.cancel': 'Close without saving model provider changes.',
   'models.modalTest': 'Send a small validation request using the current modal values.',

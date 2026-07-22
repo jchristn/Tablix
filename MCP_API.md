@@ -21,7 +21,7 @@ Credential redaction is enforced on discovery tools:
 
 Model provider credentials are stored in `tablix.db` and managed through the REST Models API or dashboard Models page. These provider keys are not part of the MCP tool response surface and must not be stored in database context.
 
-Dashboard Chat uses PolyPrompt `1.5.0` native tool chat when a selected provider is configured for native tool calls. That provider-facing tool loop is internal to REST chat. MCP clients continue to use the explicit MCP tools documented here; `tablix_execute_query` follows the same validation and `AllowedQueries` enforcement used by REST chat native-tool and fallback execution.
+Dashboard Chat uses PolyPrompt `1.5.0` native tool chat when a selected provider is configured for native tool calls. That provider-facing tool loop is internal to REST chat and can expose `tablix_execute_query`, `tablix_update_database_context`, and `tablix_update_table_context`. MCP clients continue to use the explicit MCP tools documented here; `tablix_execute_query` follows the same validation and `AllowedQueries` enforcement used by REST chat native-tool and fallback execution, and MCP context update tools use the same persisted context records as REST chat context updates.
 
 Do not save secrets, raw query result data, access tokens, connection strings, or passwords into database or table context with any context update tool.
 

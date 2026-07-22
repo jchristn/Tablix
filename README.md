@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <b>v0.2.0 - ALPHA</b> - API and structure may change without notice
+  <b>v0.3.0 - ALPHA</b> - API and structure may change without notice
 </p>
 
 <p align="center">
@@ -14,15 +14,16 @@
 
 Tablix is a database discovery and query platform that connects your databases to AI agents and humans through REST and MCP interfaces.
 
-## What's New in v0.2.0
+## What's New in v0.3.0
 
-v0.2.0 turns Tablix into a more complete database-agent workspace: product state lives in SQLite, large schemas are discoverable in pages, durable context can be managed at database and table scope, and the dashboard can take a user from first login to database chat.
+v0.3.0 turns Tablix into a more complete database-agent workspace: product state lives in SQLite, large schemas are discoverable in pages, durable context can be managed at database and table scope, and the dashboard can take a user from first login to database chat.
 
 - **Large-schema-safe discovery:** agents can page through compact table and relationship indexes before requesting full table geometry.
 - **SQLite-backed product state:** model providers, configured databases, crawl metadata, database context, table context, and setup wizard state are persisted in `tablix.db`; `tablix.json` is now bootstrap/server configuration.
 - **Database and table context:** REST, MCP, and dashboard workflows can read, generate, edit, and persist durable context without returning secrets or raw data.
 - **Guided first-run setup:** the setup wizard walks through model provider validation, database validation, crawl, database context, and table context generation.
 - **Database chat:** the Chat page uses PolyPrompt providers, markdown rendering, native tool calls when supported, server-side fallback execution, inline tool-call displays, and per-message telemetry.
+- **Chat context updates:** dashboard Chat exposes query execution plus database/table context update tools to capable models so durable insights can be persisted without saving secrets, raw rows, or unsupported guesses.
 - **Provider throughput controls:** `RequestTimeoutMs` applies to one provider request, while `MaxConcurrentRequests` caps parallel provider calls for batch operations such as table-context generation.
 - **Dashboard productivity controls:** crawl progress streams table-level status, table-context generation updates rows as individual tables complete, query results can be copied as JSON or downloaded as CSV, the empty Chat state is centered in the transcript, the login page shows the configured server URL, and dashboard labels/help text can be localized.
 - **Touchstone test infrastructure:** shared tests now run through the CLI, xUnit, and NUnit from one source of truth.
@@ -39,7 +40,7 @@ Tablix sits between your databases and your tools. It crawls database schemas - 
 - **Centralize database discovery.** Configure all your database connections in one place with user-supplied context that describes what each database contains and how its tables relate to one another. AI agents use this context to figure out what queries to run.
 - **Control what's allowed.** Each database entry specifies which SQL statement types are permitted (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, etc.). Tablix validates every query before execution.
 - **Inspect schemas visually.** The dashboard shows crawled table geometry - columns, types, primary keys, foreign keys, and indexes - in a clean, browsable interface with light and dark modes.
-- **Chat with database context.** The dashboard Chat page uses PolyPrompt `1.5.0` providers stored in `tablix.db` to answer natural-language questions using saved database/table context, crawled schema metadata, native tool calls when supported, and server-side fallback execution when a model does not call a tool for an obvious data request.
+- **Chat with database context.** The dashboard Chat page uses PolyPrompt `1.5.0` providers stored in `tablix.db` to answer natural-language questions using saved database/table context, crawled schema metadata, native tool calls when supported, and model-based server-side fallback planning when a model does not call a tool.
 
 ## How It Works
 
@@ -106,7 +107,7 @@ docker run -d \
   -v $(pwd):/data \
   -v $(pwd)/database.db:/app/database.db \
   -v $(pwd)/logs:/app/logs \
-  jchristn77/tablix-server:v0.2.0
+  jchristn77/tablix-server:v0.3.0
 ```
 
 To run the dashboard standalone:
@@ -115,7 +116,7 @@ To run the dashboard standalone:
 docker run -d \
   -p 9101:9101 \
   -e TABLIX_SERVER_URL=http://host.docker.internal:9100 \
-  jchristn77/tablix-ui:v0.2.0
+  jchristn77/tablix-ui:v0.3.0
 ```
 
 #### Factory Reset
@@ -133,16 +134,16 @@ reset.bat       # Windows
 To build and push the release Docker images from source, use the aggregate script from the repository root:
 
 ```bash
-build-all.bat v0.2.0
+build-all.bat v0.3.0
 ```
 
-The aggregate script runs the dashboard and server image builds in order and pushes both `v0.2.0` and `latest` tags for `jchristn77/tablix-ui` and `jchristn77/tablix-server`. It expects Docker Buildx to have access to the configured builder `cloud-jchristn77-jchristn77` and Docker Hub push permissions for the `jchristn77` repositories.
+The aggregate script runs the dashboard and server image builds in order and pushes both `v0.3.0` and `latest` tags for `jchristn77/tablix-ui` and `jchristn77/tablix-server`. It expects Docker Buildx and Docker Hub push permissions for the `jchristn77` repositories.
 
 The individual image scripts remain available when only one image needs to be rebuilt:
 
 ```bash
-build-server.bat v0.2.0
-build-dashboard.bat v0.2.0
+build-server.bat v0.3.0
+build-dashboard.bat v0.3.0
 ```
 
 ### Running from Source
@@ -458,9 +459,9 @@ Model providers are managed through the dashboard **Models** page or `/v1/model`
 
 The `Chat` section is the configuration surface for the dashboard chat experience and prompt-processing behavior. Provider records are stored in `tablix.db`; the seeded Docker database includes provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini. Only the local Ollama provider is enabled by default; cloud providers are disabled until an endpoint, model, and API key are supplied.
 
-Tablix uses PolyPrompt `1.5.0` for provider-normalized tool chat. When `Chat.PromptProcessing.PreferNativeToolCalls` is enabled and the selected persisted provider has native tool calls enabled, Tablix sends a `tablix_execute_query` tool definition to the model. New providers default `UseNativeToolCalls` to `true` whenever `SupportsNativeToolCalls` is `true`; turn it off only for a specific model endpoint that fails tool-call validation. Tablix still owns query validation, execution, `AllowedQueries` enforcement, schema-refresh retry, telemetry, and secret redaction. If native tools are unavailable or the model does not call a tool for a clear data request, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` lets Tablix use server-side planning to generate and execute a permitted query.
+Tablix uses PolyPrompt `1.5.0` for provider-normalized tool chat. When `Chat.PromptProcessing.PreferNativeToolCalls` is enabled and the selected persisted provider has native tool calls enabled, Tablix sends `tablix_execute_query`, `tablix_update_database_context`, and `tablix_update_table_context` tool definitions to the model when context updates are enabled. New providers default `UseNativeToolCalls` to `true` whenever `SupportsNativeToolCalls` is `true`; turn it off only for a specific model endpoint that fails tool-call validation. Tablix still owns query validation, execution, `AllowedQueries` enforcement, schema-refresh retry, context-update persistence, telemetry, and secret redaction. If native tools are unavailable or the model does not call a tool, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` lets Tablix ask the model planner to classify intent and generate one permitted query only when execution is appropriate.
 
-The default `Chat.SystemPrompt` instructs the model to restrict conversation to the selected database, its structure, its contents, and their relationships. It tells the model to use database context for database-wide guidance, table context for table-specific guidance, and schema discovery as the source of truth for table names, column names, keys, indexes, and data types. It also instructs the model to execute an allowed query with the available Tablix query tool when the user asks for data that can be answered from the database, rather than merely returning SQL for the user to run. If query execution reports a bad or unknown column, missing column, or column type mismatch, the prompt tells the model to refresh schema by crawling or re-discovering relevant tables, then update database or table context when refreshed schema proves saved context stale. Keep those boundaries in custom prompts unless you intentionally want different behavior.
+The default `Chat.SystemPrompt` instructs the model to restrict conversation to the selected database, its structure, its contents, and their relationships. It tells the model to use database context for database-wide guidance, table context for table-specific guidance, and schema discovery as the source of truth for table names, column names, keys, indexes, and data types. It also instructs the model to execute an allowed query with the available Tablix query tool when the user asks for data that can be answered from the database, rather than merely returning SQL for the user to run, and to never fabricate result rows, counts, names, dates, metrics, or other database facts. If query execution reports a bad or unknown column, missing column, or column type mismatch, the prompt tells the model to refresh schema by crawling or re-discovering relevant tables, then update database or table context when refreshed schema proves saved context stale. Tablix appends mandatory execution and no-fabrication rules to every effective chat system prompt.
 
 `Chat.PromptProcessing` fields:
 
@@ -478,7 +479,7 @@ The default `Chat.SystemPrompt` instructs the model to restrict conversation to 
 
 Each provider includes an explicit `ApiKey` field stored in `tablix.db`. Providers that do not require authentication, such as a typical local Ollama instance, should leave it empty. Providers that do require authentication, such as OpenAI, Gemini, and many OpenAI-compatible services, should store their token through the Models page or Models REST API.
 
-Each provider can also define a provider-specific system prompt. When `SystemPrompt` is set on a provider, it replaces the global `Chat.SystemPrompt` for chat and model-assisted context generation that use that provider. Keep the selected-database restriction, query execution guidance, schema-refresh behavior, and no-secrets rules in provider overrides unless you intentionally need a narrower policy for that model endpoint.
+Each provider can also define a provider-specific system prompt. When `SystemPrompt` is set on a provider, it is used instead of the global `Chat.SystemPrompt` as that provider's base prompt for chat and model-assisted context generation. Tablix still appends mandatory selected-database, query-execution, no-fabrication, and no-secrets rules so provider overrides cannot accidentally disable execution policy.
 
 | Field | Description |
 |-------|-------------|
@@ -490,7 +491,7 @@ Each provider can also define a provider-specific system prompt. When `SystemPro
 | `Model` | Default model name |
 | `Enabled` | Whether the provider is selectable |
 | `DefaultStreaming` | Whether chat should stream by default |
-| `SystemPrompt` | Optional provider-specific system prompt override; when set, it replaces `Chat.SystemPrompt` for that provider |
+| `SystemPrompt` | Optional provider-specific base prompt; when set, it is used instead of `Chat.SystemPrompt` for that provider, with mandatory Tablix execution rules appended |
 | `Temperature`, `TopP`, `MaxTokens` | Optional generation controls |
 | `RequestTimeoutMs` | Per-provider-request timeout; batch operations make multiple provider requests |
 | `MaxConcurrentRequests` | Maximum parallel provider requests for batch operations such as table-context generation; clamped from 1 to 16 |
@@ -666,7 +667,7 @@ All endpoints except health checks require `Authorization: Bearer <api-key>`. Se
 - Multi-statement queries (containing `;`) are rejected
 - Leading SQL comments are stripped before validation
 - **This is a heuristic safeguard, not a security boundary**; always use database-level permissions for production safety
-- Database passwords and provider API keys in `tablix.db` are stored in cleartext for v0.2.0; protect the file with OS-level permissions
+- Database passwords and provider API keys in `tablix.db` are stored in cleartext for v0.3.0; protect the file with OS-level permissions
 
 ### Degraded State
 

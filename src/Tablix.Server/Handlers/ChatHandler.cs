@@ -35,6 +35,7 @@ namespace Tablix.Server.Handlers
         private readonly CrawlCache _CrawlCache;
         private readonly LoggingModule _Logging;
         private readonly ChatQueryExecutionService _QueryExecution;
+        private const string MandatoryExecutionSystemPrompt = "Mandatory Tablix execution rules: when the user asks for database data, database contents, computed values, counts, examples from rows, or an answer that depends on actual rows, call the available Tablix query execution tool or use Tablix server-side execution if a permitted query can answer it. Do not merely return SQL for the user to run unless the user explicitly asks for SQL only or says not to execute. Never fabricate table contents, result rows, counts, IDs, names, dates, metrics, or other database facts. If execution is unavailable, denied, or fails, say the data could not be verified instead of inventing an answer.";
 
         #endregion
 
@@ -400,7 +401,7 @@ namespace Tablix.Server.Handlers
                 await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, req.CancellationToken).ConfigureAwait(false);
             }
 
-            string systemPrompt = String.IsNullOrWhiteSpace(provider.SystemPrompt) ? settings.Chat.SystemPrompt : provider.SystemPrompt;
+            string systemPrompt = BuildEffectiveSystemPrompt(settings, provider);
             string prompt = BuildPrompt(settings, database, detail, request.Messages);
 
             return new ChatPreparation
@@ -708,14 +709,27 @@ namespace Tablix.Server.Handlers
             return options;
         }
 
+        private static string BuildEffectiveSystemPrompt(TablixSettings settings, ModelProviderSettings provider)
+        {
+            string configuredPrompt = String.IsNullOrWhiteSpace(provider.SystemPrompt) ? settings.Chat.SystemPrompt : provider.SystemPrompt;
+            if (String.IsNullOrWhiteSpace(configuredPrompt))
+                return MandatoryExecutionSystemPrompt;
+
+            return configuredPrompt.Trim() + Environment.NewLine + Environment.NewLine + MandatoryExecutionSystemPrompt;
+        }
+
         private static string BuildPrompt(TablixSettings settings, DatabaseEntry database, DatabaseDetail detail, List<CoreChatMessage> messages)
         {
             StringBuilder builder = new StringBuilder();
             builder.AppendLine("You are answering questions about a configured Tablix database.");
             builder.AppendLine("Use the database context and schema below as authoritative metadata. Do not invent tables or columns.");
-            builder.AppendLine("If the user asks for data or a database change and an allowed query can answer or perform it, use the available Tablix query execution tool instead of only describing SQL. Provide one compatible SQL statement with no semicolons and only needed columns so Tablix can execute it, then answer from the tool result.");
-            builder.AppendLine("Do not tell the user they can run a query when they asked for the answer; Tablix will execute permitted SQL and provide results.");
+            builder.AppendLine("Execution contract: if the user asks for data, row contents, counts, totals, latest/top records, examples from rows, or a database change and an allowed query can answer or perform it, call the available Tablix query execution tool instead of only describing SQL. Provide one compatible SQL statement with no semicolons and only needed columns so Tablix can execute it, then answer from the tool result.");
+            builder.AppendLine("Do not tell the user they can run a query when they asked for the answer; Tablix will execute permitted SQL and provide results. Return SQL text only when the user explicitly asks for SQL only, asks what query to use, or execution is unavailable or denied.");
+            builder.AppendLine("Never fabricate database contents or result values. If no successful tool result is available for a data question, say the data could not be verified.");
             builder.AppendLine("If the user names a table, use that exact table when it exists; do not silently substitute a different table. If the named table is not present, explain the closest match or ask for clarification.");
+            builder.AppendLine("When context update tools are available, call them to persist durable database-wide or table-specific insights, relationships, naming conventions, or corrections that will help future conversations. Use the table context tool for facts about one exact table and the database context tool for database-wide facts.");
+            builder.AppendLine("Context updates must be concise and reusable. Use append for incremental observations. Use replace only when explicitly asked to rewrite saved context or when producing a curated full replacement.");
+            builder.AppendLine("Do not persist secrets, credentials, raw result rows, sensitive personal data, one-off answer values, or unsupported guesses. Clearly label inferred relationships.");
             builder.AppendLine("If information is missing, say what needs to be inspected next.");
             builder.AppendLine();
             builder.AppendLine("Database:");
@@ -742,7 +756,7 @@ namespace Tablix.Server.Handlers
 
             foreach (TableDetail table in tables)
             {
-                builder.AppendLine("- " + table.SchemaName + "." + table.TableName);
+                builder.AppendLine("- " + table.SchemaName + "." + table.TableName + " (TableId: " + table.TableId + ")");
                 if (!String.IsNullOrWhiteSpace(table.Context))
                     builder.AppendLine("  Table context: " + table.Context);
                 builder.AppendLine("  Columns: " + String.Join(", ", table.Columns.Select(column => column.ColumnName + " " + column.DataType + (column.IsPrimaryKey ? " primary key" : "") + (column.IsNullable ? " nullable" : " not null"))));
@@ -897,18 +911,19 @@ namespace Tablix.Server.Handlers
                 if (nativeResult.Success && nativeResult.ToolCalls.Count > 0)
                     return nativeResult;
 
-                if (!nativeResult.Success && !policy.FallbackEnabled)
+                if (!nativeResult.Success && !policy.UseFallbackPlanner)
                     return nativeResult;
 
-                if (!policy.UserAskedForData || policy.UserAskedOnlyForSql || !policy.FallbackEnabled)
+                if (!policy.UseFallbackPlanner)
                     return nativeResult.Success ? nativeResult : await ExecutePlainChatAsync(client, preparation, "native_failed_plain", nativeResult.CapabilityNotice, token).ConfigureAwait(false);
 
-                ChatExecutionResult fallbackResult = await ExecuteFallbackPlanningAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
-                fallbackResult.CapabilityNotice = "The model did not request a native tool for this data question. Tablix used server-side fallback execution.";
+                ChatExecutionResult fallbackResult = await ExecuteFallbackPlanningAsync(client, preparation, policy, token, sendEventAsync, nativeResult.Success ? nativeResult : null).ConfigureAwait(false);
+                if (fallbackResult.ExecutionPath == "server_fallback")
+                    fallbackResult.CapabilityNotice = "The model did not request a native tool. Tablix used model-based server planning and executed the approved query.";
                 return fallbackResult;
             }
 
-            if (policy.UserAskedForData && !policy.UserAskedOnlyForSql && policy.FallbackEnabled)
+            if (policy.UseFallbackPlanner)
                 return await ExecuteFallbackPlanningAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
 
             return await ExecutePlainChatAsync(client, preparation, "plain", policy.CapabilityNotice, token).ConfigureAwait(false);
@@ -933,18 +948,19 @@ namespace Tablix.Server.Handlers
                 if (nativeResult.Success && nativeResult.ToolCalls.Count > 0)
                     return nativeResult;
 
-                if (!nativeResult.Success && !policy.FallbackEnabled)
+                if (!nativeResult.Success && !policy.UseFallbackPlanner)
                     return nativeResult;
 
-                if (!policy.UserAskedForData || policy.UserAskedOnlyForSql || !policy.FallbackEnabled)
+                if (!policy.UseFallbackPlanner)
                     return nativeResult.Success ? nativeResult : await ExecutePlainChatStreamingAsync(client, preparation, "native_failed_plain", nativeResult.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
 
-                ChatExecutionResult fallbackResult = await ExecuteFallbackPlanningStreamingAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
-                fallbackResult.CapabilityNotice = "The model did not request a native tool for this data question. Tablix used server-side fallback execution.";
+                ChatExecutionResult fallbackResult = await ExecuteFallbackPlanningStreamingAsync(client, preparation, policy, token, sendEventAsync, nativeResult.Success ? nativeResult : null).ConfigureAwait(false);
+                if (fallbackResult.ExecutionPath == "server_fallback")
+                    fallbackResult.CapabilityNotice = "The model did not request a native tool. Tablix used model-based server planning and executed the approved query.";
                 return fallbackResult;
             }
 
-            if (policy.UserAskedForData && !policy.UserAskedOnlyForSql && policy.FallbackEnabled)
+            if (policy.UseFallbackPlanner)
                 return await ExecuteFallbackPlanningStreamingAsync(client, preparation, policy, token, sendEventAsync).ConfigureAwait(false);
 
             return await ExecutePlainChatStreamingAsync(client, preparation, "plain", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
@@ -968,7 +984,7 @@ namespace Tablix.Server.Handlers
                 {
                     Model = preparation.Provider.Model,
                     Messages = messages,
-                    Tools = TablixChatToolDefinitions.Build(),
+                    Tools = TablixChatToolDefinitions.Build(preparation.Settings.Chat.Tools.AllowContextUpdates),
                     ToolChoice = "auto",
                     Temperature = preparation.Provider.Temperature,
                     TopP = preparation.Provider.TopP,
@@ -1079,7 +1095,7 @@ namespace Tablix.Server.Handlers
                 {
                     Model = preparation.Provider.Model,
                     Messages = messages,
-                    Tools = TablixChatToolDefinitions.Build(),
+                    Tools = TablixChatToolDefinitions.Build(preparation.Settings.Chat.Tools.AllowContextUpdates),
                     ToolChoice = "auto",
                     Temperature = preparation.Provider.Temperature,
                     TopP = preparation.Provider.TopP,
@@ -1131,7 +1147,18 @@ namespace Tablix.Server.Handlers
             }
 
             if (executedTools.Count == 0)
-                return await ExecutePlainChatStreamingAsync(client, preparation, "native_no_tool_call", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
+            {
+                return new ChatExecutionResult
+                {
+                    Success = true,
+                    Message = response.Text ?? String.Empty,
+                    Model = String.IsNullOrWhiteSpace(response.Model) ? preparation.Provider.Model : response.Model,
+                    ExecutionPath = "native_no_tool_call",
+                    CapabilityNotice = policy.CapabilityNotice,
+                    ToolCalls = executedTools,
+                    Telemetry = CreateTelemetry(response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, preparation.Prompt, response.Text, null)
+                };
+            }
 
             string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, executedTools);
             ChatExecutionResult finalResult = await ExecutePromptStreamingAsync(
@@ -1152,7 +1179,8 @@ namespace Tablix.Server.Handlers
             ChatPreparation preparation,
             ChatExecutionPolicy policy,
             CancellationToken token,
-            Func<ChatStreamEvent, Task> sendEventAsync)
+            Func<ChatStreamEvent, Task> sendEventAsync,
+            ChatExecutionResult noExecutionResult = null)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
             ChatCompletionOptions plannerOptions = CreateOptions(preparation.Provider, BuildFallbackPlannerSystemPrompt(preparation));
@@ -1168,10 +1196,10 @@ namespace Tablix.Server.Handlers
                     break;
 
                 plan = ParseFallbackPlan(planResponse.Text);
-                if (plan != null && plan.Execute && !String.IsNullOrWhiteSpace(plan.Query))
+                if (plan != null && (!plan.Execute || !String.IsNullOrWhiteSpace(plan.Query)))
                     break;
 
-                plannerPrompt = plannerPrompt + Environment.NewLine + "Return only valid JSON matching {\"Execute\":true,\"Query\":\"...\",\"Reason\":\"...\"}.";
+                plannerPrompt = plannerPrompt + Environment.NewLine + "Return only valid JSON matching {\"Intent\":\"DataAnswerRequest\",\"Execute\":true,\"Query\":\"...\",\"Reason\":\"...\"}. If Execute is false, Query must be null or empty. If Execute is true, Query must be non-empty.";
             }
 
             if (planResponse == null || !planResponse.Success)
@@ -1190,6 +1218,9 @@ namespace Tablix.Server.Handlers
             if (plan == null || !plan.Execute || String.IsNullOrWhiteSpace(plan.Query))
             {
                 stopwatch.Stop();
+                if (noExecutionResult != null)
+                    return noExecutionResult;
+
                 return await ExecutePlainChatAsync(client, preparation, "fallback_no_plan", policy.CapabilityNotice, token).ConfigureAwait(false);
             }
 
@@ -1217,7 +1248,8 @@ namespace Tablix.Server.Handlers
             ChatPreparation preparation,
             ChatExecutionPolicy policy,
             CancellationToken token,
-            Func<ChatStreamEvent, Task> sendEventAsync)
+            Func<ChatStreamEvent, Task> sendEventAsync,
+            ChatExecutionResult noExecutionResult = null)
         {
             ChatCompletionOptions plannerOptions = CreateOptions(preparation.Provider, BuildFallbackPlannerSystemPrompt(preparation));
             plannerOptions.Temperature = preparation.Settings.Chat.PromptProcessing.PlannerTemperature;
@@ -1232,10 +1264,10 @@ namespace Tablix.Server.Handlers
                     break;
 
                 plan = ParseFallbackPlan(planResponse.Text);
-                if (plan != null && plan.Execute && !String.IsNullOrWhiteSpace(plan.Query))
+                if (plan != null && (!plan.Execute || !String.IsNullOrWhiteSpace(plan.Query)))
                     break;
 
-                plannerPrompt = plannerPrompt + Environment.NewLine + "Return only valid JSON matching {\"Execute\":true,\"Query\":\"...\",\"Reason\":\"...\"}.";
+                plannerPrompt = plannerPrompt + Environment.NewLine + "Return only valid JSON matching {\"Intent\":\"DataAnswerRequest\",\"Execute\":true,\"Query\":\"...\",\"Reason\":\"...\"}. If Execute is false, Query must be null or empty. If Execute is true, Query must be non-empty.";
             }
 
             if (planResponse == null || !planResponse.Success)
@@ -1251,7 +1283,12 @@ namespace Tablix.Server.Handlers
             }
 
             if (plan == null || !plan.Execute || String.IsNullOrWhiteSpace(plan.Query))
+            {
+                if (noExecutionResult != null)
+                    return noExecutionResult;
+
                 return await ExecutePlainChatStreamingAsync(client, preparation, "fallback_no_plan", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
+            }
 
             ChatToolCall toolCall = await ExecutePlannedQueryAsync(preparation, plan.Query, "fallback", token, sendEventAsync).ConfigureAwait(false);
             string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, planResponse.Text, toolCall);
@@ -1392,39 +1429,183 @@ namespace Tablix.Server.Handlers
                 Phase = phase
             };
 
-            if (!String.Equals(promptToolCall.Name, TablixChatToolDefinitions.ExecuteQueryToolName, StringComparison.Ordinal))
-            {
-                toolCall.Error = "Unknown tool '" + promptToolCall.Name + "'.";
-                toolCall.Success = false;
-                await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
-                return toolCall;
-            }
+            if (String.Equals(promptToolCall.Name, TablixChatToolDefinitions.ExecuteQueryToolName, StringComparison.Ordinal))
+                return await ExecuteQueryToolCallAsync(preparation, promptToolCall, phase, token, sendEventAsync, toolCall).ConfigureAwait(false);
 
-            TablixExecuteQueryArguments arguments = null;
-            try
-            {
-                arguments = Serializer.DeserializeJson<TablixExecuteQueryArguments>(promptToolCall.ArgumentsJson);
-            }
-            catch (Exception ex)
-            {
-                toolCall.Error = "Tool arguments could not be parsed: " + ex.Message;
-                toolCall.Success = false;
-                await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
-                return toolCall;
-            }
+            if (String.Equals(promptToolCall.Name, TablixChatToolDefinitions.UpdateDatabaseContextToolName, StringComparison.Ordinal))
+                return await ExecuteDatabaseContextUpdateToolCallAsync(preparation, promptToolCall, token, sendEventAsync, toolCall).ConfigureAwait(false);
 
-            if (arguments == null)
-                arguments = new TablixExecuteQueryArguments();
+            if (String.Equals(promptToolCall.Name, TablixChatToolDefinitions.UpdateTableContextToolName, StringComparison.Ordinal))
+                return await ExecuteTableContextUpdateToolCallAsync(preparation, promptToolCall, token, sendEventAsync, toolCall).ConfigureAwait(false);
+
+            return await CompleteFailedToolCallAsync(preparation, toolCall, "Unknown tool '" + promptToolCall.Name + "'.", sendEventAsync).ConfigureAwait(false);
+        }
+
+        private async Task<ChatToolCall> ExecuteQueryToolCallAsync(ChatPreparation preparation, PromptToolCall promptToolCall, string phase, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync, ChatToolCall toolCall)
+        {
+            TablixExecuteQueryArguments arguments;
+            string error;
+            if (!TryDeserializeToolArguments(promptToolCall.ArgumentsJson, out arguments, out error))
+                return await CompleteFailedToolCallAsync(preparation, toolCall, error, sendEventAsync).ConfigureAwait(false);
 
             if (!String.Equals(arguments.DatabaseId, preparation.Database.Id, StringComparison.OrdinalIgnoreCase))
             {
-                toolCall.Error = "Tool call attempted to use database '" + arguments.DatabaseId + "' but chat is restricted to selected database '" + preparation.Database.Id + "'.";
-                toolCall.Success = false;
-                await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
-                return toolCall;
+                return await CompleteFailedToolCallAsync(
+                    preparation,
+                    toolCall,
+                    "Tool call attempted to use database '" + arguments.DatabaseId + "' but chat is restricted to selected database '" + preparation.Database.Id + "'.",
+                    sendEventAsync).ConfigureAwait(false);
             }
 
             return await ExecutePlannedQueryAsync(preparation, arguments.Query, phase, token, sendEventAsync, toolCall).ConfigureAwait(false);
+        }
+
+        private async Task<ChatToolCall> ExecuteDatabaseContextUpdateToolCallAsync(ChatPreparation preparation, PromptToolCall promptToolCall, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync, ChatToolCall toolCall)
+        {
+            TablixUpdateDatabaseContextArguments arguments;
+            string error;
+            if (!TryDeserializeToolArguments(promptToolCall.ArgumentsJson, out arguments, out error))
+                return await CompleteFailedToolCallAsync(preparation, toolCall, error, sendEventAsync).ConfigureAwait(false);
+
+            if (!preparation.Settings.Chat.Tools.AllowContextUpdates)
+                return await CompleteFailedToolCallAsync(preparation, toolCall, "Context update tools are disabled for chat.", sendEventAsync).ConfigureAwait(false);
+
+            if (!String.Equals(arguments.DatabaseId, preparation.Database.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return await CompleteFailedToolCallAsync(
+                    preparation,
+                    toolCall,
+                    "Tool call attempted to use database '" + arguments.DatabaseId + "' but chat is restricted to selected database '" + preparation.Database.Id + "'.",
+                    sendEventAsync).ConfigureAwait(false);
+            }
+
+            string mode = NormalizeContextUpdateMode(arguments.Mode, out error);
+            if (!String.IsNullOrWhiteSpace(error))
+                return await CompleteFailedToolCallAsync(preparation, toolCall, error, sendEventAsync).ConfigureAwait(false);
+
+            if (String.IsNullOrWhiteSpace(arguments.Context))
+                return await CompleteFailedToolCallAsync(preparation, toolCall, "Context is required for database context updates.", sendEventAsync).ConfigureAwait(false);
+
+            await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_started").ConfigureAwait(false);
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            try
+            {
+                string context = await _Persistence.DatabaseContexts.UpsertAsync(
+                    preparation.Database.Id,
+                    arguments.Context,
+                    mode,
+                    "chat",
+                    token).ConfigureAwait(false);
+
+                stopwatch.Stop();
+                preparation.Database.Context = context;
+                preparation.Detail.Context = context;
+
+                DatabaseDetail cached = _CrawlCache.Get(preparation.Database.Id);
+                if (cached != null)
+                    cached.Context = context;
+
+                ChatContextUpdateToolResult result = new ChatContextUpdateToolResult
+                {
+                    Success = true,
+                    Scope = ContextScopeEnum.Database,
+                    DatabaseId = preparation.Database.Id,
+                    Mode = mode,
+                    Context = context,
+                    Reason = arguments.Reason
+                };
+
+                toolCall.Success = true;
+                toolCall.TotalMs = stopwatch.ElapsedMilliseconds;
+                toolCall.Result = TruncateToolResult(Serializer.SerializeJson(result, false), preparation.Settings.Chat.Tools.MaxToolOutputCharacters);
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                toolCall.Success = false;
+                toolCall.TotalMs = stopwatch.ElapsedMilliseconds;
+                toolCall.Error = ex.Message;
+            }
+
+            await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
+            return toolCall;
+        }
+
+        private async Task<ChatToolCall> ExecuteTableContextUpdateToolCallAsync(ChatPreparation preparation, PromptToolCall promptToolCall, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync, ChatToolCall toolCall)
+        {
+            TablixUpdateTableContextArguments arguments;
+            string error;
+            if (!TryDeserializeToolArguments(promptToolCall.ArgumentsJson, out arguments, out error))
+                return await CompleteFailedToolCallAsync(preparation, toolCall, error, sendEventAsync).ConfigureAwait(false);
+
+            if (!preparation.Settings.Chat.Tools.AllowContextUpdates)
+                return await CompleteFailedToolCallAsync(preparation, toolCall, "Context update tools are disabled for chat.", sendEventAsync).ConfigureAwait(false);
+
+            if (!String.Equals(arguments.DatabaseId, preparation.Database.Id, StringComparison.OrdinalIgnoreCase))
+            {
+                return await CompleteFailedToolCallAsync(
+                    preparation,
+                    toolCall,
+                    "Tool call attempted to use database '" + arguments.DatabaseId + "' but chat is restricted to selected database '" + preparation.Database.Id + "'.",
+                    sendEventAsync).ConfigureAwait(false);
+            }
+
+            string mode = NormalizeContextUpdateMode(arguments.Mode, out error);
+            if (!String.IsNullOrWhiteSpace(error))
+                return await CompleteFailedToolCallAsync(preparation, toolCall, error, sendEventAsync).ConfigureAwait(false);
+
+            if (String.IsNullOrWhiteSpace(arguments.Context))
+                return await CompleteFailedToolCallAsync(preparation, toolCall, "Context is required for table context updates.", sendEventAsync).ConfigureAwait(false);
+
+            TableDetail table = ResolveContextUpdateTable(preparation.Detail, arguments, out error);
+            if (table == null)
+                return await CompleteFailedToolCallAsync(preparation, toolCall, error, sendEventAsync).ConfigureAwait(false);
+
+            await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_started").ConfigureAwait(false);
+
+            Stopwatch stopwatch = Stopwatch.StartNew();
+            try
+            {
+                TableContextRead context = await _Persistence.TableContexts.UpsertAsync(
+                    preparation.Database.Id,
+                    table.TableId,
+                    arguments.Context,
+                    mode,
+                    "chat",
+                    token).ConfigureAwait(false);
+
+                stopwatch.Stop();
+                table.Context = context.Context;
+                UpdateCachedTableContext(preparation.Database.Id, context.TableId, context.SchemaName, context.TableName, context.Context);
+
+                ChatContextUpdateToolResult result = new ChatContextUpdateToolResult
+                {
+                    Success = true,
+                    Scope = ContextScopeEnum.Table,
+                    DatabaseId = preparation.Database.Id,
+                    TableId = context.TableId,
+                    SchemaName = context.SchemaName,
+                    TableName = context.TableName,
+                    Mode = mode,
+                    Context = context.Context,
+                    Reason = arguments.Reason
+                };
+
+                toolCall.Success = true;
+                toolCall.TotalMs = stopwatch.ElapsedMilliseconds;
+                toolCall.Result = TruncateToolResult(Serializer.SerializeJson(result, false), preparation.Settings.Chat.Tools.MaxToolOutputCharacters);
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                toolCall.Success = false;
+                toolCall.TotalMs = stopwatch.ElapsedMilliseconds;
+                toolCall.Error = ex.Message;
+            }
+
+            await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
+            return toolCall;
         }
 
         private async Task<ChatToolCall> ExecutePlannedQueryAsync(ChatPreparation preparation, string query, string phase, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync, ChatToolCall existingToolCall = null)
@@ -1452,6 +1633,136 @@ namespace Tablix.Server.Handlers
 
             await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
             return toolCall;
+        }
+
+        private static bool TryDeserializeToolArguments<T>(string argumentsJson, out T arguments, out string error) where T : new()
+        {
+            arguments = default(T);
+            error = null;
+
+            try
+            {
+                arguments = Serializer.DeserializeJson<T>(argumentsJson);
+            }
+            catch (Exception ex)
+            {
+                error = "Tool arguments could not be parsed: " + ex.Message;
+                return false;
+            }
+
+            if (arguments == null)
+                arguments = new T();
+
+            return true;
+        }
+
+        private static async Task<ChatToolCall> CompleteFailedToolCallAsync(ChatPreparation preparation, ChatToolCall toolCall, string error, Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            toolCall.Error = error;
+            toolCall.Success = false;
+            await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_completed").ConfigureAwait(false);
+            return toolCall;
+        }
+
+        private static string NormalizeContextUpdateMode(string requestedMode, out string error)
+        {
+            error = null;
+
+            if (String.IsNullOrWhiteSpace(requestedMode))
+                return "append";
+
+            string mode = requestedMode.Trim().ToLowerInvariant();
+            if (String.Equals(mode, "append", StringComparison.Ordinal) || String.Equals(mode, "replace", StringComparison.Ordinal))
+                return mode;
+
+            error = "Unsupported context update mode '" + requestedMode + "'. Use append or replace.";
+            return null;
+        }
+
+        private static TableDetail ResolveContextUpdateTable(DatabaseDetail detail, TablixUpdateTableContextArguments arguments, out string error)
+        {
+            error = null;
+
+            if (arguments == null)
+            {
+                error = "Tool arguments are required.";
+                return null;
+            }
+
+            if (detail == null || detail.Tables == null)
+            {
+                error = "No table metadata is available for the selected database.";
+                return null;
+            }
+
+            if (!String.IsNullOrWhiteSpace(arguments.TableId))
+            {
+                TableDetail tableById = FindTable(detail, arguments.TableId);
+                if (tableById == null)
+                    error = "TableId '" + arguments.TableId + "' was not found in selected database metadata.";
+                return tableById;
+            }
+
+            if (String.IsNullOrWhiteSpace(arguments.TableName))
+            {
+                error = "Either TableId or TableName is required for table context updates.";
+                return null;
+            }
+
+            List<TableDetail> matches = FindTablesByName(detail, arguments.SchemaName, arguments.TableName);
+            if (matches.Count == 1)
+                return matches[0];
+
+            if (matches.Count > 1)
+                error = "TableName '" + arguments.TableName + "' matched multiple tables; include TableId or SchemaName.";
+            else
+                error = "TableName '" + arguments.TableName + "' was not found in selected database metadata.";
+
+            return null;
+        }
+
+        private static List<TableDetail> FindTablesByName(DatabaseDetail detail, string schemaName, string tableName)
+        {
+            List<TableDetail> matches = new List<TableDetail>();
+            if (detail == null || detail.Tables == null || String.IsNullOrWhiteSpace(tableName))
+                return matches;
+
+            string schema = String.IsNullOrWhiteSpace(schemaName) ? null : schemaName.Trim();
+            string name = tableName.Trim();
+
+            int separator = name.IndexOf(".", StringComparison.Ordinal);
+            if (String.IsNullOrWhiteSpace(schema) && separator > 0 && separator < name.Length - 1)
+            {
+                schema = name.Substring(0, separator).Trim();
+                name = name.Substring(separator + 1).Trim();
+            }
+
+            foreach (TableDetail table in detail.Tables)
+            {
+                bool nameMatches = String.Equals(table.TableName, name, StringComparison.OrdinalIgnoreCase);
+                bool schemaMatches = String.IsNullOrWhiteSpace(schema) || String.Equals(table.SchemaName, schema, StringComparison.OrdinalIgnoreCase);
+                if (nameMatches && schemaMatches)
+                    matches.Add(table);
+            }
+
+            return matches;
+        }
+
+        private void UpdateCachedTableContext(string databaseId, string tableId, string schemaName, string tableName, string context)
+        {
+            DatabaseDetail cached = _CrawlCache.Get(databaseId);
+            if (cached == null) return;
+
+            TableDetail cachedTable = FindTable(cached, tableId);
+            if (cachedTable == null)
+            {
+                List<TableDetail> matches = FindTablesByName(cached, schemaName, tableName);
+                if (matches.Count == 1)
+                    cachedTable = matches[0];
+            }
+
+            if (cachedTable != null)
+                cachedTable.Context = context;
         }
 
         private static async Task SendToolLifecycleEventAsync(Func<ChatStreamEvent, Task> sendEventAsync, ChatPreparation preparation, ChatToolCall toolCall, string eventType)
@@ -1496,8 +1807,6 @@ namespace Tablix.Server.Handlers
             bool preferNativeTools = request.PreferNativeToolCalls ?? promptProcessing.PreferNativeToolCalls;
             bool fallbackEnabled = request.FallbackWhenNativeToolNotCalled ?? promptProcessing.FallbackWhenNativeToolNotCalled;
             bool useNativeTools = toolsEnabled && preferNativeTools && preparation.Provider.SupportsNativeToolCalls && preparation.Provider.UseNativeToolCalls;
-            string userMessage = LastUserMessage(request);
-            string normalizedUser = userMessage.ToLowerInvariant();
 
             return new ChatExecutionPolicy
             {
@@ -1505,8 +1814,7 @@ namespace Tablix.Server.Handlers
                 PreferNativeTools = preferNativeTools,
                 FallbackEnabled = fallbackEnabled,
                 UseNativeTools = useNativeTools,
-                UserAskedForData = UserAskedForData(normalizedUser),
-                UserAskedOnlyForSql = UserAskedOnlyForSql(normalizedUser),
+                UseFallbackPlanner = toolsEnabled && fallbackEnabled && promptProcessing.RequireExecutionForDataRequests,
                 MaxNativeToolIterations = promptProcessing.MaxNativeToolIterations,
                 MaxPlanningAttempts = promptProcessing.MaxPlanningAttempts,
                 CapabilityNotice = BuildCapabilityNotice(preparation, request)
@@ -1535,14 +1843,14 @@ namespace Tablix.Server.Handlers
                 return "Native tool calls are enabled for this provider. Tablix still validates every database query before execution.";
 
             if (fallbackEnabled)
-                return "This provider is not configured for native tool calls. Tablix will use server-side query planning and execution for database data requests.";
+                return "This provider is not configured for native tool calls. Tablix will use model-based server planning to decide whether a database query should run.";
 
             return "This provider is not configured for native tool calls and server-side fallback execution is disabled.";
         }
 
         private static string BuildFallbackPlannerSystemPrompt(ChatPreparation preparation)
         {
-            return preparation.SystemPrompt + " You are now planning a Tablix tool call. Return only JSON matching the FallbackQueryPlan schema. Do not include markdown.";
+            return preparation.SystemPrompt + " You are now deciding whether Tablix should execute a database query. Return only JSON matching the FallbackQueryPlan schema. Do not include markdown.";
         }
 
         private static string BuildFallbackPlannerPrompt(ChatPreparation preparation)
@@ -1550,10 +1858,20 @@ namespace Tablix.Server.Handlers
             StringBuilder builder = new StringBuilder();
             builder.AppendLine(preparation.Prompt);
             builder.AppendLine();
-            builder.AppendLine("The latest user message asks for database data. Build one executable query if a permitted query can answer it.");
-            builder.AppendLine("Return only compact JSON with properties Execute, Query, and Reason.");
+            builder.AppendLine("Classify the latest user message and decide whether Tablix should execute one database query.");
+            builder.AppendLine("Return only compact JSON with properties Intent, Execute, Query, and Reason.");
+            builder.AppendLine("Intent must be one of: Unknown, DataAnswerRequest, SqlOnlyRequest, SchemaQuestion, ContextQuestion, DatabaseConversation, ExplicitWriteRequest.");
+            builder.AppendLine("Prompt-processing settings:");
+            builder.AppendLine("- Preserve explicit SQL-only requests: " + preparation.Settings.Chat.PromptProcessing.AllowSqlOnlyByExplicitRequest);
+            builder.AppendLine("Set Execute to true only when the user wants actual database row data, computed values from rows, or an explicit database action and one permitted query can satisfy the request.");
+            builder.AppendLine("Set Execute to false when the user asks how to query, asks about schema/context without row data, is making conversation, explicitly says not to run a query, or the request is ambiguous.");
+            builder.AppendLine("When Preserve explicit SQL-only requests is true, SQL-only requests must use Intent SqlOnlyRequest and Execute false.");
+            builder.AppendLine("When Execute is false, Query must be null or empty.");
             builder.AppendLine("Use the selected database ID only. Do not include semicolons.");
-            builder.AppendLine("Example: {\"Execute\":true,\"Query\":\"SELECT COUNT(*) AS UserCount FROM users\",\"Reason\":\"The user asked for a user count.\"}");
+            builder.AppendLine("Examples:");
+            builder.AppendLine("{\"Intent\":\"DataAnswerRequest\",\"Execute\":true,\"Query\":\"SELECT COUNT(*) AS UserCount FROM users\",\"Reason\":\"The user asked for a user count.\"}");
+            builder.AppendLine("{\"Intent\":\"SqlOnlyRequest\",\"Execute\":false,\"Query\":null,\"Reason\":\"The user asked for SQL text instead of execution.\"}");
+            builder.AppendLine("{\"Intent\":\"SchemaQuestion\",\"Execute\":false,\"Query\":null,\"Reason\":\"The user asked about table structure, not row data.\"}");
             return builder.ToString();
         }
 
@@ -1631,49 +1949,6 @@ namespace Tablix.Server.Handlers
             builder.AppendLine();
             builder.AppendLine("Now answer the user's latest request using only these tool results and the selected database context. Do not say the user can run a query. If values were returned, state them directly in the format the user requested.");
             return builder.ToString();
-        }
-
-        private static string LastUserMessage(ChatRequest request)
-        {
-            if (request == null || request.Messages == null) return String.Empty;
-
-            for (int i = request.Messages.Count - 1; i >= 0; i--)
-            {
-                CoreChatMessage message = request.Messages[i];
-                if (message != null && String.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))
-                    return message.Content ?? String.Empty;
-            }
-
-            return String.Empty;
-        }
-
-        private static bool UserAskedOnlyForSql(string user)
-        {
-            return user.Contains("sql only") ||
-                   user.Contains("only sql") ||
-                   user.Contains("show me the sql") ||
-                   user.Contains("write sql") ||
-                   user.Contains("write a sql") ||
-                   user.Contains("generate sql") ||
-                   user.Contains("give me sql") ||
-                   user.Contains("give me a query") ||
-                   user.Contains("what query");
-        }
-
-        private static bool UserAskedForData(string user)
-        {
-            return user.Contains("show me") ||
-                   user.Contains("how many") ||
-                   user.Contains("count") ||
-                   user.Contains("list") ||
-                   user.Contains("find") ||
-                   user.Contains("total") ||
-                   user.Contains("average") ||
-                   user.Contains("latest") ||
-                   user.Contains("top") ||
-                   user.Contains("summarize") ||
-                   user.Contains("what is") ||
-                   user.Contains("what are");
         }
 
         private static string TruncateToolResult(string result, int maxCharacters)

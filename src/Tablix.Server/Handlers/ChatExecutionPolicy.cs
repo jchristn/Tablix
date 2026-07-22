@@ -26,14 +26,9 @@ namespace Tablix.Server.Handlers
         public bool UseNativeTools { get; set; } = false;
 
         /// <summary>
-        /// Whether the user asked for database data.
+        /// Whether server-side model planning should decide if a query should run.
         /// </summary>
-        public bool UserAskedForData { get; set; } = false;
-
-        /// <summary>
-        /// Whether the user explicitly asked for SQL only.
-        /// </summary>
-        public bool UserAskedOnlyForSql { get; set; } = false;
+        public bool UseFallbackPlanner { get; set; } = false;
 
         /// <summary>
         /// Maximum native tool iterations.

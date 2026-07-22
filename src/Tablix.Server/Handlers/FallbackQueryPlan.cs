@@ -1,10 +1,17 @@
 namespace Tablix.Server.Handlers
 {
+    using Tablix.Core.Enums;
+
     /// <summary>
     /// Strict fallback planner response.
     /// </summary>
     internal class FallbackQueryPlan
     {
+        /// <summary>
+        /// Model-classified user intent.
+        /// </summary>
+        public PromptIntentTypeEnum Intent { get; set; } = PromptIntentTypeEnum.Unknown;
+
         /// <summary>
         /// Whether a query should be executed.
         /// </summary>
