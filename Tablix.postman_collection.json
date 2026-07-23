@@ -226,6 +226,45 @@
           }
         },
         {
+          "name": "List Model Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/model/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "model",
+                "health"
+              ]
+            },
+            "description": "List transient health snapshots for configured model providers."
+          }
+        },
+        {
+          "name": "Get Model Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/model/{{providerId}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "model",
+                "{{providerId}}",
+                "health"
+              ]
+            },
+            "description": "Read one transient model provider health snapshot."
+          }
+        },
+        {
           "name": "Create Model",
           "request": {
             "method": "POST",
@@ -248,7 +287,7 @@
             "description": "Create a persisted model provider. ApiKey is accepted but never returned by read APIs.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Id\": \"{{providerId}}\",\n  \"Name\": \"Local Ollama\",\n  \"Type\": \"Ollama\",\n  \"Endpoint\": \"http://ollama:11434\",\n  \"ApiKey\": \"\",\n  \"ClearApiKey\": false,\n  \"Model\": \"gemma3:4b\",\n  \"SystemPrompt\": null,\n  \"Enabled\": true,\n  \"DefaultStreaming\": true,\n  \"SupportsNativeToolCalls\": true,\n  \"UseNativeToolCalls\": true,\n  \"SupportsStrictJson\": false,\n  \"ToolCapabilityNote\": null,\n  \"Temperature\": 0.2,\n  \"TopP\": null,\n  \"MaxTokens\": 4096,\n  \"RequestTimeoutMs\": 120000,\n  \"MaxConcurrentRequests\": 1\n}",
+              "raw": "{\n  \"Id\": \"{{providerId}}\",\n  \"Name\": \"Local Ollama\",\n  \"Type\": \"Ollama\",\n  \"Endpoint\": \"http://ollama:11434\",\n  \"ApiKey\": \"\",\n  \"ClearApiKey\": false,\n  \"Model\": \"gemma3:4b\",\n  \"SystemPrompt\": null,\n  \"Enabled\": true,\n  \"DefaultStreaming\": true,\n  \"SupportsNativeToolCalls\": true,\n  \"UseNativeToolCalls\": true,\n  \"SupportsStrictJson\": false,\n  \"ToolCapabilityNote\": null,\n  \"Temperature\": 0.2,\n  \"TopP\": null,\n  \"MaxTokens\": 4096,\n  \"RequestTimeoutMs\": 120000,\n  \"MaxConcurrentRequests\": 1,\n  \"HealthCheckEnabled\": true,\n  \"HealthCheckUrl\": \"http://ollama:11434/api/tags\",\n  \"HealthCheckMethod\": \"GET\",\n  \"HealthCheckIntervalMs\": 5000,\n  \"HealthCheckTimeoutMs\": 2000,\n  \"HealthCheckExpectedStatusCode\": 200,\n  \"HealthyThreshold\": 2,\n  \"UnhealthyThreshold\": 2,\n  \"HealthCheckUseAuth\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -281,7 +320,7 @@
             "description": "Update a persisted model provider. Leave ApiKey empty to preserve it or set ClearApiKey to true to remove it.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Id\": \"{{providerId}}\",\n  \"Name\": \"Local Ollama\",\n  \"Type\": \"Ollama\",\n  \"Endpoint\": \"http://ollama:11434\",\n  \"ApiKey\": \"\",\n  \"ClearApiKey\": false,\n  \"Model\": \"gemma3:4b\",\n  \"SystemPrompt\": null,\n  \"Enabled\": true,\n  \"DefaultStreaming\": true,\n  \"SupportsNativeToolCalls\": true,\n  \"UseNativeToolCalls\": true,\n  \"SupportsStrictJson\": false,\n  \"ToolCapabilityNote\": null,\n  \"Temperature\": 0.2,\n  \"TopP\": null,\n  \"MaxTokens\": 4096,\n  \"RequestTimeoutMs\": 120000,\n  \"MaxConcurrentRequests\": 1\n}",
+              "raw": "{\n  \"Id\": \"{{providerId}}\",\n  \"Name\": \"Local Ollama\",\n  \"Type\": \"Ollama\",\n  \"Endpoint\": \"http://ollama:11434\",\n  \"ApiKey\": \"\",\n  \"ClearApiKey\": false,\n  \"Model\": \"gemma3:4b\",\n  \"SystemPrompt\": null,\n  \"Enabled\": true,\n  \"DefaultStreaming\": true,\n  \"SupportsNativeToolCalls\": true,\n  \"UseNativeToolCalls\": true,\n  \"SupportsStrictJson\": false,\n  \"ToolCapabilityNote\": null,\n  \"Temperature\": 0.2,\n  \"TopP\": null,\n  \"MaxTokens\": 4096,\n  \"RequestTimeoutMs\": 120000,\n  \"MaxConcurrentRequests\": 1,\n  \"HealthCheckEnabled\": true,\n  \"HealthCheckUrl\": \"http://ollama:11434/api/tags\",\n  \"HealthCheckMethod\": \"GET\",\n  \"HealthCheckIntervalMs\": 5000,\n  \"HealthCheckTimeoutMs\": 2000,\n  \"HealthCheckExpectedStatusCode\": 200,\n  \"HealthyThreshold\": 2,\n  \"UnhealthyThreshold\": 2,\n  \"HealthCheckUseAuth\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -333,7 +372,7 @@
             "description": "Test unsaved model provider settings without persisting them.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"Provider\": {\n    \"Id\": \"{{providerId}}\",\n    \"Name\": \"Local Ollama\",\n    \"Type\": \"Ollama\",\n    \"Endpoint\": \"http://ollama:11434\",\n    \"ApiKey\": \"\",\n    \"ClearApiKey\": false,\n    \"Model\": \"gemma3:4b\",\n    \"SystemPrompt\": null,\n    \"Enabled\": true,\n    \"DefaultStreaming\": true,\n    \"SupportsNativeToolCalls\": true,\n    \"UseNativeToolCalls\": true,\n    \"SupportsStrictJson\": false,\n    \"ToolCapabilityNote\": null,\n    \"Temperature\": 0.2,\n    \"TopP\": null,\n    \"MaxTokens\": 4096,\n    \"RequestTimeoutMs\": 120000,\n    \"MaxConcurrentRequests\": 1\n  }\n}",
+              "raw": "{\n  \"Provider\": {\n    \"Id\": \"{{providerId}}\",\n    \"Name\": \"Local Ollama\",\n    \"Type\": \"Ollama\",\n    \"Endpoint\": \"http://ollama:11434\",\n    \"ApiKey\": \"\",\n    \"ClearApiKey\": false,\n    \"Model\": \"gemma3:4b\",\n    \"SystemPrompt\": null,\n    \"Enabled\": true,\n    \"DefaultStreaming\": true,\n    \"SupportsNativeToolCalls\": true,\n    \"UseNativeToolCalls\": true,\n    \"SupportsStrictJson\": false,\n    \"ToolCapabilityNote\": null,\n    \"Temperature\": 0.2,\n    \"TopP\": null,\n    \"MaxTokens\": 4096,\n    \"RequestTimeoutMs\": 120000,\n    \"MaxConcurrentRequests\": 1,\n    \"HealthCheckEnabled\": true,\n    \"HealthCheckUrl\": \"http://ollama:11434/api/tags\",\n    \"HealthCheckMethod\": \"GET\",\n    \"HealthCheckIntervalMs\": 5000,\n    \"HealthCheckTimeoutMs\": 2000,\n    \"HealthCheckExpectedStatusCode\": 200,\n    \"HealthyThreshold\": 2,\n    \"UnhealthyThreshold\": 2,\n    \"HealthCheckUseAuth\": false\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"

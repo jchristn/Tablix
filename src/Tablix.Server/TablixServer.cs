@@ -18,6 +18,7 @@ namespace Tablix.Server
     using Tablix.Core.Settings;
     using Tablix.Server.Handlers;
     using Tablix.Server.Mcp;
+    using Tablix.Server.Services;
     using Constants = Tablix.Core.Helpers.Constants;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
     using LoggingSettings = Tablix.Core.Settings.LoggingSettings;
@@ -40,6 +41,7 @@ namespace Tablix.Server
         private DatabaseHandler _DatabaseHandler;
         private ChatHandler _ChatHandler;
         private ModelProviderHandler _ModelProviderHandler;
+        private ModelProviderHealthCheckService _ModelProviderHealthChecks;
         private SetupHandler _SetupHandler;
         private SettingsHandler _SettingsHandler;
         private DateTime _StartTimeUtc;
@@ -79,6 +81,7 @@ namespace Tablix.Server
             _Logging.Info(_Header + "starting Tablix v" + Constants.ProductVersion);
 
             InitializeCrawlCache();
+            await InitializeModelProviderHealthChecksAsync(token).ConfigureAwait(false);
             InitializeRest();
             InitializeMcp();
 
@@ -168,6 +171,13 @@ namespace Tablix.Server
                 logInfo: (msg) => _Logging.Info(_Header + msg),
                 logWarn: (msg) => _Logging.Warn(_Header + msg)
             );
+        }
+
+        private async Task InitializeModelProviderHealthChecksAsync(CancellationToken token)
+        {
+            _ModelProviderHealthChecks = new ModelProviderHealthCheckService(_Persistence, _Logging);
+            await _ModelProviderHealthChecks.RefreshProvidersAsync(token).ConfigureAwait(false);
+            _ModelProviderHealthChecks.Start(token);
         }
 
         private async Task CrawlAllDatabasesAsync()
@@ -302,7 +312,7 @@ namespace Tablix.Server
             // Register handlers
             _DatabaseHandler = new DatabaseHandler(_SettingsManager, _Persistence, _CrawlCache);
             _ChatHandler = new ChatHandler(_SettingsManager, _Persistence, _CrawlCache, _Logging);
-            _ModelProviderHandler = new ModelProviderHandler(_SettingsManager, _Persistence, _Logging);
+            _ModelProviderHandler = new ModelProviderHandler(_SettingsManager, _Persistence, _Logging, _ModelProviderHealthChecks);
             _SetupHandler = new SetupHandler(_Persistence);
             _SettingsHandler = new SettingsHandler(_SettingsManager, _Persistence);
 
@@ -341,6 +351,18 @@ namespace Tablix.Server
                     .WithParameter(OpenApiParameterMetadata.Query("filter", "Filter by ID, name, endpoint, model, or type", false))
                     .WithParameter(OpenApiParameterMetadata.Query("enabled", "Filter by enabled state", false))
                     .WithResponse(200, OpenApiResponseMetadata.Json<EnumerationResult<ModelProviderSummary>>("Paginated model providers"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Get("/v1/model/health", _ModelProviderHandler.ListProviderHealthAsync,
+                api => api.WithTag("Models").WithSummary("List model provider health statuses")
+                    .WithResponse(200, OpenApiResponseMetadata.Json<List<EndpointHealthStatus>>("Model provider health statuses"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
+            rest.Get("/v1/model/{id}/health", _ModelProviderHandler.GetProviderHealthAsync,
+                api => api.WithTag("Models").WithSummary("Read model provider health status")
+                    .WithParameter(OpenApiParameterMetadata.Path("id", "Model provider ID"))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<EndpointHealthStatus>("Model provider health status"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Provider not found"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
 
             rest.Get("/v1/model/{id}", _ModelProviderHandler.GetProviderAsync,

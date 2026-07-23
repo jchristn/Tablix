@@ -526,6 +526,8 @@ Each provider includes an explicit `ApiKey` field stored in `tablix.db`. Provide
 
 Each provider can also define a provider-specific system prompt. When `SystemPrompt` is set on a provider, it is used instead of the global `Chat.SystemPrompt` as that provider's base prompt for chat and model-assisted context generation. Tablix still appends mandatory selected-database, query-execution, no-fabrication, and no-secrets rules so provider overrides cannot accidentally disable execution policy.
 
+Each provider can also define lightweight model-runner health checks. Health configuration is persisted with the provider record, while current health status and recent history are kept in memory and shown from the dashboard **Models** page. When `HealthCheckUrl` is empty, Tablix derives the default from the provider endpoint: Ollama uses `/api/tags`, OpenAI and OpenAI-compatible endpoints use `/v1/models`, and Gemini uses `/v1beta/models`.
+
 | Field | Description |
 |-------|-------------|
 | `Id` | Stable provider ID referenced by `Chat.DefaultProviderId` |
@@ -540,6 +542,14 @@ Each provider can also define a provider-specific system prompt. When `SystemPro
 | `Temperature`, `TopP`, `MaxTokens` | Optional generation controls |
 | `RequestTimeoutMs` | Per-provider-request timeout; batch operations make multiple provider requests |
 | `MaxConcurrentRequests` | Maximum parallel provider requests for batch operations such as table-context generation; clamped from 1 to 16 |
+| `HealthCheckEnabled` | Whether background provider health checks are active |
+| `HealthCheckUrl` | Absolute URL used for background health checks |
+| `HealthCheckMethod` | `GET` or `HEAD` |
+| `HealthCheckIntervalMs` | Delay between background checks |
+| `HealthCheckTimeoutMs` | Timeout for one health check request |
+| `HealthCheckExpectedStatusCode` | HTTP status code treated as a successful check |
+| `HealthyThreshold`, `UnhealthyThreshold` | Consecutive success/failure counts required to change health state |
+| `HealthCheckUseAuth` | Whether the saved provider API key is sent with health check requests |
 | `SupportsNativeToolCalls` | Whether the provider/model is expected to support tool calls |
 | `UseNativeToolCalls` | Whether Tablix should attempt PolyPrompt native tool calls; defaults on when native tools are supported |
 | `SupportsStrictJson` | Whether the provider/model is expected to follow strict JSON planner output |
@@ -676,6 +686,8 @@ All endpoints except health checks require `Authorization: Bearer <api-key>`. Se
 | `POST` | `/v1/setup/dismiss` | Yes | Dismiss setup without completing it |
 | `GET` | `/v1/model` | Yes | List model providers |
 | `GET` | `/v1/model/{id}` | Yes | Read a redacted model provider |
+| `GET` | `/v1/model/health` | Yes | List model provider health statuses |
+| `GET` | `/v1/model/{id}/health` | Yes | Read one model provider health status |
 | `POST` | `/v1/model` | Yes | Create a model provider |
 | `PUT` | `/v1/model/{id}` | Yes | Update a model provider |
 | `DELETE` | `/v1/model/{id}` | Yes | Delete a model provider |

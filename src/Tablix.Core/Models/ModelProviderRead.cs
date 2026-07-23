@@ -104,6 +104,56 @@ namespace Tablix.Core.Models
         /// </summary>
         public int MaxConcurrentRequests { get; set; } = 1;
 
+        /// <summary>
+        /// Whether provider health checks are enabled.
+        /// </summary>
+        public bool HealthCheckEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Health check URL.
+        /// </summary>
+        public string HealthCheckUrl { get; set; } = null;
+
+        /// <summary>
+        /// Health check HTTP method.
+        /// </summary>
+        public HealthCheckMethodEnum HealthCheckMethod { get; set; } = HealthCheckMethodEnum.GET;
+
+        /// <summary>
+        /// Health check interval in milliseconds.
+        /// </summary>
+        public int HealthCheckIntervalMs { get; set; } = 5000;
+
+        /// <summary>
+        /// Health check timeout in milliseconds.
+        /// </summary>
+        public int HealthCheckTimeoutMs { get; set; } = 2000;
+
+        /// <summary>
+        /// Expected success status code.
+        /// </summary>
+        public int HealthCheckExpectedStatusCode { get; set; } = 200;
+
+        /// <summary>
+        /// Consecutive successes required to mark healthy.
+        /// </summary>
+        public int HealthyThreshold { get; set; } = 2;
+
+        /// <summary>
+        /// Consecutive failures required to mark unhealthy.
+        /// </summary>
+        public int UnhealthyThreshold { get; set; } = 2;
+
+        /// <summary>
+        /// Whether the API key should be sent with health checks.
+        /// </summary>
+        public bool HealthCheckUseAuth { get; set; } = false;
+
+        /// <summary>
+        /// Current health snapshot.
+        /// </summary>
+        public EndpointHealthStatus Health { get; set; } = null;
+
         #endregion
 
         #region Constructors-and-Factories

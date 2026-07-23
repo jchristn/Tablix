@@ -6,7 +6,9 @@ import ConfirmDialog from '../components/ConfirmDialog';
 import { isInteractiveRowClick } from '../components/RecordViewModal';
 import { translateTooltip } from '../i18n';
 import type {
+  EndpointHealthStatus,
   EnumerationResult,
+  HealthCheckRecord,
   ModelProviderRead,
   ModelProviderSummary,
   ModelProviderUpdate,
@@ -14,6 +16,7 @@ import type {
 } from '../types';
 
 const providerTypes = ['Ollama', 'OpenAI', 'OpenAICompatible', 'Gemini'];
+const healthCheckMethods = ['GET', 'HEAD'];
 
 const emptyProvider: ModelProviderUpdate = {
   Id: '',
@@ -35,6 +38,16 @@ const emptyProvider: ModelProviderUpdate = {
   MaxTokens: 4096,
   RequestTimeoutMs: 120000,
   MaxConcurrentRequests: 1,
+  HealthCheckEnabled: true,
+  HealthCheckUrl: 'http://localhost:11434/api/tags',
+  HealthCheckMethod: 'GET',
+  HealthCheckIntervalMs: 5000,
+  HealthCheckTimeoutMs: 2000,
+  HealthCheckExpectedStatusCode: 200,
+  HealthyThreshold: 2,
+  UnhealthyThreshold: 2,
+  HealthCheckUseAuth: false,
+  Health: null,
   ClearApiKey: false,
 };
 
@@ -52,6 +65,7 @@ export default function ModelsPage() {
   const [testResult, setTestResult] = useState<ProviderConnectivityTestResponse | null>(null);
   const [actionMenu, setActionMenu] = useState<ModelActionMenuState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ModelProviderSummary | null>(null);
+  const [healthTarget, setHealthTarget] = useState<ModelProviderSummary | null>(null);
 
   useEffect(() => { loadModels(); }, []);
   useEffect(() => {
@@ -71,7 +85,7 @@ export default function ModelsPage() {
       if (!response.ok) { setError('Failed to load provider.'); return; }
 
       const data: ModelProviderRead = await response.json();
-      setProvider({ ...data, ApiKey: '', ClearApiKey: false });
+      setProvider(normalizeProviderRead(data));
       setEditing(true);
       setTestResult(null);
       setModalOpen(true);
@@ -95,7 +109,7 @@ export default function ModelsPage() {
   }
 
   function openCreate() {
-    setProvider({ ...emptyProvider, Id: `provider_${crypto.randomUUID().slice(0, 8)}` });
+    setProvider({ ...createModelProviderDefaults('Ollama'), Id: `provider_${crypto.randomUUID().slice(0, 8)}` });
     setEditing(false);
     setTestResult(null);
     setModalOpen(true);
@@ -107,7 +121,7 @@ export default function ModelsPage() {
     if (!response.ok) { setError('Failed to load provider.'); return; }
 
     const data: ModelProviderRead = await response.json();
-    setProvider({ ...data, ApiKey: '', ClearApiKey: false });
+    setProvider(normalizeProviderRead(data));
     setEditing(true);
     setTestResult(null);
     setModalOpen(true);
@@ -120,9 +134,10 @@ export default function ModelsPage() {
     setMessage('');
 
     try {
+      const body = JSON.stringify(providerPayload(provider));
       const response = editing
-        ? await apiFetch(`/v1/model/${provider.Id}`, { method: 'PUT', body: JSON.stringify(provider) })
-        : await apiFetch('/v1/model', { method: 'POST', body: JSON.stringify(provider) });
+        ? await apiFetch(`/v1/model/${provider.Id}`, { method: 'PUT', body })
+        : await apiFetch('/v1/model', { method: 'POST', body });
 
       if (response.status === 401) { navigate('/login'); return; }
       if (!response.ok) {
@@ -174,7 +189,7 @@ export default function ModelsPage() {
     try {
       const response = id
         ? await apiFetch(`/v1/model/${id}/test`, { method: 'POST' })
-        : await apiFetch('/v1/model/test', { method: 'POST', body: JSON.stringify({ Provider: provider }) });
+        : await apiFetch('/v1/model/test', { method: 'POST', body: JSON.stringify({ Provider: providerPayload(provider) }) });
 
       if (response.status === 401) { navigate('/login'); return; }
       const data: ProviderConnectivityTestResponse = await response.json();
@@ -192,6 +207,34 @@ export default function ModelsPage() {
       if (field === 'SupportsNativeToolCalls') {
         const supports = Boolean(value);
         return { ...previous, SupportsNativeToolCalls: supports, UseNativeToolCalls: supports ? true : false };
+      }
+
+      if (field === 'Type') {
+        const type = String(value);
+        const endpoint = previous.Endpoint || defaultProviderEndpoint(type);
+        return {
+          ...previous,
+          Type: type,
+          Endpoint: endpoint,
+          Model: previous.Model || defaultProviderModel(type),
+          SupportsNativeToolCalls: true,
+          UseNativeToolCalls: true,
+          SupportsStrictJson: type === 'OpenAI' || type === 'Gemini',
+          MaxConcurrentRequests: type === 'OpenAI' || type === 'Gemini' ? 4 : 1,
+          HealthCheckUrl: defaultHealthCheckUrl(type, endpoint),
+          HealthCheckUseAuth: type === 'OpenAI' || type === 'Gemini',
+        };
+      }
+
+      if (field === 'Endpoint') {
+        const endpoint = String(value);
+        const currentDefaultUrl = defaultHealthCheckUrl(previous.Type, previous.Endpoint || '');
+        const shouldUpdateHealthUrl = !previous.HealthCheckUrl || previous.HealthCheckUrl === currentDefaultUrl;
+        return {
+          ...previous,
+          Endpoint: endpoint,
+          HealthCheckUrl: shouldUpdateHealthUrl ? defaultHealthCheckUrl(previous.Type, endpoint) : previous.HealthCheckUrl,
+        };
       }
 
       return { ...previous, [field]: value };
@@ -228,37 +271,57 @@ export default function ModelsPage() {
               <th>Endpoint</th>
               <th>Model</th>
               <th>Tools</th>
+              <th>Health</th>
               <th>Status</th>
               <th className="actions-column">Actions</th>
             </tr>
           </thead>
           <tbody>
-            {models.map(model => (
-              <tr key={model.Id} title="Click to edit model provider" style={{ cursor: 'pointer' }} onClick={event => openModelRow(model, event)}>
-                <td>
-                  <strong>{model.Name || model.Id}</strong>
-                  <div className="muted-text">{model.Id}</div>
-                </td>
-                <td>{model.Type}</td>
-                <td className="muted-text">{model.Endpoint || '-'}</td>
-                <td>{model.Model || '-'}</td>
-                <td>{model.UseNativeToolCalls ? 'Native' : model.SupportsNativeToolCalls ? 'Available' : 'Fallback'}</td>
-                <td>{model.Enabled ? <span className="badge badge-success">Enabled</span> : <span className="badge badge-warning">Disabled</span>}</td>
-                <td>
-                  <button
-                    type="button"
-                    className="icon-action row-actions-button"
-                    title={translateTooltip('actions.open')}
-                    aria-label={`Open actions for ${model.Id}`}
-                    onClick={event => openActionMenu(model, event)}
-                  >
-                    <EllipsisIcon />
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {models.map(model => {
+              const health = modelHealthPresentation(model, model.Health);
+              return (
+                <tr key={model.Id} title="Click to edit model provider" style={{ cursor: 'pointer' }} onClick={event => openModelRow(model, event)}>
+                  <td>
+                    <strong>{model.Name || model.Id}</strong>
+                    <div className="muted-text">{model.Id}</div>
+                  </td>
+                  <td>{model.Type}</td>
+                  <td className="muted-text">{model.Endpoint || '-'}</td>
+                  <td>{model.Model || '-'}</td>
+                  <td>{model.UseNativeToolCalls ? 'Native' : model.SupportsNativeToolCalls ? 'Available' : 'Fallback'}</td>
+                  <td className="model-health-cell">
+                    <button
+                      type="button"
+                      className={`health-status-button ${health.Tone}`}
+                      title={health.Title}
+                      onClick={event => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setHealthTarget(model);
+                      }}
+                    >
+                      <ActivityIcon />
+                      <span>{health.Label}</span>
+                    </button>
+                    <HealthHistogram History={model.Health?.History || []} Compact={true} />
+                  </td>
+                  <td>{model.Enabled ? <span className="badge badge-success">Enabled</span> : <span className="badge badge-warning">Disabled</span>}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="icon-action row-actions-button"
+                      title={translateTooltip('actions.open')}
+                      aria-label={`Open actions for ${model.Id}`}
+                      onClick={event => openActionMenu(model, event)}
+                    >
+                      <EllipsisIcon />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
             {models.length === 0 && (
-              <tr><td colSpan={7} className="muted-text">No model providers configured.</td></tr>
+              <tr><td colSpan={8} className="muted-text">No model providers configured.</td></tr>
             )}
           </tbody>
         </table>
@@ -279,6 +342,11 @@ export default function ModelsPage() {
             Label: 'Edit',
             TooltipKey: 'actions.edit',
             OnClick: () => openEdit(actionMenu.Model.Id)
+          },
+          {
+            Label: 'Health',
+            TooltipKey: 'actions.details',
+            OnClick: () => setHealthTarget(actionMenu.Model)
           },
           {
             Label: 'Test',
@@ -345,6 +413,22 @@ export default function ModelsPage() {
                 <Field label="Timeout Ms" tooltipKey="models.timeout"><input title={translateTooltip('models.timeout')} type="number" value={provider.RequestTimeoutMs} onChange={event => update('RequestTimeoutMs', parseNumber(event.target.value, 120000))} /></Field>
                 <Field label="Max Concurrent Requests" tooltipKey="models.concurrency"><input title={translateTooltip('models.concurrency')} type="number" min="1" max="16" value={provider.MaxConcurrentRequests} onChange={event => update('MaxConcurrentRequests', parseNumber(event.target.value, 1))} /></Field>
               </div>
+              <div className="model-form-section">Health Checks</div>
+              <div className="settings-grid">
+                <label className="toggle-row settings-toggle" title={translateTooltip('models.healthEnabled')}><input title={translateTooltip('models.healthEnabled')} type="checkbox" checked={provider.HealthCheckEnabled} onChange={event => update('HealthCheckEnabled', event.target.checked)} /><span>Health checks</span></label>
+                <label className="toggle-row settings-toggle" title={translateTooltip('models.healthAuth')}><input title={translateTooltip('models.healthAuth')} type="checkbox" checked={provider.HealthCheckUseAuth} onChange={event => update('HealthCheckUseAuth', event.target.checked)} /><span>Use API key</span></label>
+                <Field label="Health URL" tooltipKey="models.healthUrl"><input title={translateTooltip('models.healthUrl')} value={provider.HealthCheckUrl || ''} onChange={event => update('HealthCheckUrl', event.target.value)} /></Field>
+                <Field label="Method" tooltipKey="models.healthMethod">
+                  <select title={translateTooltip('models.healthMethod')} value={provider.HealthCheckMethod || 'GET'} onChange={event => update('HealthCheckMethod', event.target.value)}>
+                    {healthCheckMethods.map(method => <option key={method} value={method}>{method}</option>)}
+                  </select>
+                </Field>
+                <Field label="Interval Ms" tooltipKey="models.healthInterval"><input title={translateTooltip('models.healthInterval')} type="number" min="1000" value={provider.HealthCheckIntervalMs} onChange={event => update('HealthCheckIntervalMs', parseNumber(event.target.value, 5000))} /></Field>
+                <Field label="Timeout Ms" tooltipKey="models.healthTimeout"><input title={translateTooltip('models.healthTimeout')} type="number" min="10" value={provider.HealthCheckTimeoutMs} onChange={event => update('HealthCheckTimeoutMs', parseNumber(event.target.value, 2000))} /></Field>
+                <Field label="Expected Status" tooltipKey="models.healthStatus"><input title={translateTooltip('models.healthStatus')} type="number" min="100" max="599" value={provider.HealthCheckExpectedStatusCode} onChange={event => update('HealthCheckExpectedStatusCode', parseNumber(event.target.value, 200))} /></Field>
+                <Field label="Healthy Threshold" tooltipKey="models.healthyThreshold"><input title={translateTooltip('models.healthyThreshold')} type="number" min="1" max="100" value={provider.HealthyThreshold} onChange={event => update('HealthyThreshold', parseNumber(event.target.value, 2))} /></Field>
+                <Field label="Unhealthy Threshold" tooltipKey="models.unhealthyThreshold"><input title={translateTooltip('models.unhealthyThreshold')} type="number" min="1" max="100" value={provider.UnhealthyThreshold} onChange={event => update('UnhealthyThreshold', parseNumber(event.target.value, 2))} /></Field>
+              </div>
               <div className="form-group">
                 <label title={translateTooltip('models.systemPrompt')}>System Prompt Override</label>
                 <textarea title={translateTooltip('models.systemPrompt')} rows={3} value={provider.SystemPrompt || ''} onChange={event => update('SystemPrompt', event.target.value)} />
@@ -363,12 +447,181 @@ export default function ModelsPage() {
           </div>
         </div>
       )}
+
+      {healthTarget && (
+        <ModelProviderHealthModal
+          provider={healthTarget}
+          onClose={() => setHealthTarget(null)}
+          onUnauthorized={() => navigate('/login')}
+        />
+      )}
     </div>
   );
 }
 
 interface ModelActionMenuState extends ActionMenuState {
   Model: ModelProviderSummary;
+}
+
+type HealthTone = 'success' | 'warning' | 'danger' | 'neutral';
+
+interface HealthPresentation {
+  Label: string;
+  Title: string;
+  Tone: HealthTone;
+}
+
+function ModelProviderHealthModal({ provider, onClose, onUnauthorized }: { provider: ModelProviderSummary; onClose: () => void; onUnauthorized: () => void }) {
+  const [health, setHealth] = useState<EndpointHealthStatus | null>(provider.Health || null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let canceled = false;
+
+    async function loadHealth() {
+      setLoading(true);
+      try {
+        const response = await apiFetch(`/v1/model/${provider.Id}/health`);
+        if (response.status === 401) { onUnauthorized(); return; }
+        if (!response.ok) {
+          if (!canceled) setError('Failed to load provider health.');
+          return;
+        }
+
+        const data: EndpointHealthStatus = await response.json();
+        if (!canceled) {
+          setHealth(data);
+          setError('');
+        }
+      } catch {
+        if (!canceled) setError('Could not connect to server.');
+      } finally {
+        if (!canceled) setLoading(false);
+      }
+    }
+
+    void loadHealth();
+    const interval = window.setInterval(loadHealth, 15000);
+    return () => {
+      canceled = true;
+      window.clearInterval(interval);
+    };
+  }, [provider.Id, onUnauthorized]);
+
+  const presentation = modelHealthPresentation(provider, health);
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+      <div className="modal-panel model-health-modal" role="dialog" aria-modal="true" aria-labelledby="model-health-title" onClick={event => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <h3 id="model-health-title">Health: {provider.Name || provider.Id}</h3>
+            <p className="muted-text">{provider.Id}</p>
+          </div>
+          <button type="button" className="icon-action" aria-label="Close health dialog" title="Close" onClick={onClose}>
+            <CloseIcon />
+          </button>
+        </div>
+
+        {error && <p className="error-text" style={{ marginBottom: '12px' }}>{error}</p>}
+        {loading && !health && <p className="muted-text" style={{ marginBottom: '12px' }}>Loading health...</p>}
+
+        <div className="health-stats-row">
+          <HealthStatCard Label="Status" Value={presentation.Label} Tone={presentation.Tone} />
+          <HealthStatCard Label="Uptime" Value={formatPercent(health?.UptimePercentage)} Tone={presentation.Tone === 'danger' ? 'danger' : 'success'} />
+          <HealthStatCard Label="Consecutive OK" Value={String(health?.ConsecutiveSuccesses ?? 0)} Tone="success" />
+          <HealthStatCard Label="Consecutive Fail" Value={String(health?.ConsecutiveFailures ?? 0)} Tone={health && health.ConsecutiveFailures > 0 ? 'danger' : 'neutral'} />
+        </div>
+
+        {health?.LastError && (
+          <div className="health-error-box">
+            <strong>Last Error</strong>
+            <span>{health.LastError}</span>
+          </div>
+        )}
+
+        <section className="health-histogram-section">
+          <div className="health-section-label">Health History</div>
+          <HealthHistogram History={health?.History || []} />
+        </section>
+
+        <div className="health-timestamps">
+          <HealthKeyValue Label="First Check" Value={formatTimestamp(health?.FirstCheckUtc)} />
+          <HealthKeyValue Label="Last Check" Value={formatTimestamp(health?.LastCheckUtc)} />
+          <HealthKeyValue Label="Last Healthy" Value={formatTimestamp(health?.LastHealthyUtc)} />
+          <HealthKeyValue Label="Last Unhealthy" Value={formatTimestamp(health?.LastUnhealthyUtc)} />
+          <HealthKeyValue Label="Last State Change" Value={formatTimestamp(health?.LastStateChangeUtc)} />
+          <HealthKeyValue Label="Uptime / Downtime" Value={`${formatDuration(health?.TotalUptimeMs || 0)} / ${formatDuration(health?.TotalDowntimeMs || 0)}`} />
+        </div>
+
+        <div className="health-section-label">Health Configuration</div>
+        <table className="health-config-table">
+          <tbody>
+            <HealthConfigRow Label="Provider" Value={`${provider.Name || provider.Id} (${provider.Type})`} />
+            <HealthConfigRow Label="Endpoint" Value={provider.Endpoint || '-'} />
+            <HealthConfigRow Label="Health URL" Value={provider.HealthCheckUrl || '-'} />
+            <HealthConfigRow Label="Method" Value={provider.HealthCheckMethod || 'GET'} />
+            <HealthConfigRow Label="Interval" Value={formatDuration(provider.HealthCheckIntervalMs)} />
+            <HealthConfigRow Label="Timeout" Value={formatDuration(provider.HealthCheckTimeoutMs)} />
+            <HealthConfigRow Label="Expected Status" Value={String(provider.HealthCheckExpectedStatusCode || 200)} />
+            <HealthConfigRow Label="Thresholds" Value={`${provider.HealthyThreshold || 2} healthy / ${provider.UnhealthyThreshold || 2} unhealthy`} />
+            <HealthConfigRow Label="Uses Auth" Value={provider.HealthCheckUseAuth ? 'Yes' : 'No'} />
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function HealthStatCard({ Label, Value, Tone }: { Label: string; Value: string; Tone: HealthTone }) {
+  return (
+    <div className={`health-stat-card ${Tone}`}>
+      <span>{Label}</span>
+      <strong>{Value}</strong>
+    </div>
+  );
+}
+
+function HealthKeyValue({ Label, Value }: { Label: string; Value: string }) {
+  return (
+    <div className="health-timestamp-item">
+      <span>{Label}</span>
+      <strong>{Value}</strong>
+    </div>
+  );
+}
+
+function HealthConfigRow({ Label, Value }: { Label: string; Value: string }) {
+  return (
+    <tr>
+      <th>{Label}</th>
+      <td>{Value}</td>
+    </tr>
+  );
+}
+
+function HealthHistogram({ History, Compact = false }: { History: HealthCheckRecord[]; Compact?: boolean }) {
+  const records = (History || [])
+    .slice()
+    .sort((left, right) => new Date(left.TimestampUtc).getTime() - new Date(right.TimestampUtc).getTime())
+    .slice(Compact ? -18 : -72);
+
+  if (records.length === 0) {
+    return <div className={`health-histogram ${Compact ? 'compact' : ''}`}><span className="health-histogram-empty">No data</span></div>;
+  }
+
+  return (
+    <div className={`health-histogram ${Compact ? 'compact' : ''}`} aria-label="Health history">
+      {records.map((record, index) => (
+        <span
+          key={`${record.TimestampUtc}-${index}`}
+          className={`health-bar ${record.Success ? 'success' : 'failure'}`}
+          title={`${formatTimestamp(record.TimestampUtc)} - ${record.Success ? 'Success' : 'Failure'}`}
+        />
+      ))}
+    </div>
+  );
 }
 
 function Field({ label, tooltipKey, children }: { label: string; tooltipKey?: string; children: React.ReactNode }) {
@@ -387,6 +640,179 @@ function CloseIcon() {
       <path d="m6 6 12 12" />
     </svg>
   );
+}
+
+function ActivityIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M22 12h-4l-3 8L9 4l-3 8H2" />
+    </svg>
+  );
+}
+
+function createModelProviderDefaults(type: string): ModelProviderUpdate {
+  const endpoint = defaultProviderEndpoint(type);
+  return {
+    ...emptyProvider,
+    Id: defaultProviderId(type),
+    Name: defaultProviderName(type),
+    Type: type,
+    Endpoint: endpoint,
+    Model: defaultProviderModel(type),
+    SupportsStrictJson: type === 'OpenAI' || type === 'Gemini',
+    MaxConcurrentRequests: type === 'OpenAI' || type === 'Gemini' ? 4 : 1,
+    HealthCheckUrl: defaultHealthCheckUrl(type, endpoint),
+    HealthCheckUseAuth: type === 'OpenAI' || type === 'Gemini',
+    Health: null,
+  };
+}
+
+function normalizeProviderRead(read: ModelProviderRead): ModelProviderUpdate {
+  const endpoint = read.Endpoint || defaultProviderEndpoint(read.Type);
+  return {
+    ...emptyProvider,
+    ...read,
+    Endpoint: endpoint,
+    ApiKey: '',
+    ClearApiKey: false,
+    HealthCheckEnabled: read.HealthCheckEnabled ?? true,
+    HealthCheckUrl: read.HealthCheckUrl || defaultHealthCheckUrl(read.Type, endpoint),
+    HealthCheckMethod: read.HealthCheckMethod || 'GET',
+    HealthCheckIntervalMs: read.HealthCheckIntervalMs || 5000,
+    HealthCheckTimeoutMs: read.HealthCheckTimeoutMs || 2000,
+    HealthCheckExpectedStatusCode: read.HealthCheckExpectedStatusCode || 200,
+    HealthyThreshold: read.HealthyThreshold || 2,
+    UnhealthyThreshold: read.UnhealthyThreshold || 2,
+    HealthCheckUseAuth: read.HealthCheckUseAuth ?? false,
+    Health: read.Health || null,
+  };
+}
+
+function providerPayload(provider: ModelProviderUpdate) {
+  return {
+    Id: provider.Id,
+    Name: provider.Name,
+    Type: provider.Type,
+    Endpoint: provider.Endpoint,
+    ApiKey: provider.ApiKey,
+    ClearApiKey: provider.ClearApiKey,
+    Model: provider.Model,
+    SystemPrompt: provider.SystemPrompt,
+    Enabled: provider.Enabled,
+    DefaultStreaming: provider.DefaultStreaming,
+    SupportsNativeToolCalls: provider.SupportsNativeToolCalls,
+    UseNativeToolCalls: provider.UseNativeToolCalls,
+    SupportsStrictJson: provider.SupportsStrictJson,
+    ToolCapabilityNote: provider.ToolCapabilityNote,
+    Temperature: provider.Temperature,
+    TopP: provider.TopP,
+    MaxTokens: provider.MaxTokens,
+    RequestTimeoutMs: provider.RequestTimeoutMs,
+    MaxConcurrentRequests: provider.MaxConcurrentRequests,
+    HealthCheckEnabled: provider.HealthCheckEnabled,
+    HealthCheckUrl: provider.HealthCheckUrl,
+    HealthCheckMethod: provider.HealthCheckMethod,
+    HealthCheckIntervalMs: provider.HealthCheckIntervalMs,
+    HealthCheckTimeoutMs: provider.HealthCheckTimeoutMs,
+    HealthCheckExpectedStatusCode: provider.HealthCheckExpectedStatusCode,
+    HealthyThreshold: provider.HealthyThreshold,
+    UnhealthyThreshold: provider.UnhealthyThreshold,
+    HealthCheckUseAuth: provider.HealthCheckUseAuth,
+  };
+}
+
+function modelHealthPresentation(provider: ModelProviderSummary, health?: EndpointHealthStatus | null): HealthPresentation {
+  if (!provider.Enabled)
+    return { Label: 'Disabled', Tone: 'neutral', Title: 'Provider is disabled.' };
+
+  if (!provider.HealthCheckEnabled || health?.HealthCheckEnabled === false)
+    return { Label: 'Monitoring off', Tone: 'neutral', Title: 'Health checks are disabled.' };
+
+  if (!health || !health.LastCheckUtc)
+    return { Label: 'Pending', Tone: 'warning', Title: 'Waiting for the first health check.' };
+
+  if (health.IsHealthy)
+    return { Label: 'Healthy', Tone: 'success', Title: 'Provider health checks are passing.' };
+
+  return { Label: 'Unhealthy', Tone: 'danger', Title: health.LastError || 'Provider health checks are failing.' };
+}
+
+function defaultProviderId(type: string) {
+  if (type === 'OpenAI') return 'provider_openai';
+  if (type === 'OpenAICompatible') return 'provider_openai_compatible';
+  if (type === 'Gemini') return 'provider_gemini';
+  return 'provider_ollama_local';
+}
+
+function defaultProviderName(type: string) {
+  if (type === 'OpenAI') return 'OpenAI';
+  if (type === 'OpenAICompatible') return 'OpenAI Compatible';
+  if (type === 'Gemini') return 'Gemini';
+  return 'Local Ollama';
+}
+
+function defaultProviderEndpoint(type: string) {
+  if (type === 'OpenAI') return 'https://api.openai.com';
+  if (type === 'OpenAICompatible') return 'http://localhost:1234';
+  if (type === 'Gemini') return 'https://generativelanguage.googleapis.com';
+  return 'http://localhost:11434';
+}
+
+function defaultProviderModel(type: string) {
+  if (type === 'OpenAI') return 'gpt-4o-mini';
+  if (type === 'OpenAICompatible') return 'local-model';
+  if (type === 'Gemini') return 'gemini-2.5-flash';
+  return 'gemma3:4b';
+}
+
+function defaultHealthCheckUrl(type: string, endpoint: string) {
+  const normalized = endpoint.trim().replace(/\/+$/, '');
+  if (!normalized) return '';
+
+  if (type === 'Ollama') {
+    if (normalized.endsWith('/api/tags')) return normalized;
+    if (normalized.endsWith('/api')) return `${normalized}/tags`;
+    return `${normalized}/api/tags`;
+  }
+
+  if (type === 'Gemini') {
+    if (normalized.endsWith('/models')) return normalized;
+    if (normalized.endsWith('/v1beta')) return `${normalized}/models`;
+    return `${normalized}/v1beta/models`;
+  }
+
+  if (normalized.endsWith('/models')) return normalized;
+  if (normalized.endsWith('/v1')) return `${normalized}/models`;
+  return `${normalized}/v1/models`;
+}
+
+function formatTimestamp(value?: string | null) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatPercent(value?: number | null) {
+  if (value == null || Number.isNaN(value)) return '-';
+  return `${value.toFixed(value % 1 === 0 ? 0 : 2)}%`;
+}
+
+function formatDuration(milliseconds: number) {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '0s';
+  if (milliseconds < 1000) return `${Math.round(milliseconds)}ms`;
+
+  const totalSeconds = Math.floor(milliseconds / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  if (seconds || parts.length === 0) parts.push(`${seconds}s`);
+  return parts.slice(0, 2).join(' ');
 }
 
 function parseNumber(value: string, fallback: number) {

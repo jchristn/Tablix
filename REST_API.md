@@ -25,6 +25,8 @@ Model provider records are stored in `tablix.db`. Read responses never include p
 | --- | --- | --- |
 | `GET` | `/v1/model?maxResults=100&skip=0&filter=&enabled=` | List providers |
 | `GET` | `/v1/model/{id}` | Read one redacted provider |
+| `GET` | `/v1/model/health` | List transient provider health snapshots |
+| `GET` | `/v1/model/{id}/health` | Read one transient provider health snapshot |
 | `POST` | `/v1/model` | Create a provider |
 | `PUT` | `/v1/model/{id}` | Update a provider; leave `ApiKey` empty to preserve it or set `ClearApiKey` |
 | `DELETE` | `/v1/model/{id}` | Delete a provider |
@@ -389,7 +391,7 @@ Dismiss the first-run setup wizard without marking setup complete. This lets use
 
 ## Models
 
-Model providers are stored in `tablix.db`. Read APIs never return plaintext `ApiKey`; they expose `HasApiKey` only.
+Model providers are stored in `tablix.db`. Read APIs never return plaintext `ApiKey`; they expose `HasApiKey` only. Tablix runs background health checks for configured providers and keeps status/history in memory; health status is exposed on provider read/list responses and through the dedicated health endpoints.
 
 ### `GET /v1/model`
 
@@ -432,9 +434,53 @@ Read one redacted provider.
   "TopP": null,
   "MaxTokens": 4096,
   "RequestTimeoutMs": 120000,
-  "MaxConcurrentRequests": 1
+  "MaxConcurrentRequests": 1,
+  "HealthCheckEnabled": true,
+  "HealthCheckUrl": "http://ollama:11434/api/tags",
+  "HealthCheckMethod": "GET",
+  "HealthCheckIntervalMs": 5000,
+  "HealthCheckTimeoutMs": 2000,
+  "HealthCheckExpectedStatusCode": 200,
+  "HealthyThreshold": 2,
+  "UnhealthyThreshold": 2,
+  "HealthCheckUseAuth": false,
+  "Health": {
+    "EndpointId": "provider_ollama_local",
+    "EndpointName": "Local Ollama",
+    "HealthCheckEnabled": true,
+    "IsHealthy": true,
+    "FirstCheckUtc": "2026-07-23T16:00:00Z",
+    "LastCheckUtc": "2026-07-23T16:00:05Z",
+    "LastHealthyUtc": "2026-07-23T16:00:05Z",
+    "LastUnhealthyUtc": null,
+    "LastStateChangeUtc": "2026-07-23T16:00:00Z",
+    "TotalUptimeMs": 5000,
+    "TotalDowntimeMs": 0,
+    "UptimePercentage": 100,
+    "ConsecutiveSuccesses": 2,
+    "ConsecutiveFailures": 0,
+    "LastError": null,
+    "History": [
+      { "TimestampUtc": "2026-07-23T16:00:00Z", "Success": true },
+      { "TimestampUtc": "2026-07-23T16:00:05Z", "Success": true }
+    ]
+  }
 }
 ```
+
+### `GET /v1/model/health`
+
+List transient health snapshots for configured model providers.
+
+**Response** `200 OK` - returns `List<EndpointHealthStatus>`.
+
+### `GET /v1/model/{id}/health`
+
+Read one provider health snapshot.
+
+**Response** `200 OK` - returns `EndpointHealthStatus`.
+
+`EndpointHealthStatus` includes `EndpointId`, `EndpointName`, `HealthCheckEnabled`, `IsHealthy`, first/last check timestamps, last healthy/unhealthy timestamps, `TotalUptimeMs`, `TotalDowntimeMs`, `UptimePercentage`, consecutive success/failure counts, `LastError`, and recent `History` records with `TimestampUtc` and `Success`.
 
 ### `POST /v1/model`
 
@@ -462,7 +508,16 @@ Create a provider.
   "TopP": null,
   "MaxTokens": 4096,
   "RequestTimeoutMs": 120000,
-  "MaxConcurrentRequests": 1
+  "MaxConcurrentRequests": 1,
+  "HealthCheckEnabled": true,
+  "HealthCheckUrl": "http://ollama:11434/api/tags",
+  "HealthCheckMethod": "GET",
+  "HealthCheckIntervalMs": 5000,
+  "HealthCheckTimeoutMs": 2000,
+  "HealthCheckExpectedStatusCode": 200,
+  "HealthyThreshold": 2,
+  "UnhealthyThreshold": 2,
+  "HealthCheckUseAuth": false
 }
 ```
 
@@ -473,6 +528,8 @@ Create a provider.
 Update a provider. Leave `ApiKey` empty/null to preserve the current key. Set `ClearApiKey` to `true` to remove the saved key. `SystemPrompt` is an optional provider-specific base prompt; when set, chat requests using that provider use it instead of the global `Chat.SystemPrompt`, with mandatory Tablix query-execution and no-fabrication rules appended. If `SupportsNativeToolCalls` is true, dashboard create/edit flows default `UseNativeToolCalls` to true so capable providers execute through PolyPrompt native tools unless explicitly disabled.
 
 `RequestTimeoutMs` is applied per provider request. Batch operations such as table-context generation may issue multiple provider requests and are bounded by `MaxConcurrentRequests` so the model endpoint is not overwhelmed. `MaxConcurrentRequests` is clamped from `1` to `16`; use `1` for local/single-GPU endpoints unless the model server is known to handle parallel requests.
+
+Health checks use `HealthCheckUrl`, `HealthCheckMethod` (`GET` or `HEAD`), `HealthCheckIntervalMs`, `HealthCheckTimeoutMs`, `HealthCheckExpectedStatusCode`, `HealthyThreshold`, `UnhealthyThreshold`, and `HealthCheckUseAuth`. When `HealthCheckUrl` is omitted, Tablix derives a default from the provider endpoint: Ollama uses `/api/tags`, OpenAI and OpenAI-compatible providers use `/v1/models`, and Gemini uses `/v1beta/models`. Health status is transient process state; provider health configuration is persisted with the provider record.
 
 **Response** `200 OK` - returns `ModelProviderSummary`.
 

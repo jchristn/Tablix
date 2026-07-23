@@ -54,6 +54,23 @@ namespace Tablix.Core.Persistence.Sqlite
                     {
                         "ALTER TABLE model_providers ADD COLUMN max_concurrent_requests INTEGER NOT NULL DEFAULT 1"
                     }
+                },
+                new SchemaMigration
+                {
+                    Version = 3,
+                    Description = "Add model provider health check settings",
+                    Statements = new List<string>
+                    {
+                        "ALTER TABLE model_providers ADD COLUMN health_check_enabled INTEGER NOT NULL DEFAULT 1",
+                        "ALTER TABLE model_providers ADD COLUMN health_check_url TEXT NULL",
+                        "ALTER TABLE model_providers ADD COLUMN health_check_method TEXT NOT NULL DEFAULT 'GET'",
+                        "ALTER TABLE model_providers ADD COLUMN health_check_interval_ms INTEGER NOT NULL DEFAULT 5000",
+                        "ALTER TABLE model_providers ADD COLUMN health_check_timeout_ms INTEGER NOT NULL DEFAULT 2000",
+                        "ALTER TABLE model_providers ADD COLUMN health_check_expected_status_code INTEGER NOT NULL DEFAULT 200",
+                        "ALTER TABLE model_providers ADD COLUMN healthy_threshold INTEGER NOT NULL DEFAULT 2",
+                        "ALTER TABLE model_providers ADD COLUMN unhealthy_threshold INTEGER NOT NULL DEFAULT 2",
+                        "ALTER TABLE model_providers ADD COLUMN health_check_use_auth INTEGER NOT NULL DEFAULT 0"
+                    }
                 }
             };
         }

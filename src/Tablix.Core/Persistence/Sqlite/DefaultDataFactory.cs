@@ -15,7 +15,7 @@ namespace Tablix.Core.Persistence.Sqlite
         /// <returns>Provider settings.</returns>
         public static ModelProviderSettings CreateOllamaProvider()
         {
-            return new ModelProviderSettings
+            return ApplyHealthDefaults(new ModelProviderSettings
             {
                 Id = "provider_ollama_local",
                 Name = "Local Ollama",
@@ -32,7 +32,7 @@ namespace Tablix.Core.Persistence.Sqlite
                 MaxTokens = 4096,
                 RequestTimeoutMs = 120000,
                 MaxConcurrentRequests = 1
-            };
+            });
         }
 
         /// <summary>
@@ -41,7 +41,7 @@ namespace Tablix.Core.Persistence.Sqlite
         /// <returns>Provider settings.</returns>
         public static ModelProviderSettings CreateOpenAiProvider()
         {
-            return new ModelProviderSettings
+            return ApplyHealthDefaults(new ModelProviderSettings
             {
                 Id = "provider_openai",
                 Name = "OpenAI",
@@ -58,7 +58,7 @@ namespace Tablix.Core.Persistence.Sqlite
                 MaxTokens = 4096,
                 RequestTimeoutMs = 120000,
                 MaxConcurrentRequests = 4
-            };
+            });
         }
 
         /// <summary>
@@ -67,7 +67,7 @@ namespace Tablix.Core.Persistence.Sqlite
         /// <returns>Provider settings.</returns>
         public static ModelProviderSettings CreateOpenAiCompatibleProvider()
         {
-            return new ModelProviderSettings
+            return ApplyHealthDefaults(new ModelProviderSettings
             {
                 Id = "provider_openai_compatible",
                 Name = "OpenAI Compatible",
@@ -84,7 +84,7 @@ namespace Tablix.Core.Persistence.Sqlite
                 MaxTokens = 4096,
                 RequestTimeoutMs = 120000,
                 MaxConcurrentRequests = 1
-            };
+            });
         }
 
         /// <summary>
@@ -93,7 +93,7 @@ namespace Tablix.Core.Persistence.Sqlite
         /// <returns>Provider settings.</returns>
         public static ModelProviderSettings CreateGeminiProvider()
         {
-            return new ModelProviderSettings
+            return ApplyHealthDefaults(new ModelProviderSettings
             {
                 Id = "provider_gemini",
                 Name = "Gemini",
@@ -110,7 +110,7 @@ namespace Tablix.Core.Persistence.Sqlite
                 MaxTokens = 4096,
                 RequestTimeoutMs = 120000,
                 MaxConcurrentRequests = 4
-            };
+            });
         }
 
         /// <summary>
@@ -130,6 +130,12 @@ namespace Tablix.Core.Persistence.Sqlite
                 AllowedQueries = new List<string> { "SELECT", "INSERT", "UPDATE", "DELETE" },
                 Context = "Sample e-commerce database with three tables. The users table stores customer information. The orders table tracks purchases with a foreign key to users. The line_items table holds individual order items with a foreign key to orders."
             };
+        }
+
+        private static ModelProviderSettings ApplyHealthDefaults(ModelProviderSettings provider)
+        {
+            ModelProviderSettings.ApplyHealthCheckDefaults(provider);
+            return provider;
         }
     }
 }

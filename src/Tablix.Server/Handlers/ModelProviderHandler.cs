@@ -15,6 +15,7 @@ namespace Tablix.Server.Handlers
     using Tablix.Core.Models;
     using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
+    using Tablix.Server.Services;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
 
     /// <summary>
@@ -25,6 +26,7 @@ namespace Tablix.Server.Handlers
         private readonly SettingsManager _SettingsManager;
         private readonly DatabaseDriverBase _Persistence;
         private readonly LoggingModule _Logging;
+        private readonly ModelProviderHealthCheckService _HealthChecks;
 
         /// <summary>
         /// Instantiate.
@@ -32,11 +34,13 @@ namespace Tablix.Server.Handlers
         /// <param name="settingsManager">Settings manager.</param>
         /// <param name="persistence">Persistence driver.</param>
         /// <param name="logging">Logging module.</param>
-        public ModelProviderHandler(SettingsManager settingsManager, DatabaseDriverBase persistence, LoggingModule logging)
+        /// <param name="healthChecks">Model provider health check service.</param>
+        public ModelProviderHandler(SettingsManager settingsManager, DatabaseDriverBase persistence, LoggingModule logging, ModelProviderHealthCheckService healthChecks = null)
         {
             _SettingsManager = settingsManager ?? throw new ArgumentNullException(nameof(settingsManager));
             _Persistence = persistence ?? throw new ArgumentNullException(nameof(persistence));
             _Logging = logging ?? new LoggingModule();
+            _HealthChecks = healthChecks;
         }
 
         /// <summary>
@@ -51,7 +55,7 @@ namespace Tablix.Server.Handlers
 
             long totalRecords = await _Persistence.ModelProviders.CountAsync(filter, enabled, req.CancellationToken).ConfigureAwait(false);
             List<ModelProviderSettings> providers = await _Persistence.ModelProviders.EnumerateAsync(maxResults, skip, filter, enabled, req.CancellationToken).ConfigureAwait(false);
-            List<ModelProviderSummary> summaries = providers.Select(ModelProviderSummary.From).Where(summary => summary != null).ToList();
+            List<ModelProviderSummary> summaries = providers.Select(ToSummary).Where(summary => summary != null).ToList();
             long remaining = Math.Max(0, totalRecords - skip - summaries.Count);
             stopwatch.Stop();
 
@@ -88,6 +92,46 @@ namespace Tablix.Server.Handlers
         }
 
         /// <summary>
+        /// List model provider health statuses.
+        /// </summary>
+        /// <param name="req">REST request.</param>
+        /// <returns>Health statuses.</returns>
+        public async Task<object> ListProviderHealthAsync(AppRequest req)
+        {
+            await Task.CompletedTask.ConfigureAwait(false);
+            if (_HealthChecks != null)
+                return _HealthChecks.GetAllHealthStatuses();
+
+            List<ModelProviderSettings> providers = await _Persistence.ModelProviders.EnumerateAsync(1000, 0, null, null, req.CancellationToken).ConfigureAwait(false);
+            return providers.Select(CreateInitialHealthStatus).Where(status => status != null).ToList();
+        }
+
+        /// <summary>
+        /// Read one model provider health status.
+        /// </summary>
+        /// <param name="req">REST request.</param>
+        /// <returns>Health status.</returns>
+        public async Task<object> GetProviderHealthAsync(AppRequest req)
+        {
+            string id = req.Parameters["id"];
+            ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
+            if (provider == null)
+            {
+                req.Http.Response.StatusCode = 404;
+                return new ApiErrorResponse(ApiErrorEnum.NotFound, "Provider '" + id + "' not found.");
+            }
+
+            EndpointHealthStatus status = _HealthChecks?.GetHealthStatus(id);
+            if (status == null && _HealthChecks != null)
+            {
+                _HealthChecks.OnProviderSaved(provider);
+                status = _HealthChecks.GetHealthStatus(id);
+            }
+
+            return status ?? CreateInitialHealthStatus(provider);
+        }
+
+        /// <summary>
         /// Create a model provider.
         /// </summary>
         /// <param name="req">REST request.</param>
@@ -105,9 +149,10 @@ namespace Tablix.Server.Handlers
             {
                 ModelProviderSettings provider = ToSettings(request);
                 ModelProviderSettings created = await _Persistence.ModelProviders.CreateAsync(provider, req.CancellationToken).ConfigureAwait(false);
+                _HealthChecks?.OnProviderSaved(created);
                 await RepairDefaultProviderIdAsync(req.CancellationToken).ConfigureAwait(false);
                 req.Http.Response.StatusCode = 201;
-                return ModelProviderSummary.From(created);
+                return ToSummary(created);
             }
             catch (InvalidOperationException ex)
             {
@@ -151,8 +196,9 @@ namespace Tablix.Server.Handlers
                 provider.ApiKey = existing.ApiKey;
 
             ModelProviderSettings updated = await _Persistence.ModelProviders.UpdateAsync(provider, true, req.CancellationToken).ConfigureAwait(false);
+            _HealthChecks?.OnProviderSaved(updated);
             await RepairDefaultProviderIdAsync(req.CancellationToken).ConfigureAwait(false);
-            return ModelProviderSummary.From(updated);
+            return ToSummary(updated);
         }
 
         /// <summary>
@@ -171,6 +217,7 @@ namespace Tablix.Server.Handlers
             }
 
             await RepairDefaultProviderIdAsync(req.CancellationToken).ConfigureAwait(false);
+            _HealthChecks?.OnProviderDeleted(id);
             req.Http.Response.StatusCode = 204;
             return null;
         }
@@ -281,8 +328,9 @@ namespace Tablix.Server.Handlers
             return client;
         }
 
-        private static ModelProviderRead ToRead(ModelProviderSettings provider)
+        private ModelProviderRead ToRead(ModelProviderSettings provider)
         {
+            ModelProviderSettings.ApplyHealthCheckDefaults(provider);
             return new ModelProviderRead
             {
                 Id = provider.Id,
@@ -303,7 +351,17 @@ namespace Tablix.Server.Handlers
                 TopP = provider.TopP,
                 MaxTokens = provider.MaxTokens,
                 RequestTimeoutMs = provider.RequestTimeoutMs,
-                MaxConcurrentRequests = provider.MaxConcurrentRequests
+                MaxConcurrentRequests = provider.MaxConcurrentRequests,
+                HealthCheckEnabled = provider.HealthCheckEnabled,
+                HealthCheckUrl = provider.HealthCheckUrl,
+                HealthCheckMethod = provider.HealthCheckMethod,
+                HealthCheckIntervalMs = provider.HealthCheckIntervalMs,
+                HealthCheckTimeoutMs = provider.HealthCheckTimeoutMs,
+                HealthCheckExpectedStatusCode = provider.HealthCheckExpectedStatusCode,
+                HealthyThreshold = provider.HealthyThreshold,
+                UnhealthyThreshold = provider.UnhealthyThreshold,
+                HealthCheckUseAuth = provider.HealthCheckUseAuth,
+                Health = _HealthChecks?.GetHealthStatus(provider.Id) ?? CreateInitialHealthStatus(provider)
             };
         }
 
@@ -328,8 +386,39 @@ namespace Tablix.Server.Handlers
                 TopP = request.TopP,
                 MaxTokens = request.MaxTokens,
                 RequestTimeoutMs = request.RequestTimeoutMs,
-                MaxConcurrentRequests = request.MaxConcurrentRequests
+                MaxConcurrentRequests = request.MaxConcurrentRequests,
+                HealthCheckEnabled = request.HealthCheckEnabled,
+                HealthCheckUrl = request.HealthCheckUrl,
+                HealthCheckMethod = request.HealthCheckMethod,
+                HealthCheckIntervalMs = request.HealthCheckIntervalMs,
+                HealthCheckTimeoutMs = request.HealthCheckTimeoutMs,
+                HealthCheckExpectedStatusCode = request.HealthCheckExpectedStatusCode,
+                HealthyThreshold = request.HealthyThreshold,
+                UnhealthyThreshold = request.UnhealthyThreshold,
+                HealthCheckUseAuth = request.HealthCheckUseAuth
             };
+        }
+
+        private ModelProviderSummary ToSummary(ModelProviderSettings provider)
+        {
+            ModelProviderSummary summary = ModelProviderSummary.From(provider);
+            if (summary != null)
+                summary.Health = _HealthChecks?.GetHealthStatus(provider.Id) ?? CreateInitialHealthStatus(provider);
+            return summary;
+        }
+
+        private static EndpointHealthStatus CreateInitialHealthStatus(ModelProviderSettings provider)
+        {
+            if (provider == null) return null;
+            ModelProviderSettings.ApplyHealthCheckDefaults(provider);
+
+            return EndpointHealthStatus.FromState(new EndpointHealthState
+            {
+                EndpointId = provider.Id,
+                EndpointName = provider.Name ?? provider.Id,
+                HealthCheckEnabled = provider.Enabled && provider.HealthCheckEnabled,
+                IsHealthy = true
+            });
         }
 
         private async Task RepairDefaultProviderIdAsync(CancellationToken token)

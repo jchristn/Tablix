@@ -34,12 +34,13 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         public async Task<ModelProviderSettings> CreateAsync(ModelProviderSettings provider, CancellationToken token = default)
         {
             if (provider == null) throw new ArgumentNullException(nameof(provider));
+            ModelProviderSettings.ApplyHealthCheckDefaults(provider);
 
             DateTime now = DateTime.UtcNow;
             await _Driver.ExecuteWriteAsync(async connection =>
             {
                 using SqliteCommand command = connection.CreateCommand();
-                command.CommandText = "INSERT INTO model_providers (id, name, type, endpoint, api_key, model, system_prompt, enabled, default_streaming, supports_native_tool_calls, use_native_tool_calls, supports_strict_json, tool_capability_note, temperature, top_p, max_tokens, request_timeout_ms, max_concurrent_requests, created_utc, updated_utc) VALUES ($id, $name, $type, $endpoint, $api_key, $model, $system_prompt, $enabled, $default_streaming, $supports_native_tool_calls, $use_native_tool_calls, $supports_strict_json, $tool_capability_note, $temperature, $top_p, $max_tokens, $request_timeout_ms, $max_concurrent_requests, $created_utc, $updated_utc)";
+                command.CommandText = "INSERT INTO model_providers (id, name, type, endpoint, api_key, model, system_prompt, enabled, default_streaming, supports_native_tool_calls, use_native_tool_calls, supports_strict_json, tool_capability_note, temperature, top_p, max_tokens, request_timeout_ms, max_concurrent_requests, health_check_enabled, health_check_url, health_check_method, health_check_interval_ms, health_check_timeout_ms, health_check_expected_status_code, healthy_threshold, unhealthy_threshold, health_check_use_auth, created_utc, updated_utc) VALUES ($id, $name, $type, $endpoint, $api_key, $model, $system_prompt, $enabled, $default_streaming, $supports_native_tool_calls, $use_native_tool_calls, $supports_strict_json, $tool_capability_note, $temperature, $top_p, $max_tokens, $request_timeout_ms, $max_concurrent_requests, $health_check_enabled, $health_check_url, $health_check_method, $health_check_interval_ms, $health_check_timeout_ms, $health_check_expected_status_code, $healthy_threshold, $unhealthy_threshold, $health_check_use_auth, $created_utc, $updated_utc)";
                 AddProviderParameters(command, provider, now, now);
                 await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
             }, token).ConfigureAwait(false);
@@ -125,6 +126,7 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
         public async Task<ModelProviderSettings> UpdateAsync(ModelProviderSettings provider, bool preserveApiKeyWhenNull = true, CancellationToken token = default)
         {
             if (provider == null) throw new ArgumentNullException(nameof(provider));
+            ModelProviderSettings.ApplyHealthCheckDefaults(provider);
 
             DateTime now = DateTime.UtcNow;
             await _Driver.ExecuteWriteAsync(async connection =>
@@ -135,7 +137,7 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
                     provider.ApiKey = existing.ApiKey;
 
                 using SqliteCommand command = connection.CreateCommand();
-                command.CommandText = "UPDATE model_providers SET name = $name, type = $type, endpoint = $endpoint, api_key = $api_key, model = $model, system_prompt = $system_prompt, enabled = $enabled, default_streaming = $default_streaming, supports_native_tool_calls = $supports_native_tool_calls, use_native_tool_calls = $use_native_tool_calls, supports_strict_json = $supports_strict_json, tool_capability_note = $tool_capability_note, temperature = $temperature, top_p = $top_p, max_tokens = $max_tokens, request_timeout_ms = $request_timeout_ms, max_concurrent_requests = $max_concurrent_requests, updated_utc = $updated_utc WHERE lower(id) = lower($id)";
+                command.CommandText = "UPDATE model_providers SET name = $name, type = $type, endpoint = $endpoint, api_key = $api_key, model = $model, system_prompt = $system_prompt, enabled = $enabled, default_streaming = $default_streaming, supports_native_tool_calls = $supports_native_tool_calls, use_native_tool_calls = $use_native_tool_calls, supports_strict_json = $supports_strict_json, tool_capability_note = $tool_capability_note, temperature = $temperature, top_p = $top_p, max_tokens = $max_tokens, request_timeout_ms = $request_timeout_ms, max_concurrent_requests = $max_concurrent_requests, health_check_enabled = $health_check_enabled, health_check_url = $health_check_url, health_check_method = $health_check_method, health_check_interval_ms = $health_check_interval_ms, health_check_timeout_ms = $health_check_timeout_ms, health_check_expected_status_code = $health_check_expected_status_code, healthy_threshold = $healthy_threshold, unhealthy_threshold = $unhealthy_threshold, health_check_use_auth = $health_check_use_auth, updated_utc = $updated_utc WHERE lower(id) = lower($id)";
                 AddProviderParameters(command, provider, now, now);
                 int count = await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
                 if (count == 0) throw new KeyNotFoundException("Provider with ID '" + provider.Id + "' not found.");
@@ -220,6 +222,15 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
             command.Parameters.AddWithValue("$max_tokens", provider.MaxTokens.HasValue ? (object)provider.MaxTokens.Value : DBNull.Value);
             command.Parameters.AddWithValue("$request_timeout_ms", provider.RequestTimeoutMs);
             command.Parameters.AddWithValue("$max_concurrent_requests", provider.MaxConcurrentRequests);
+            command.Parameters.AddWithValue("$health_check_enabled", SqliteDatabaseDriver.ToInt(provider.HealthCheckEnabled));
+            command.Parameters.AddWithValue("$health_check_url", (object)provider.HealthCheckUrl ?? DBNull.Value);
+            command.Parameters.AddWithValue("$health_check_method", provider.HealthCheckMethod.ToString());
+            command.Parameters.AddWithValue("$health_check_interval_ms", provider.HealthCheckIntervalMs);
+            command.Parameters.AddWithValue("$health_check_timeout_ms", provider.HealthCheckTimeoutMs);
+            command.Parameters.AddWithValue("$health_check_expected_status_code", provider.HealthCheckExpectedStatusCode);
+            command.Parameters.AddWithValue("$healthy_threshold", provider.HealthyThreshold);
+            command.Parameters.AddWithValue("$unhealthy_threshold", provider.UnhealthyThreshold);
+            command.Parameters.AddWithValue("$health_check_use_auth", SqliteDatabaseDriver.ToInt(provider.HealthCheckUseAuth));
             command.Parameters.AddWithValue("$created_utc", SqliteDatabaseDriver.ToStorageDate(createdUtc));
             command.Parameters.AddWithValue("$updated_utc", SqliteDatabaseDriver.ToStorageDate(updatedUtc));
         }
@@ -242,12 +253,22 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
                 SupportsStrictJson = SqliteDatabaseDriver.ToBool(Convert.ToInt64(reader["supports_strict_json"])),
                 ToolCapabilityNote = reader["tool_capability_note"] == DBNull.Value ? null : Convert.ToString(reader["tool_capability_note"]),
                 RequestTimeoutMs = Convert.ToInt32(reader["request_timeout_ms"]),
-                MaxConcurrentRequests = Convert.ToInt32(reader["max_concurrent_requests"])
+                MaxConcurrentRequests = Convert.ToInt32(reader["max_concurrent_requests"]),
+                HealthCheckEnabled = SqliteDatabaseDriver.ToBool(Convert.ToInt64(reader["health_check_enabled"])),
+                HealthCheckUrl = reader["health_check_url"] == DBNull.Value ? null : Convert.ToString(reader["health_check_url"]),
+                HealthCheckMethod = Enum.Parse<HealthCheckMethodEnum>(Convert.ToString(reader["health_check_method"]), true),
+                HealthCheckIntervalMs = Convert.ToInt32(reader["health_check_interval_ms"]),
+                HealthCheckTimeoutMs = Convert.ToInt32(reader["health_check_timeout_ms"]),
+                HealthCheckExpectedStatusCode = Convert.ToInt32(reader["health_check_expected_status_code"]),
+                HealthyThreshold = Convert.ToInt32(reader["healthy_threshold"]),
+                UnhealthyThreshold = Convert.ToInt32(reader["unhealthy_threshold"]),
+                HealthCheckUseAuth = SqliteDatabaseDriver.ToBool(Convert.ToInt64(reader["health_check_use_auth"]))
             };
 
             provider.Temperature = reader["temperature"] == DBNull.Value ? (double?)null : Convert.ToDouble(reader["temperature"]);
             provider.TopP = reader["top_p"] == DBNull.Value ? (double?)null : Convert.ToDouble(reader["top_p"]);
             provider.MaxTokens = reader["max_tokens"] == DBNull.Value ? (int?)null : Convert.ToInt32(reader["max_tokens"]);
+            ModelProviderSettings.ApplyHealthCheckDefaults(provider);
             return provider;
         }
     }

@@ -604,6 +604,15 @@ function createProviderDefaults(type: string): ModelProviderUpdate {
     TopP: null,
     MaxTokens: 4096,
     RequestTimeoutMs: 120000,
+    HealthCheckEnabled: true,
+    HealthCheckMethod: 'GET',
+    HealthCheckIntervalMs: 5000,
+    HealthCheckTimeoutMs: 2000,
+    HealthCheckExpectedStatusCode: 200,
+    HealthyThreshold: 2,
+    UnhealthyThreshold: 2,
+    HealthCheckUseAuth: false,
+    Health: null,
     ClearApiKey: false,
   };
 
@@ -617,6 +626,8 @@ function createProviderDefaults(type: string): ModelProviderUpdate {
       Model: 'gpt-4o-mini',
       SupportsStrictJson: true,
       MaxConcurrentRequests: 4,
+      HealthCheckUrl: 'https://api.openai.com/v1/models',
+      HealthCheckUseAuth: true,
     };
   }
 
@@ -630,6 +641,7 @@ function createProviderDefaults(type: string): ModelProviderUpdate {
       Model: 'local-model',
       SupportsStrictJson: false,
       MaxConcurrentRequests: 1,
+      HealthCheckUrl: 'http://localhost:1234/v1/models',
     };
   }
 
@@ -643,6 +655,8 @@ function createProviderDefaults(type: string): ModelProviderUpdate {
       Model: 'gemini-2.5-flash',
       SupportsStrictJson: true,
       MaxConcurrentRequests: 4,
+      HealthCheckUrl: 'https://generativelanguage.googleapis.com/v1beta/models',
+      HealthCheckUseAuth: true,
     };
   }
 
@@ -655,6 +669,7 @@ function createProviderDefaults(type: string): ModelProviderUpdate {
     Model: 'gemma3:4b',
     SupportsStrictJson: false,
     MaxConcurrentRequests: 1,
+    HealthCheckUrl: 'http://ollama:11434/api/tags',
   };
 }
 

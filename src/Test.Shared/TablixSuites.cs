@@ -418,6 +418,44 @@ namespace Test.Shared
                         Equal(4, provider.MaxConcurrentRequests, "MaxConcurrentRequests valid value mismatch.");
                         return Task.CompletedTask;
                     }),
+                    Case("SettingsClamping", "ProviderHealthSettingsClampAndDefault", "Model provider health settings clamp and derive default health URLs", ct =>
+                    {
+                        ModelProviderSettings provider = new ModelProviderSettings
+                        {
+                            Type = ModelProviderTypeEnum.Ollama,
+                            Endpoint = "http://localhost:11434"
+                        };
+
+                        provider.HealthCheckIntervalMs = 0;
+                        Equal(5000, provider.HealthCheckIntervalMs, "Health check interval default mismatch.");
+                        provider.HealthCheckIntervalMs = 100;
+                        Equal(1000, provider.HealthCheckIntervalMs, "Health check interval low clamp mismatch.");
+                        provider.HealthCheckIntervalMs = 7200000;
+                        Equal(3600000, provider.HealthCheckIntervalMs, "Health check interval high clamp mismatch.");
+
+                        provider.HealthCheckTimeoutMs = 0;
+                        Equal(2000, provider.HealthCheckTimeoutMs, "Health check timeout default mismatch.");
+                        provider.HealthCheckTimeoutMs = 1;
+                        Equal(10, provider.HealthCheckTimeoutMs, "Health check timeout low clamp mismatch.");
+
+                        provider.HealthCheckExpectedStatusCode = 0;
+                        Equal(200, provider.HealthCheckExpectedStatusCode, "Health status default mismatch.");
+                        provider.HealthCheckExpectedStatusCode = 99;
+                        Equal(100, provider.HealthCheckExpectedStatusCode, "Health status low clamp mismatch.");
+                        provider.HealthCheckExpectedStatusCode = 700;
+                        Equal(599, provider.HealthCheckExpectedStatusCode, "Health status high clamp mismatch.");
+
+                        provider.HealthyThreshold = 0;
+                        Equal(2, provider.HealthyThreshold, "Healthy threshold default mismatch.");
+                        provider.UnhealthyThreshold = 200;
+                        Equal(100, provider.UnhealthyThreshold, "Unhealthy threshold high clamp mismatch.");
+
+                        ModelProviderSettings.ApplyHealthCheckDefaults(provider);
+                        Equal("http://localhost:11434/api/tags", provider.HealthCheckUrl, "Ollama health URL mismatch.");
+                        Equal("https://api.openai.com/v1/models", ModelProviderSettings.BuildDefaultHealthCheckUrl(new ModelProviderSettings { Type = ModelProviderTypeEnum.OpenAI, Endpoint = "https://api.openai.com" }), "OpenAI health URL mismatch.");
+                        Equal("https://generativelanguage.googleapis.com/v1beta/models", ModelProviderSettings.BuildDefaultHealthCheckUrl(new ModelProviderSettings { Type = ModelProviderTypeEnum.Gemini, Endpoint = "https://generativelanguage.googleapis.com" }), "Gemini health URL mismatch.");
+                        return Task.CompletedTask;
+                    }),
                     Case("SettingsClamping", "DefaultProvidersUseNativeToolsWhenSupported", "Default providers enable native tool use when native tools are supported", ct =>
                     {
                         List<ModelProviderSettings> providers = new List<ModelProviderSettings>
@@ -433,6 +471,9 @@ namespace Test.Shared
                             if (provider.SupportsNativeToolCalls)
                                 True(provider.UseNativeToolCalls, provider.Id + " should use native tools when native tools are supported.");
                             True(String.IsNullOrWhiteSpace(provider.ToolCapabilityNote), provider.Id + " should not seed a user-facing tool capability note.");
+                            True(provider.HealthCheckEnabled, provider.Id + " should enable health checks by default.");
+                            True(!String.IsNullOrWhiteSpace(provider.HealthCheckUrl), provider.Id + " should seed a health check URL.");
+                            Equal(200, provider.HealthCheckExpectedStatusCode, provider.Id + " should expect HTTP 200 for health checks.");
                         }
 
                         return Task.CompletedTask;
@@ -551,8 +592,9 @@ namespace Test.Shared
                     {
                         string json = Serializer.SerializeJson(new DatabaseEntry { Id = "enum_db", Type = DatabaseTypeEnum.Mysql });
                         Contains(json, "\"Mysql\"", "Expected enum string value.");
-                        string providerJson = Serializer.SerializeJson(new ModelProviderSettings { Id = "provider_enum", Type = ModelProviderTypeEnum.OpenAICompatible });
+                        string providerJson = Serializer.SerializeJson(new ModelProviderSettings { Id = "provider_enum", Type = ModelProviderTypeEnum.OpenAICompatible, HealthCheckMethod = HealthCheckMethodEnum.HEAD });
                         Contains(providerJson, "\"OpenAICompatible\"", "Expected provider enum string value.");
+                        Contains(providerJson, "\"HEAD\"", "Expected health check method enum string value.");
                         return Task.CompletedTask;
                     }),
                     Case("SettingsSerialization", "SerializeNullReturnsNull", "SerializeJson null returns null", ct =>
@@ -646,6 +688,48 @@ namespace Test.Shared
                         {
                             await driver.DatabaseConnections.CreateAsync(new DatabaseEntry { Id = "Case_Db" }, ct).ConfigureAwait(false);
                             NotNull(await driver.DatabaseConnections.ReadAsync("case_db", ct).ConfigureAwait(false), "Database should be found case-insensitively.");
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("Persistence", "ModelProviderHealthFieldsRoundTrip", "Model provider health fields persist across create, read, and update", async ct =>
+                    {
+                        await WithTempPersistenceAsync(async driver =>
+                        {
+                            ModelProviderSettings provider = new ModelProviderSettings
+                            {
+                                Id = "provider_health_roundtrip",
+                                Name = "Health Roundtrip",
+                                Type = ModelProviderTypeEnum.OpenAICompatible,
+                                Endpoint = "http://localhost:1234",
+                                Model = "local-model",
+                                HealthCheckEnabled = true,
+                                HealthCheckUrl = "http://localhost:1234/v1/models",
+                                HealthCheckMethod = HealthCheckMethodEnum.HEAD,
+                                HealthCheckIntervalMs = 7000,
+                                HealthCheckTimeoutMs = 1500,
+                                HealthCheckExpectedStatusCode = 204,
+                                HealthyThreshold = 3,
+                                UnhealthyThreshold = 4,
+                                HealthCheckUseAuth = true
+                            };
+
+                            await driver.ModelProviders.CreateAsync(provider, ct).ConfigureAwait(false);
+                            ModelProviderSettings retrieved = await driver.ModelProviders.ReadAsync(provider.Id, ct).ConfigureAwait(false);
+                            NotNull(retrieved, "Provider should be found.");
+                            Equal("http://localhost:1234/v1/models", retrieved.HealthCheckUrl, "Health check URL mismatch.");
+                            Equal(HealthCheckMethodEnum.HEAD, retrieved.HealthCheckMethod, "Health check method mismatch.");
+                            Equal(7000, retrieved.HealthCheckIntervalMs, "Health check interval mismatch.");
+                            Equal(1500, retrieved.HealthCheckTimeoutMs, "Health check timeout mismatch.");
+                            Equal(204, retrieved.HealthCheckExpectedStatusCode, "Expected status mismatch.");
+                            Equal(3, retrieved.HealthyThreshold, "Healthy threshold mismatch.");
+                            Equal(4, retrieved.UnhealthyThreshold, "Unhealthy threshold mismatch.");
+                            True(retrieved.HealthCheckUseAuth, "Health check auth mismatch.");
+
+                            retrieved.HealthCheckEnabled = false;
+                            retrieved.HealthCheckMethod = HealthCheckMethodEnum.GET;
+                            await driver.ModelProviders.UpdateAsync(retrieved, true, ct).ConfigureAwait(false);
+                            ModelProviderSettings updated = await driver.ModelProviders.ReadAsync(provider.Id, ct).ConfigureAwait(false);
+                            False(updated.HealthCheckEnabled, "Updated health check enabled state mismatch.");
+                            Equal(HealthCheckMethodEnum.GET, updated.HealthCheckMethod, "Updated health check method mismatch.");
                         }).ConfigureAwait(false);
                     }),
                     Case("Persistence", "PersistsAcrossDrivers", "Persisted database is visible to a new driver", async ct =>
@@ -1431,8 +1515,38 @@ namespace Test.Shared
                         Equal(4, summary.MaxConcurrentRequests, "Summary should expose concurrency limit.");
                         Contains(json, "Native tools supported.", "Capability note should serialize.");
                         Contains(json, "\"MaxConcurrentRequests\":4", "Provider summary should serialize concurrency limit.");
+                        Contains(json, "\"HealthCheckUrl\"", "Provider summary should expose health check configuration.");
+                        Contains(json, "\"HealthCheckEnabled\":true", "Provider summary should expose health check enabled state.");
                         DoesNotContain(json, "provider-secret-key", "Provider summary should not expose API key.");
                         DoesNotContain(json, "\"ApiKey\"", "Provider summary should not expose ApiKey field.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("ModelGuards", "EndpointHealthStatusSerializesHistory", "EndpointHealthStatus serializes health history", ct =>
+                    {
+                        DateTime now = DateTime.UtcNow;
+                        EndpointHealthState state = new EndpointHealthState
+                        {
+                            EndpointId = "provider_health",
+                            EndpointName = "Provider Health",
+                            HealthCheckEnabled = true,
+                            IsHealthy = false,
+                            FirstCheckUtc = now.AddMinutes(-5),
+                            LastCheckUtc = now,
+                            LastUnhealthyUtc = now,
+                            LastStateChangeUtc = now,
+                            ConsecutiveFailures = 2,
+                            LastError = "connection refused"
+                        };
+                        state.CheckHistory.Add(new HealthCheckRecord { TimestampUtc = now.AddMinutes(-1), Success = true });
+                        state.CheckHistory.Add(new HealthCheckRecord { TimestampUtc = now, Success = false });
+
+                        EndpointHealthStatus status = EndpointHealthStatus.FromState(state);
+                        string json = Serializer.SerializeJson(status, false);
+                        False(status.IsHealthy, "Status should preserve unhealthy state.");
+                        Equal(2, status.History.Count, "Health history count mismatch.");
+                        Contains(json, "\"EndpointId\":\"provider_health\"", "Health status should serialize endpoint ID.");
+                        Contains(json, "\"History\"", "Health status should serialize history.");
+                        Contains(json, "\"Success\":false", "Health status should serialize failed checks.");
                         return Task.CompletedTask;
                     }),
                     Case("ModelGuards", "SettingsReadProviderRedactsApiKey", "Settings provider read model omits API key value", ct =>
@@ -2267,6 +2381,22 @@ namespace Test.Shared
                         Contains(postman, "MaxConcurrentRequests", "Postman provider examples should include provider concurrency.");
                         return Task.CompletedTask;
                     }),
+                    Case("DashboardApiContract", "ProviderHealthDocumented", "Provider health monitoring is documented and exposed in the dashboard", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string readme = File.ReadAllText(Path.Combine(repositoryRoot, "README.md"));
+                        string restApi = File.ReadAllText(Path.Combine(repositoryRoot, "REST_API.md"));
+                        string postman = File.ReadAllText(Path.Combine(repositoryRoot, "Tablix.postman_collection.json"));
+                        string modelsPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ModelsPage.tsx"));
+
+                        Contains(readme, "HealthCheckUrl", "README should document provider health check settings.");
+                        Contains(restApi, "/v1/model/health", "REST API should document provider health status routes.");
+                        Contains(restApi, "EndpointHealthStatus", "REST API should document provider health status response.");
+                        Contains(postman, "List Model Health", "Postman should include model health requests.");
+                        Contains(modelsPage, "ModelProviderHealthModal", "Dashboard should expose the model provider health modal.");
+                        Contains(modelsPage, "HealthHistogram", "Dashboard should expose model provider health history.");
+                        return Task.CompletedTask;
+                    }),
                     Case("DashboardApiContract", "ReleaseVersion030Documented", "Release version 0.3.0 is reflected in docs, compose tags, package metadata, and product constants", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();
@@ -2402,7 +2532,7 @@ namespace Test.Shared
                         Contains(modelProviderHandler, "settings.Chat.DefaultProviderId = replacementProviderId", "Default provider repair should persist the replacement provider ID.");
                         Contains(modelProviderHandler, "ResolveProviderForTestAsync", "Model provider tests should resolve stored secrets for redacted edit forms.");
                         Contains(modelProviderHandler, "provider.ApiKey = existing.ApiKey", "Model provider draft tests should reuse the stored API key when the edit form leaves it blank.");
-                        Contains(tablixServer, "new ModelProviderHandler(_SettingsManager, _Persistence, _Logging)", "Model provider handler should have settings access for default repair.");
+                        Contains(tablixServer, "new ModelProviderHandler(_SettingsManager, _Persistence, _Logging, _ModelProviderHealthChecks)", "Model provider handler should have settings access for default repair and health checks.");
                         Contains(chatPage, "function selectAvailableProviderId", "Chat page should validate default provider IDs against returned providers.");
                         Contains(databaseListPage, "function selectAvailableProviderId", "Database list context builder should validate default provider IDs.");
                         Contains(databaseDetailPage, "function selectAvailableProviderId", "Database detail context builder should validate default provider IDs.");
@@ -2833,6 +2963,8 @@ namespace Test.Shared
                 new ApiRouteContract("POST", "/v1/setup/complete", "rest.Post(\"/v1/setup/complete\"", "/v1/setup/complete", "/v1/setup/complete"),
                 new ApiRouteContract("POST", "/v1/setup/dismiss", "rest.Post(\"/v1/setup/dismiss\"", "/v1/setup/dismiss", "/v1/setup/dismiss"),
                 new ApiRouteContract("GET", "/v1/model", "rest.Get(\"/v1/model\"", "/v1/model?", "/v1/model"),
+                new ApiRouteContract("GET", "/v1/model/health", "rest.Get(\"/v1/model/health\"", null, "/v1/model/health"),
+                new ApiRouteContract("GET", "/v1/model/{id}/health", "rest.Get(\"/v1/model/{id}/health\"", "/v1/model/${provider.Id}/health", "/v1/model/{id}/health"),
                 new ApiRouteContract("GET", "/v1/model/{id}", "rest.Get(\"/v1/model/{id}\"", "/v1/model/${id}", "/v1/model/{id}"),
                 new ApiRouteContract("POST", "/v1/model", "rest.Post<ModelProviderUpdate>(\"/v1/model\"", "apiFetch('/v1/model'", "/v1/model"),
                 new ApiRouteContract("PUT", "/v1/model/{id}", "rest.Put<ModelProviderUpdate>(\"/v1/model/{id}\"", "method: 'PUT'", "/v1/model/{id}"),

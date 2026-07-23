@@ -125,6 +125,30 @@ export interface BuildTableContextResponse {
   Error: string | null;
 }
 
+export interface HealthCheckRecord {
+  TimestampUtc: string;
+  Success: boolean;
+}
+
+export interface EndpointHealthStatus {
+  EndpointId: string | null;
+  EndpointName: string | null;
+  HealthCheckEnabled: boolean;
+  IsHealthy: boolean;
+  FirstCheckUtc: string | null;
+  LastCheckUtc: string | null;
+  LastHealthyUtc: string | null;
+  LastUnhealthyUtc: string | null;
+  LastStateChangeUtc: string | null;
+  TotalUptimeMs: number;
+  TotalDowntimeMs: number;
+  UptimePercentage: number;
+  ConsecutiveSuccesses: number;
+  ConsecutiveFailures: number;
+  LastError: string | null;
+  History: HealthCheckRecord[];
+}
+
 export interface ModelProviderSummary {
   Id: string;
   Name: string | null;
@@ -139,6 +163,16 @@ export interface ModelProviderSummary {
   SupportsStrictJson: boolean;
   ToolCapabilityNote: string | null;
   MaxConcurrentRequests: number;
+  HealthCheckEnabled: boolean;
+  HealthCheckUrl: string | null;
+  HealthCheckMethod: string;
+  HealthCheckIntervalMs: number;
+  HealthCheckTimeoutMs: number;
+  HealthCheckExpectedStatusCode: number;
+  HealthyThreshold: number;
+  UnhealthyThreshold: number;
+  HealthCheckUseAuth: boolean;
+  Health: EndpointHealthStatus | null;
 }
 
 export interface ChatOptionsResponse {
@@ -396,6 +430,16 @@ export interface ModelProviderRead {
   MaxTokens: number | null;
   RequestTimeoutMs: number;
   MaxConcurrentRequests: number;
+  HealthCheckEnabled: boolean;
+  HealthCheckUrl: string | null;
+  HealthCheckMethod: string;
+  HealthCheckIntervalMs: number;
+  HealthCheckTimeoutMs: number;
+  HealthCheckExpectedStatusCode: number;
+  HealthyThreshold: number;
+  UnhealthyThreshold: number;
+  HealthCheckUseAuth: boolean;
+  Health: EndpointHealthStatus | null;
 }
 
 export interface ModelProviderUpdate extends ModelProviderRead {
