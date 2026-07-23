@@ -1024,7 +1024,15 @@ namespace Tablix.Server.Handlers
                     return nativeResult;
 
                 if (!policy.UseFallbackPlanner)
-                    return nativeResult.Success ? nativeResult : await ExecutePlainChatStreamingAsync(client, preparation, "native_failed_plain", nativeResult.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
+                {
+                    if (nativeResult.Success)
+                    {
+                        await StreamBufferedExecutionResultAsync(preparation, nativeResult, token, sendEventAsync).ConfigureAwait(false);
+                        return nativeResult;
+                    }
+
+                    return await ExecutePlainChatStreamingAsync(client, preparation, "native_failed_plain", nativeResult.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
+                }
 
                 ChatExecutionResult fallbackResult = await ExecuteFallbackPlanningStreamingAsync(client, preparation, policy, token, sendEventAsync, nativeResult.Success ? nativeResult : null).ConfigureAwait(false);
                 if (fallbackResult.ExecutionPath == "server_fallback")
@@ -1357,7 +1365,10 @@ namespace Tablix.Server.Handlers
             if (plan == null || !plan.Execute || String.IsNullOrWhiteSpace(plan.Query))
             {
                 if (noExecutionResult != null)
+                {
+                    await StreamBufferedExecutionResultAsync(preparation, noExecutionResult, token, sendEventAsync).ConfigureAwait(false);
                     return noExecutionResult;
+                }
 
                 return await ExecutePlainChatStreamingAsync(client, preparation, "fallback_no_plan", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
             }
@@ -1463,16 +1474,20 @@ namespace Tablix.Server.Handlers
                     continue;
 
                 messageBuilder.Append(chunk.Text);
-                await sendEventAsync(new ChatStreamEvent
+                string model = String.IsNullOrWhiteSpace(chunk.Model) ? preparation.Provider.Model : chunk.Model;
+                foreach (string delta in SplitStreamingText(chunk.Text))
                 {
-                    EventType = "token",
-                    DatabaseId = preparation.Database.Id,
-                    ProviderId = preparation.Provider.Id,
-                    Model = String.IsNullOrWhiteSpace(chunk.Model) ? preparation.Provider.Model : chunk.Model,
-                    Delta = chunk.Text,
-                    ExecutionPath = executionPath,
-                    CapabilityNotice = capabilityNotice
-                }).ConfigureAwait(false);
+                    await sendEventAsync(new ChatStreamEvent
+                    {
+                        EventType = "token",
+                        DatabaseId = preparation.Database.Id,
+                        ProviderId = preparation.Provider.Id,
+                        Model = model,
+                        Delta = delta,
+                        ExecutionPath = executionPath,
+                        CapabilityNotice = capabilityNotice
+                    }).ConfigureAwait(false);
+                }
             }
 
             stopwatch.Stop();
@@ -1489,6 +1504,53 @@ namespace Tablix.Server.Handlers
                 ToolCalls = toolCalls,
                 Telemetry = CreateTelemetry(response.TimeToFirstTokenMs, totalMs, prompt, message, usage ?? response.Usage)
             };
+        }
+
+        private static async Task StreamBufferedExecutionResultAsync(ChatPreparation preparation, ChatExecutionResult result, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            if (result == null || String.IsNullOrEmpty(result.Message)) return;
+
+            string model = String.IsNullOrWhiteSpace(result.Model) ? preparation.Provider.Model : result.Model;
+            foreach (string delta in SplitStreamingText(result.Message))
+            {
+                token.ThrowIfCancellationRequested();
+                await sendEventAsync(new ChatStreamEvent
+                {
+                    EventType = "token",
+                    DatabaseId = preparation.Database.Id,
+                    ProviderId = preparation.Provider.Id,
+                    Model = model,
+                    Delta = delta,
+                    ExecutionPath = result.ExecutionPath,
+                    CapabilityNotice = result.CapabilityNotice
+                }).ConfigureAwait(false);
+            }
+        }
+
+        private static IEnumerable<string> SplitStreamingText(string text)
+        {
+            if (String.IsNullOrEmpty(text)) yield break;
+
+            const int maxChunkLength = 72;
+            int index = 0;
+            while (index < text.Length)
+            {
+                int length = Math.Min(maxChunkLength, text.Length - index);
+                if (index + length < text.Length)
+                {
+                    for (int candidate = index + length; candidate > index + 18; candidate--)
+                    {
+                        if (Char.IsWhiteSpace(text[candidate - 1]))
+                        {
+                            length = candidate - index;
+                            break;
+                        }
+                    }
+                }
+
+                yield return text.Substring(index, length);
+                index += length;
+            }
         }
 
         private async Task<ChatToolCall> ExecutePromptToolCallAsync(ChatPreparation preparation, PromptToolCall promptToolCall, string phase, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync)

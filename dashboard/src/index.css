@@ -441,21 +441,31 @@ tr:hover {
 }
 
 .model-health-cell {
-  min-width: 190px;
+  min-width: 176px;
+  white-space: nowrap;
+}
+
+.model-health-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .health-status-button {
-  min-width: 132px;
+  width: 30px;
+  min-width: 30px;
   height: 30px;
+  flex: 0 0 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
   background-color: var(--bg-secondary);
   color: var(--text-secondary);
-  padding: 0 10px;
+  padding: 0;
   font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
@@ -497,8 +507,9 @@ tr:hover {
 
 .health-histogram.compact {
   width: 132px;
+  flex: 0 0 132px;
   height: 22px;
-  margin-top: 5px;
+  margin-top: 0;
   border: 0;
   background-color: transparent;
   padding: 0;

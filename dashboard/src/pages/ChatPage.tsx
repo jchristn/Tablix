@@ -48,6 +48,7 @@ export default function ChatPage() {
   const navigate = useNavigate();
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const transcriptContentRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const stickToBottomRef = useRef(true);
   const scrollFrameRef = useRef<number | null>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
@@ -185,6 +186,7 @@ export default function ChatPage() {
         activeRequestRef.current = null;
       }
       setSending(false);
+      focusComposerSoon();
     }
   }
 
@@ -197,28 +199,32 @@ export default function ChatPage() {
     setInput('');
     setError('');
 
-    if (command === '/clear') {
-      clearConversation();
-      return;
-    }
+    try {
+      if (command === '/clear') {
+        clearConversation();
+        return;
+      }
 
-    if (command === '/help') {
-      appendLocalAssistantMessage(buildSlashHelpMessage());
-      return;
-    }
+      if (command === '/help') {
+        appendLocalAssistantMessage(buildSlashHelpMessage());
+        return;
+      }
 
-    if (command === '/context') {
-      appendLocalAssistantMessage(await buildContextUsageMessage());
-      return;
-    }
+      if (command === '/context') {
+        appendLocalAssistantMessage(await buildContextUsageMessage());
+        return;
+      }
 
-    if (command === '/prompt') {
-      const promptMessage = await buildPromptPreviewMessage();
-      appendLocalAssistantMessage(promptMessage.Content, promptMessage.Preview);
-      return;
-    }
+      if (command === '/prompt') {
+        const promptMessage = await buildPromptPreviewMessage();
+        appendLocalAssistantMessage(promptMessage.Content, promptMessage.Preview);
+        return;
+      }
 
-    appendLocalAssistantMessage(buildUnknownCommandMessage(command));
+      appendLocalAssistantMessage(buildUnknownCommandMessage(command));
+    } finally {
+      focusComposerSoon();
+    }
   }
 
   async function sendNonStreaming(request: ChatRequest, assistantId: string, signal: AbortSignal) {
@@ -276,7 +282,7 @@ export default function ChatPage() {
           buffer += decoder.decode(result.value, { stream: !doneReading });
           const frames = buffer.split('\n\n');
           buffer = frames.pop() || '';
-          frames.forEach(frame => handleStreamFrame(frame, assistantId));
+          await handleStreamFrames(frames, assistantId);
         }
       }
 
@@ -289,6 +295,15 @@ export default function ChatPage() {
         return;
       }
       failAssistant(assistantId, 'Could not connect to server.');
+    }
+  }
+
+  async function handleStreamFrames(frames: string[], assistantId: string) {
+    for (let index = 0; index < frames.length; index++) {
+      handleStreamFrame(frames[index], assistantId);
+      if (frames.length <= 8 || (index + 1) % 4 === 0) {
+        await yieldToBrowser();
+      }
     }
   }
 
@@ -379,6 +394,7 @@ export default function ChatPage() {
     activeRequestRef.current = null;
     setSending(false);
     resetConversation();
+    focusComposerSoon();
   }
 
   function appendLocalAssistantMessage(content: string, promptPreview: ChatPromptPreviewResponse | null = null) {
@@ -545,6 +561,12 @@ export default function ChatPage() {
     }
   }
 
+  function focusComposerSoon() {
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+    }, 0);
+  }
+
   return (
     <div className="chat-page">
       <div className="page-header">
@@ -669,6 +691,7 @@ export default function ChatPage() {
               </div>
             )}
             <textarea
+              ref={inputRef}
               title={translateTooltip('chat.input')}
               value={input}
               onChange={event => setInput(event.target.value)}
@@ -822,6 +845,10 @@ function formatJsonish(value: string) {
 
 function isAbortError(value: unknown) {
   return value instanceof DOMException && value.name === 'AbortError';
+}
+
+function yieldToBrowser() {
+  return new Promise<void>(resolve => window.setTimeout(resolve, 0));
 }
 
 function selectAvailableProviderId(options: ChatOptionsResponse) {

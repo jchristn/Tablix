@@ -290,20 +290,22 @@ export default function ModelsPage() {
                   <td>{model.Model || '-'}</td>
                   <td>{model.UseNativeToolCalls ? 'Native' : model.SupportsNativeToolCalls ? 'Available' : 'Fallback'}</td>
                   <td className="model-health-cell">
-                    <button
-                      type="button"
-                      className={`health-status-button ${health.Tone}`}
-                      title={health.Title}
-                      onClick={event => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        setHealthTarget(model);
-                      }}
-                    >
-                      <ActivityIcon />
-                      <span>{health.Label}</span>
-                    </button>
-                    <HealthHistogram History={model.Health?.History || []} Compact={true} />
+                    <div className="model-health-inline">
+                      <button
+                        type="button"
+                        className={`health-status-button ${health.Tone}`}
+                        title={`${health.Label}: ${health.Title}`}
+                        aria-label={`${health.Label}: ${health.Title}`}
+                        onClick={event => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setHealthTarget(model);
+                        }}
+                      >
+                        <HealthStatusIcon Tone={health.Tone} />
+                      </button>
+                      <HealthHistogram History={model.Health?.History || []} Compact={true} />
+                    </div>
                   </td>
                   <td>{model.Enabled ? <span className="badge badge-success">Enabled</span> : <span className="badge badge-warning">Disabled</span>}</td>
                   <td>
@@ -642,10 +644,37 @@ function CloseIcon() {
   );
 }
 
-function ActivityIcon() {
+function HealthStatusIcon({ Tone }: { Tone: HealthTone }) {
+  if (Tone === 'success') {
+    return (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M20 6 9 17l-5-5" />
+      </svg>
+    );
+  }
+
+  if (Tone === 'danger') {
+    return (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </svg>
+    );
+  }
+
+  if (Tone === 'warning') {
+    return (
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v6" />
+        <path d="M12 17h.01" />
+      </svg>
+    );
+  }
+
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M22 12h-4l-3 8L9 4l-3 8H2" />
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12h14" />
     </svg>
   );
 }

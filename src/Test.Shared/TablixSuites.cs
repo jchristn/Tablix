@@ -2388,6 +2388,7 @@ namespace Test.Shared
                         string restApi = File.ReadAllText(Path.Combine(repositoryRoot, "REST_API.md"));
                         string postman = File.ReadAllText(Path.Combine(repositoryRoot, "Tablix.postman_collection.json"));
                         string modelsPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ModelsPage.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
 
                         Contains(readme, "HealthCheckUrl", "README should document provider health check settings.");
                         Contains(restApi, "/v1/model/health", "REST API should document provider health status routes.");
@@ -2395,6 +2396,10 @@ namespace Test.Shared
                         Contains(postman, "List Model Health", "Postman should include model health requests.");
                         Contains(modelsPage, "ModelProviderHealthModal", "Dashboard should expose the model provider health modal.");
                         Contains(modelsPage, "HealthHistogram", "Dashboard should expose model provider health history.");
+                        Contains(modelsPage, "HealthStatusIcon", "Models table should render provider health as an icon.");
+                        Contains(modelsPage, "model-health-inline", "Models table should keep health status and history in one row.");
+                        Contains(stylesheet, ".model-health-inline", "Models table health status/history row should be styled.");
+                        Contains(stylesheet, "flex-wrap: nowrap", "Models table health status/history should not wrap.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "ReleaseVersion030Documented", "Release version 0.3.0 is reflected in docs, compose tags, package metadata, and product constants", ct =>
@@ -2586,12 +2591,26 @@ namespace Test.Shared
                         Contains(chatHandler, "ExecuteChatResponseStreamingAsync", "SSE chat should use a dedicated streaming execution path.");
                         Contains(chatHandler, "ChatStreamingAsync", "SSE chat should call PolyPrompt streaming APIs.");
                         Contains(chatHandler, "await foreach (ChatStreamingChunk chunk", "SSE chat should enumerate provider chunks.");
-                        Contains(chatHandler, "Delta = chunk.Text", "SSE token events should send individual chunk text.");
+                        Contains(chatHandler, "Delta = delta", "SSE token events should send bounded text deltas.");
+                        Contains(chatHandler, "SplitStreamingText", "SSE token events should split large provider chunks.");
+                        Contains(chatHandler, "StreamBufferedExecutionResultAsync", "Native direct answers should still be emitted as token events after fallback planning declines execution.");
                         Contains(chatHandler, "BuildToolFollowupPrompt(preparation.Prompt, executedTools)", "Native tool execution should stream the final post-tool answer.");
                         Contains(chatHandler, "ExecuteFallbackPlanningStreamingAsync", "Fallback tool execution should stream the final post-tool answer.");
                         Contains(chatHandler, "Message = response.Text ?? String.Empty", "Native no-tool streaming should return the model response without pre-streaming a plain fallback candidate.");
                         DoesNotContain(chatHandler, "return await ExecutePlainChatStreamingAsync(client, preparation, \"native_no_tool_call\"", "Native no-tool streaming should not stream a plain response before server fallback can run.");
                         DoesNotContain(chatHandler, "Delta = execution.Message", "SSE chat should not send the full completed answer as one token event.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("DashboardApiContract", "ChatComposerRefocusesAfterSend", "Chat composer focus returns after sending and local commands", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ChatPage.tsx"));
+
+                        Contains(chatPage, "inputRef", "Chat page should keep a textarea ref for focus restoration.");
+                        Contains(chatPage, "ref={inputRef}", "Chat textarea should attach the focus ref.");
+                        Contains(chatPage, "focusComposerSoon", "Chat page should restore composer focus after sends and commands.");
+                        Contains(chatPage, "handleStreamFrames", "Chat page should process buffered SSE frames incrementally.");
+                        Contains(chatPage, "yieldToBrowser", "Chat page should yield between buffered stream frames so React can render progress.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "ChatIntentUsesModelPlanning", "Chat fallback intent is decided by model planning rather than substring matching", ct =>
