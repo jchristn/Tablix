@@ -2515,6 +2515,23 @@ namespace Test.Shared
                         Contains(chatPage, "onChange={event => handleProviderChanged(event.target.value)}", "Provider selector should reset the conversation when changed.");
                         return Task.CompletedTask;
                     }),
+                    Case("DashboardApiContract", "ChatPromptPreviewFieldsHaveCopyButtons", "Chat prompt preview fields include robust copy controls", ct =>
+                    {
+                        string repositoryRoot = FindRepositoryRoot();
+                        string chatPage = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "pages", "ChatPage.tsx"));
+                        string clipboardButton = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "components", "ClipboardButton.tsx"));
+                        string stylesheet = File.ReadAllText(Path.Combine(repositoryRoot, "dashboard", "src", "index.css"));
+
+                        Contains(chatPage, "PromptPreviewPanel", "Prompt preview should render an interactive field panel.");
+                        Contains(chatPage, "Copy effective system prompt", "Effective system prompt should have a copy button.");
+                        Contains(chatPage, "Copy database context prompt", "Database context prompt should have a copy button.");
+                        Contains(chatPage, "<ClipboardButton text={field.Text}", "Prompt preview fields should use the shared clipboard button.");
+                        Contains(clipboardButton, "window.isSecureContext", "Clipboard button should use async clipboard only on secure origins.");
+                        Contains(clipboardButton, "fallbackCopy(text)", "Clipboard button should support non-secure HTTP origins.");
+                        Contains(stylesheet, ".prompt-preview-field", "Prompt preview fields should be styled.");
+                        Contains(stylesheet, ".icon-action.copied", "Copied state should use the shared green checkmark styling.");
+                        return Task.CompletedTask;
+                    }),
                     Case("DashboardApiContract", "ChatDefaultProviderIgnoresStaleSettings", "Chat default provider ignores stale settings values", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();

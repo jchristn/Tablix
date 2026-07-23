@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import ClipboardButton from '../components/ClipboardButton';
 import { translateTooltip } from '../i18n';
 import type { AmbiguitySignal, ChatMessageRequest, ChatOptionsResponse, ChatPromptPreviewResponse, ChatRequest, ChatResponseResult, ChatStreamEvent, ChatTelemetry, ChatToolCall, DatabaseDetail, SettingsReadResponse, VerifiedAnswer } from '../types';
 
@@ -17,6 +18,7 @@ interface ChatUiMessage {
   ExecutionPath: string | null;
   CapabilityNotice: string | null;
   LocalOnly?: boolean;
+  PromptPreview?: ChatPromptPreviewResponse | null;
 }
 
 interface ParsedSseFrame {
@@ -28,6 +30,11 @@ interface SlashCommandDefinition {
   Command: string;
   Label: string;
   Description: string;
+}
+
+interface PromptPreviewLocalMessage {
+  Content: string;
+  Preview: ChatPromptPreviewResponse | null;
 }
 
 const slashCommands: SlashCommandDefinition[] = [
@@ -206,7 +213,8 @@ export default function ChatPage() {
     }
 
     if (command === '/prompt') {
-      appendLocalAssistantMessage(await buildPromptPreviewMessage());
+      const promptMessage = await buildPromptPreviewMessage();
+      appendLocalAssistantMessage(promptMessage.Content, promptMessage.Preview);
       return;
     }
 
@@ -373,7 +381,7 @@ export default function ChatPage() {
     resetConversation();
   }
 
-  function appendLocalAssistantMessage(content: string) {
+  function appendLocalAssistantMessage(content: string, promptPreview: ChatPromptPreviewResponse | null = null) {
     const message: ChatUiMessage = {
       Id: crypto.randomUUID(),
       Role: 'assistant',
@@ -385,6 +393,7 @@ export default function ChatPage() {
       ExecutionPath: null,
       CapabilityNotice: null,
       LocalOnly: true,
+      PromptPreview: promptPreview,
     };
 
     stickToBottomRef.current = true;
@@ -433,9 +442,9 @@ export default function ChatPage() {
     });
   }
 
-  async function buildPromptPreviewMessage() {
-    if (!databaseId) return '### Prompt Preview\n\nNo database is selected.';
-    if (!providerId) return '### Prompt Preview\n\nNo provider is selected.';
+  async function buildPromptPreviewMessage(): Promise<PromptPreviewLocalMessage> {
+    if (!databaseId) return { Content: '### Prompt Preview\n\nNo database is selected.', Preview: null };
+    if (!providerId) return { Content: '### Prompt Preview\n\nNo provider is selected.', Preview: null };
 
     const request: ChatRequest = {
       DatabaseId: databaseId,
@@ -452,18 +461,18 @@ export default function ChatPage() {
 
       if (response.status === 401) {
         navigate('/login');
-        return '### Prompt Preview\n\nSign in is required to inspect the prompt.';
+        return { Content: '### Prompt Preview\n\nSign in is required to inspect the prompt.', Preview: null };
       }
 
       if (!response.ok) {
         const message = await response.text();
-        return ['### Prompt Preview', '', message || 'Prompt preview could not be prepared.'].join('\n');
+        return { Content: ['### Prompt Preview', '', message || 'Prompt preview could not be prepared.'].join('\n'), Preview: null };
       }
 
       const preview: ChatPromptPreviewResponse = await response.json();
-      return buildPromptPreviewMarkdown(preview);
+      return { Content: buildPromptPreviewMarkdown(preview), Preview: preview };
     } catch {
-      return '### Prompt Preview\n\nCould not connect to the server.';
+      return { Content: '### Prompt Preview\n\nCould not connect to the server.', Preview: null };
     }
   }
 
@@ -610,6 +619,7 @@ export default function ChatPage() {
                       </div>
                     )
                   }
+                  {message.PromptPreview && <PromptPreviewPanel preview={message.PromptPreview} />}
                   {message.ToolCalls.length > 0 && (
                     <ToolCallList
                       toolCalls={message.ToolCalls}
@@ -944,8 +954,6 @@ function buildContextUsageMarkdown({
 }
 
 function buildPromptPreviewMarkdown(preview: ChatPromptPreviewResponse) {
-  const systemPrompt = preview.SystemPrompt || '(empty)';
-  const contextPrompt = preview.ContextPrompt || '(empty)';
   const rows: Array<[string, string]> = [
     ['Database', inlineCode(preview.DatabaseId || 'n/a')],
     ['Provider', inlineCode(preview.ProviderId || 'n/a')],
@@ -963,13 +971,42 @@ function buildPromptPreviewMarkdown(preview: ChatPromptPreviewResponse) {
     '| Key | Value |',
     '| --- | --- |',
     ...rows.map(([key, value]) => markdownTableRow(key, value)),
-    '',
-    '#### Effective System Prompt',
-    fencedMarkdownBlock(systemPrompt),
-    '',
-    '#### Database Context Prompt',
-    fencedMarkdownBlock(contextPrompt),
   ].join('\n');
+}
+
+function PromptPreviewPanel({ preview }: { preview: ChatPromptPreviewResponse }) {
+  const fields = [
+    {
+      Key: 'system',
+      Label: 'Effective System Prompt',
+      Text: preview.SystemPrompt || '',
+      EmptyText: '(empty)',
+      CopyTitle: 'Copy effective system prompt',
+      CopyLabel: 'Copy effective system prompt',
+    },
+    {
+      Key: 'context',
+      Label: 'Database Context Prompt',
+      Text: preview.ContextPrompt || '',
+      EmptyText: '(empty)',
+      CopyTitle: 'Copy database context prompt',
+      CopyLabel: 'Copy database context prompt',
+    },
+  ];
+
+  return (
+    <div className="prompt-preview-fields">
+      {fields.map(field => (
+        <section className="prompt-preview-field" key={field.Key}>
+          <div className="prompt-preview-field-header">
+            <h4>{field.Label}</h4>
+            <ClipboardButton text={field.Text} title={field.CopyTitle} label={field.CopyLabel} />
+          </div>
+          <pre><code>{field.Text || field.EmptyText}</code></pre>
+        </section>
+      ))}
+    </div>
+  );
 }
 
 function markdownTableRow(key: string, value: string) {
@@ -991,14 +1028,6 @@ function plainTableCell(value: string | number | null) {
 
 function escapeMarkdownLinkText(value: string) {
   return String(value).replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
-}
-
-function fencedMarkdownBlock(value: string) {
-  const content = value || '(empty)';
-  const runs = content.match(/`+/g)?.map(run => run.length) || [];
-  const fenceLength = Math.max(3, ...runs.map(length => length + 1));
-  const fence = '`'.repeat(fenceLength);
-  return `${fence}\n${content}\n${fence}`;
 }
 
 function estimateTokens(characters: number) {

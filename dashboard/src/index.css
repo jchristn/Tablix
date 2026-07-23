@@ -1117,6 +1117,57 @@ tr:hover {
   padding: 0;
 }
 
+.prompt-preview-fields {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.prompt-preview-field {
+  min-width: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background-color: var(--bg-secondary);
+  overflow: hidden;
+}
+
+.prompt-preview-field-header {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 9px 7px 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.prompt-preview-field-header h4 {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.prompt-preview-field pre {
+  max-height: min(420px, 52vh);
+  margin: 0;
+  overflow: auto;
+  white-space: pre;
+  background-color: var(--bg-tertiary);
+  padding: 10px;
+}
+
+.prompt-preview-field code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
 .markdown-body table {
   display: block;
   max-width: 100%;
