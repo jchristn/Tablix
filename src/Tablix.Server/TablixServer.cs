@@ -561,6 +561,13 @@ namespace Tablix.Server
                     .WithResponse(200, OpenApiResponseMetadata.Json<ChatOptionsResponse>("Chat database and provider options"))
                     .WithSecurity("Bearer", Array.Empty<string>()), true);
 
+            rest.Post<ChatRequest>("/v1/chat/prompt", _ChatHandler.PromptPreviewAsync,
+                api => api.WithTag("Chat").WithSummary("Preview the prepared chat prompt")
+                    .WithRequestBody(OpenApiRequestBodyMetadata.Json<ChatRequest>("Chat prompt preview request", true))
+                    .WithResponse(200, OpenApiResponseMetadata.Json<ChatPromptPreviewResponse>("Prepared chat prompt"))
+                    .WithResponse(404, OpenApiResponseMetadata.NotFound("Database or provider not found"))
+                    .WithSecurity("Bearer", Array.Empty<string>()), true);
+
             rest.Post<ChatRequest>("/v1/chat", _ChatHandler.ChatAsync,
                 api => api.WithTag("Chat").WithSummary("Send a non-streaming chat message")
                     .WithRequestBody(OpenApiRequestBodyMetadata.Json<ChatRequest>("Chat request", true))

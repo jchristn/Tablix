@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import ActionMenu, { EllipsisIcon, openActionMenuFromButton, type ActionMenuState } from '../components/ActionMenu';
 import ConfirmDialog from '../components/ConfirmDialog';
@@ -40,6 +40,8 @@ const emptyProvider: ModelProviderUpdate = {
 
 export default function ModelsPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const routedProviderIdRef = useRef<string | null>(null);
   const [models, setModels] = useState<ModelProviderSummary[]>([]);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -52,6 +54,31 @@ export default function ModelsPage() {
   const [deleteTarget, setDeleteTarget] = useState<ModelProviderSummary | null>(null);
 
   useEffect(() => { loadModels(); }, []);
+  useEffect(() => {
+    const routedProviderId = searchParams.get('provider');
+    if (!routedProviderId) {
+      routedProviderIdRef.current = null;
+      return;
+    }
+
+    if (routedProviderIdRef.current === routedProviderId || models.length === 0) return;
+    if (!models.some(model => model.Id === routedProviderId)) return;
+
+    routedProviderIdRef.current = routedProviderId;
+    async function openRoutedProvider(providerId: string) {
+      const response = await apiFetch(`/v1/model/${providerId}`);
+      if (response.status === 401) { navigate('/login'); return; }
+      if (!response.ok) { setError('Failed to load provider.'); return; }
+
+      const data: ModelProviderRead = await response.json();
+      setProvider({ ...data, ApiKey: '', ClearApiKey: false });
+      setEditing(true);
+      setTestResult(null);
+      setModalOpen(true);
+    }
+
+    void openRoutedProvider(routedProviderId);
+  }, [models, navigate, searchParams]);
 
   async function loadModels() {
     try {

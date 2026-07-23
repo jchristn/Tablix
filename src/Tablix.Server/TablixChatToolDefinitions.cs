@@ -76,7 +76,7 @@ namespace Tablix.Server
 
             return ToolDefinition.Function(
                 ExecuteQueryToolName,
-                "Execute one permitted SQL statement against the selected database when the user asks for database data, database contents, row examples, counts, totals, or an explicit database action. Call this tool instead of merely returning SQL or asking the user to run SQL when execution can answer the user. Return SQL text only when the user explicitly asks for SQL only or execution is unavailable.",
+                "Execute one permitted SQL statement against the selected database when the user asks for database data, database contents, row examples, counts, totals, latest/top records, purchases, spending, or an explicit database action. Call this tool instead of merely returning SQL or asking the user to run SQL when execution can answer the user. Return SQL text only when the user explicitly asks for SQL only or execution is unavailable. Use exact table and column names from the context. For counts, use COUNT(*) with a clear alias. For parent/detail questions such as recent orders plus purchased items, limit the parent rows in a CTE or subquery before joining detail rows, and aggregate child rows when one result row per parent is expected. For relative date windows on static sample data, anchor to the latest relevant date in the database if the real current date would return no useful rows.",
                 parameters);
         }
 

@@ -1071,6 +1071,26 @@ namespace Test.Shared
                                 NotNull(result.Data, "Result data should not be null.");
                             }).ConfigureAwait(false);
                     }),
+                    Case("SqliteAdvanced", "JoinedDuplicateKeysReturnRows", "SQLite joined query results can repeat key columns", async ct =>
+                    {
+                        await WithCustomSqliteDatabaseAsync(
+                            "CREATE TABLE parent (Id INTEGER PRIMARY KEY, Name TEXT NOT NULL);"
+                            + "CREATE TABLE child (Id INTEGER PRIMARY KEY, ParentId INTEGER NOT NULL REFERENCES parent(Id), Name TEXT NOT NULL);"
+                            + "INSERT INTO parent (Id, Name) VALUES (1, 'Order 1');"
+                            + "INSERT INTO child (Id, ParentId, Name) VALUES (1, 1, 'Item A'), (2, 1, 'Item B');",
+                            async entry =>
+                            {
+                                SqliteCrawler crawler = new SqliteCrawler();
+                                QueryResult result = await crawler.ExecuteQueryAsync(
+                                    entry,
+                                    "SELECT p.Id AS ParentId, p.Name AS ParentName, c.Name AS ChildName FROM parent p JOIN child c ON c.ParentId = p.Id ORDER BY c.Id",
+                                    ct).ConfigureAwait(false);
+
+                                True(result.Success, "Joined query should succeed.");
+                                Equal(2, result.RowsReturned, "Expected repeated parent row once per child.");
+                                NotNull(result.Data, "Result data should not be null.");
+                            }).ConfigureAwait(false);
+                    }),
                     Case("SqliteAdvanced", "InsertStatementReturnsSuccess", "SQLite INSERT statement executes successfully", async ct =>
                     {
                         await WithCustomSqliteDatabaseAsync(
@@ -1492,6 +1512,31 @@ namespace Test.Shared
                         ChatRequest request = new ChatRequest();
                         request.Messages = null;
                         Equal(0, request.Messages.Count, "Messages should become empty list.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("ModelGuards", "ChatPromptPreviewSerializes", "Chat prompt preview serializes prompts and estimates", ct =>
+                    {
+                        ChatPromptPreviewResponse response = new ChatPromptPreviewResponse
+                        {
+                            Success = true,
+                            DatabaseId = "db_sample_sqlite",
+                            ProviderId = "provider_ollama_local",
+                            Model = "gemma3:4b",
+                            SystemPrompt = "System prompt",
+                            ContextPrompt = "Context prompt",
+                            SystemPromptCharacters = 13,
+                            ContextPromptCharacters = 14,
+                            SystemPromptEstimatedTokens = 4,
+                            ContextPromptEstimatedTokens = 4,
+                            ConversationMessages = 2
+                        };
+
+                        string json = Serializer.SerializeJson(response, false);
+                        Contains(json, "\"SystemPrompt\":\"System prompt\"", "System prompt should serialize.");
+                        Contains(json, "\"ContextPrompt\":\"Context prompt\"", "Context prompt should serialize.");
+                        Contains(json, "\"SystemPromptEstimatedTokens\":4", "System prompt tokens should serialize.");
+                        Contains(json, "\"ContextPromptEstimatedTokens\":4", "Context prompt tokens should serialize.");
+                        Contains(json, "\"ConversationMessages\":2", "Conversation message count should serialize.");
                         return Task.CompletedTask;
                     }),
                     Case("ModelGuards", "CrawlProgressEventSerializesTerminalDetail", "Crawl progress event serializes terminal status and final detail", ct =>
@@ -2236,7 +2281,8 @@ namespace Test.Shared
                         string buildDashboard = File.ReadAllText(Path.Combine(repositoryRoot, "build-dashboard.bat"));
                         string serverDockerfile = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Dockerfile"));
                         string constants = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Core", "Helpers", "Constants.cs"));
-                        string oldCloudBuilderName = "cloud-" + "jchristn77-" + "jchristn77";
+                        string dockerCloudBuilderRef = "jchristn77/jchristn77";
+                        string dockerCloudBuilderName = "cloud-" + "jchristn77-" + "jchristn77";
                         string builderArgument = "-" + "-builder";
                         List<string> projectFiles = Directory
                             .GetFiles(Path.Combine(repositoryRoot, "src"), "*.csproj", SearchOption.AllDirectories)
@@ -2248,7 +2294,7 @@ namespace Test.Shared
                         Contains(readme, "jchristn77/tablix-server:v0.3.0", "README server image examples should use v0.3.0.");
                         Contains(readme, "jchristn77/tablix-ui:v0.3.0", "README UI image examples should use v0.3.0.");
                         Contains(readme, "build-all.bat v0.3.0", "README build instructions should use v0.3.0.");
-                        DoesNotContain(readme, oldCloudBuilderName, "README build instructions should not require a hard-coded cloud builder.");
+                        DoesNotContain(readme, dockerCloudBuilderName, "README build instructions should not require a hard-coded cloud builder.");
                         DoesNotContain(readme, "v0.2.0", "README current-facing release references should not stay on v0.2.0.");
 
                         Contains(restApi, "\"Version\": \"0.3.0\"", "REST API health example should use product version 0.3.0.");
@@ -2265,10 +2311,13 @@ namespace Test.Shared
                         Contains(buildAll, "Example: build-all.bat v0.3.0", "Build-all script example should use v0.3.0.");
                         Contains(buildServer, "Example: build-server.bat v0.3.0", "Build-server script example should use v0.3.0.");
                         Contains(buildDashboard, "Example: build-dashboard.bat v0.3.0", "Build-dashboard script example should use v0.3.0.");
-                        DoesNotContain(buildServer, oldCloudBuilderName, "Build-server should not hard-code a Docker cloud builder.");
-                        DoesNotContain(buildDashboard, oldCloudBuilderName, "Build-dashboard should not hard-code a Docker cloud builder.");
-                        DoesNotContain(buildServer, builderArgument, "Build-server should use the active Docker Buildx builder.");
-                        DoesNotContain(buildDashboard, builderArgument, "Build-dashboard should use the active Docker Buildx builder.");
+                        Contains(buildAll, dockerCloudBuilderName, "Build-all should report the configured Docker Build Cloud builder.");
+                        Contains(buildServer, dockerCloudBuilderRef, "Build-server should connect the requested Docker Build Cloud builder.");
+                        Contains(buildServer, dockerCloudBuilderName, "Build-server should use the requested Docker Build Cloud builder.");
+                        Contains(buildDashboard, dockerCloudBuilderRef, "Build-dashboard should connect the requested Docker Build Cloud builder.");
+                        Contains(buildDashboard, dockerCloudBuilderName, "Build-dashboard should use the requested Docker Build Cloud builder.");
+                        Contains(buildServer, builderArgument, "Build-server should pass the Docker Build Cloud builder to buildx.");
+                        Contains(buildDashboard, builderArgument, "Build-dashboard should pass the Docker Build Cloud builder to buildx.");
                         Contains(buildServer, "if errorlevel 1 (", "Build-server should stop when docker buildx fails.");
                         Contains(buildDashboard, "if errorlevel 1 (", "Build-dashboard should stop when docker buildx fails.");
                         Contains(buildServer, "exit /b %errorlevel%", "Build-server should propagate docker buildx failures.");
@@ -2805,6 +2854,7 @@ namespace Test.Shared
                 new ApiRouteContract("POST", "/v1/database/{id}/crawl/stream", "rest.Post(\"/v1/database/{id}/crawl/stream\"", "/crawl/stream", "/v1/database/{id}/crawl/stream"),
                 new ApiRouteContract("POST", "/v1/database/{id}/query", "rest.Post<QueryRequest>(\"/v1/database/{id}/query\"", "/query`", "/v1/database/{id}/query"),
                 new ApiRouteContract("GET", "/v1/chat/options", "rest.Get(\"/v1/chat/options\"", "/v1/chat/options", "/v1/chat/options"),
+                new ApiRouteContract("POST", "/v1/chat/prompt", "rest.Post<ChatRequest>(\"/v1/chat/prompt\"", "/v1/chat/prompt", "/v1/chat/prompt"),
                 new ApiRouteContract("POST", "/v1/chat", "rest.Post<ChatRequest>(\"/v1/chat\"", "apiFetch('/v1/chat',", "/v1/chat"),
                 new ApiRouteContract("POST", "/v1/chat/stream", "rest.Post<ChatRequest>(\"/v1/chat/stream\"", "/v1/chat/stream", "/v1/chat/stream"),
                 new ApiRouteContract("GET", "/v1/settings", "rest.Get(\"/v1/settings\"", "apiFetch('/v1/settings')", "/v1/settings"),

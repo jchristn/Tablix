@@ -1005,6 +1005,12 @@ tr:hover {
   padding: 10px;
 }
 
+.chat-message.assistant .markdown-body pre {
+  max-height: min(420px, 52vh);
+  overflow: auto;
+  white-space: pre;
+}
+
 .markdown-body pre code {
   background: transparent;
   padding: 0;
@@ -1028,6 +1034,21 @@ tr:hover {
 
 .markdown-body th {
   background-color: var(--bg-secondary);
+}
+
+.chat-message.assistant .markdown-body td:first-child {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.chat-message.assistant .markdown-body a {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.chat-message.assistant .markdown-body a:hover {
+  text-decoration: underline;
 }
 
 .assistant-waiting {
@@ -1412,6 +1433,48 @@ tr:hover {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   padding: 18px;
+}
+
+.record-view-modal {
+  width: min(960px, calc(100vw - 48px));
+  min-width: min(560px, calc(100vw - 48px));
+  min-height: min(320px, calc(100vh - 48px));
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  resize: both;
+}
+
+.record-view-table {
+  table-layout: fixed;
+}
+
+.record-view-table td {
+  vertical-align: top;
+}
+
+.record-view-label-cell {
+  width: 190px;
+  font-weight: 600;
+}
+
+.record-view-value-cell {
+  min-width: 0;
+}
+
+.record-view-scroll-value {
+  width: 100%;
+  max-height: min(320px, 42vh);
+  margin: 0;
+  overflow: auto;
+  white-space: pre;
+  color: var(--text-primary);
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .modal-header {

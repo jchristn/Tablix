@@ -111,8 +111,7 @@ namespace Tablix.Core.DatabaseDrivers
                 {
                     using (SqliteDataReader reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false))
                     {
-                        DataTable dataTable = new DataTable("Results");
-                        dataTable.Load(reader);
+                        DataTable dataTable = await LoadResultTableAsync(reader, token).ConfigureAwait(false);
 
                         stopwatch.Stop();
 
@@ -154,6 +153,43 @@ namespace Tablix.Core.DatabaseDrivers
                 throw new ArgumentException("Filename is required for SQLite databases.");
 
             return "Data Source=" + entry.Filename;
+        }
+
+        private static async Task<DataTable> LoadResultTableAsync(SqliteDataReader reader, CancellationToken token)
+        {
+            DataTable dataTable = new DataTable("Results");
+            int fieldCount = reader.FieldCount;
+            HashSet<string> columnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < fieldCount; i++)
+            {
+                string columnName = GetUniqueColumnName(reader.GetName(i), i, columnNames);
+                dataTable.Columns.Add(columnName, typeof(object));
+            }
+
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                object[] values = new object[fieldCount];
+                reader.GetValues(values);
+                dataTable.Rows.Add(values);
+            }
+
+            return dataTable;
+        }
+
+        private static string GetUniqueColumnName(string name, int index, HashSet<string> existing)
+        {
+            string baseName = String.IsNullOrWhiteSpace(name) ? "Column" + (index + 1) : name;
+            string candidate = baseName;
+            int suffix = 1;
+
+            while (!existing.Add(candidate))
+            {
+                suffix++;
+                candidate = baseName + "_" + suffix;
+            }
+
+            return candidate;
         }
 
         private async Task<List<string>> GetTableNamesAsync(SqliteConnection connection, CancellationToken token)

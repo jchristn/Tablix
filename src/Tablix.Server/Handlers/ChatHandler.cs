@@ -351,11 +351,49 @@ namespace Tablix.Server.Handlers
             return null;
         }
 
+        /// <summary>
+        /// POST /v1/chat/prompt - preview the prepared chat prompt.
+        /// </summary>
+        public async Task<object> PromptPreviewAsync(AppRequest req)
+        {
+            ChatRequest request = req.GetData<ChatRequest>();
+            ChatPreparation preparation = await PreparePromptPreviewAsync(req, request).ConfigureAwait(false);
+            if (preparation.Error != null) return preparation.Error;
+
+            string systemPrompt = preparation.SystemPrompt ?? String.Empty;
+            string contextPrompt = preparation.Prompt ?? String.Empty;
+
+            return new ChatPromptPreviewResponse
+            {
+                Success = true,
+                DatabaseId = preparation.Database.Id,
+                ProviderId = preparation.Provider.Id,
+                Model = preparation.Provider.Model,
+                SystemPrompt = systemPrompt,
+                ContextPrompt = contextPrompt,
+                SystemPromptCharacters = systemPrompt.Length,
+                ContextPromptCharacters = contextPrompt.Length,
+                SystemPromptEstimatedTokens = EstimateTokens(systemPrompt),
+                ContextPromptEstimatedTokens = EstimateTokens(contextPrompt),
+                ConversationMessages = request?.Messages?.Count ?? 0
+            };
+        }
+
         #endregion
 
         #region Private-Methods
 
         private async Task<ChatPreparation> PrepareChatAsync(AppRequest req, ChatRequest request)
+        {
+            return await PrepareChatAsync(req, request, true).ConfigureAwait(false);
+        }
+
+        private async Task<ChatPreparation> PreparePromptPreviewAsync(AppRequest req, ChatRequest request)
+        {
+            return await PrepareChatAsync(req, request, false).ConfigureAwait(false);
+        }
+
+        private async Task<ChatPreparation> PrepareChatAsync(AppRequest req, ChatRequest request, bool requireUserMessage)
         {
             if (request == null)
             {
@@ -369,7 +407,7 @@ namespace Tablix.Server.Handlers
                 return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.BadRequest, "DatabaseId is required."));
             }
 
-            if (request.Messages == null || request.Messages.Count == 0 || !request.Messages.Any(message => String.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase)))
+            if (requireUserMessage && (request.Messages == null || request.Messages.Count == 0 || !request.Messages.Any(message => String.Equals(message.Role, "user", StringComparison.OrdinalIgnoreCase))))
             {
                 req.Http.Response.StatusCode = 400;
                 return ChatPreparation.Fail(new ApiErrorResponse(ApiErrorEnum.BadRequest, "At least one user message is required."));
@@ -740,6 +778,10 @@ namespace Tablix.Server.Handlers
             builder.AppendLine("Do not tell the user they can run a query when they asked for the answer; Tablix will execute permitted SQL and provide results. Return SQL text only when the user explicitly asks for SQL only, asks what query to use, or execution is unavailable or denied.");
             builder.AppendLine("Never fabricate database contents or result values. If no successful tool result is available for a data question, say the data could not be verified.");
             builder.AppendLine("If the user names a table, use that exact table when it exists; do not silently substitute a different table. If the named table is not present, explain the closest match or ask for clarification.");
+            builder.AppendLine("Schema/context questions such as what database or tables are visible can be answered from the metadata in this prompt. Questions about actual row values, row examples, counts, totals, most recent/top records, or purchases require query execution.");
+            builder.AppendLine("For count questions, use COUNT(*) with a clear alias. For table-content questions, summarize purpose and columns from schema/context; if the user asks for example rows, execute a small SELECT with explicit columns and a LIMIT.");
+            builder.AppendLine("When answering parent/child questions such as recent orders plus what was purchased, first limit the parent rows in a CTE or subquery, then join child/detail tables. If the user asks for one answer row per parent record, aggregate child rows after the parent limit instead of applying LIMIT to joined detail rows.");
+            builder.AppendLine("For relative date questions on static sample data, anchor the period to the latest relevant date present in the database when using the real current date would return no useful rows, and state the anchor date used.");
             builder.AppendLine("When context update tools are available, call them to persist durable database-wide or table-specific insights, relationships, naming conventions, or corrections that will help future conversations. Use the table context tool for facts about one exact table and the database context tool for database-wide facts.");
             builder.AppendLine("Context updates must be concise and reusable. Use append for incremental observations. Use replace only when explicitly asked to rewrite saved context or when producing a curated full replacement.");
             builder.AppendLine("Do not persist secrets, credentials, raw result rows, sensitive personal data, one-off answer values, or unsupported guesses. Clearly label inferred relationships.");
@@ -2081,8 +2123,12 @@ namespace Tablix.Server.Handlers
             builder.AppendLine("When Preserve explicit SQL-only requests is true, SQL-only requests must use Intent SqlOnlyRequest and Execute false.");
             builder.AppendLine("When Execute is false, Query must be null or empty.");
             builder.AppendLine("Use the selected database ID only. Do not include semicolons.");
+            builder.AppendLine("For counts, prefer SELECT COUNT(*) with a clear alias.");
+            builder.AppendLine("For parent/detail requests such as recent orders and purchased items, limit parent rows in a CTE or subquery before joining detail rows. Aggregate detail rows when the user expects one row per parent.");
+            builder.AppendLine("For relative date windows on static sample data, use the latest relevant date in the database as the anchor if filtering against the real current date would return no useful rows.");
             builder.AppendLine("Examples:");
             builder.AppendLine("{\"Intent\":\"DataAnswerRequest\",\"Execute\":true,\"Query\":\"SELECT COUNT(*) AS UserCount FROM users\",\"Reason\":\"The user asked for a user count.\"}");
+            builder.AppendLine("{\"Intent\":\"DataAnswerRequest\",\"Execute\":true,\"Query\":\"WITH last_orders AS (SELECT Id, UserId, OrderDate FROM orders ORDER BY OrderDate DESC, Id DESC LIMIT 3) SELECT o.Id AS OrderId, o.OrderDate, u.Name AS UserName, group_concat(li.ProductName || ' x' || li.Quantity, ', ') AS Items FROM last_orders o JOIN users u ON u.Id = o.UserId LEFT JOIN line_items li ON li.OrderId = o.Id GROUP BY o.Id, o.OrderDate, u.Name ORDER BY o.OrderDate DESC, o.Id DESC\",\"Reason\":\"The user asked who placed the most recent three orders and what they bought.\"}");
             builder.AppendLine("{\"Intent\":\"SqlOnlyRequest\",\"Execute\":false,\"Query\":null,\"Reason\":\"The user asked for SQL text instead of execution.\"}");
             builder.AppendLine("{\"Intent\":\"SchemaQuestion\",\"Execute\":false,\"Query\":null,\"Reason\":\"The user asked about table structure, not row data.\"}");
             return builder.ToString();

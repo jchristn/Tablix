@@ -240,6 +240,23 @@ Paginated responses use `EnumerationResult<T>` fields:
 | `PreferNativeToolCalls` | boolean or null | Optional per-request override for native PolyPrompt tool preference |
 | `FallbackWhenNativeToolNotCalled` | boolean or null | Optional per-request override for server fallback when native tools are unavailable or omitted |
 
+`ChatPromptPreviewResponse` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Success` | boolean | Whether prompt preview was prepared |
+| `DatabaseId` | string | Selected database ID |
+| `ProviderId` | string | Selected provider ID |
+| `Model` | string or null | Provider model |
+| `SystemPrompt` | string or null | Effective system prompt sent to the provider |
+| `ContextPrompt` | string or null | Database/schema/context prompt sent with the conversation |
+| `SystemPromptCharacters` | integer | System prompt character count |
+| `ContextPromptCharacters` | integer | Context prompt character count |
+| `SystemPromptEstimatedTokens` | integer | Estimated system prompt tokens |
+| `ContextPromptEstimatedTokens` | integer | Estimated context prompt tokens |
+| `ConversationMessages` | integer | Conversation messages included in the context prompt |
+| `Error` | string or null | Error when unsuccessful |
+
 `ChatTelemetry` fields:
 
 | Field | Type | Description |
@@ -1385,6 +1402,12 @@ Return databases and enabled model providers for the dashboard Chat page.
   ]
 }
 ```
+
+### `POST /v1/chat/prompt`
+
+Preview the effective prompt Tablix prepares for chat without calling the model. The request body is the same shape as `POST /v1/chat`; unlike a real chat request, `Messages` may be empty.
+
+**Response** `200 OK` - returns `ChatPromptPreviewResponse`.
 
 ### `POST /v1/chat`
 

@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import { translateTooltip } from '../i18n';
-import type { AmbiguitySignal, ChatMessageRequest, ChatOptionsResponse, ChatRequest, ChatResponseResult, ChatStreamEvent, ChatTelemetry, ChatToolCall, DatabaseDetail, SettingsReadResponse, VerifiedAnswer } from '../types';
+import type { AmbiguitySignal, ChatMessageRequest, ChatOptionsResponse, ChatPromptPreviewResponse, ChatRequest, ChatResponseResult, ChatStreamEvent, ChatTelemetry, ChatToolCall, DatabaseDetail, SettingsReadResponse, VerifiedAnswer } from '../types';
 
 interface ChatUiMessage {
   Id: string;
@@ -34,6 +34,7 @@ const slashCommands: SlashCommandDefinition[] = [
   { Command: '/help', Label: 'Help', Description: 'Show available chat commands.' },
   { Command: '/clear', Label: 'Clear', Description: 'Clear the visible conversation and the history sent to the model.' },
   { Command: '/context', Label: 'Context', Description: 'Show what context the next chat request will use.' },
+  { Command: '/prompt', Label: 'Prompt', Description: 'Show the prepared system and database context prompts.' },
 ];
 
 export default function ChatPage() {
@@ -201,6 +202,11 @@ export default function ChatPage() {
 
     if (command === '/context') {
       appendLocalAssistantMessage(await buildContextUsageMessage());
+      return;
+    }
+
+    if (command === '/prompt') {
+      appendLocalAssistantMessage(await buildPromptPreviewMessage());
       return;
     }
 
@@ -425,6 +431,40 @@ export default function ChatPage() {
       streaming,
       loadWarning,
     });
+  }
+
+  async function buildPromptPreviewMessage() {
+    if (!databaseId) return '### Prompt Preview\n\nNo database is selected.';
+    if (!providerId) return '### Prompt Preview\n\nNo provider is selected.';
+
+    const request: ChatRequest = {
+      DatabaseId: databaseId,
+      ProviderId: providerId,
+      Messages: messages.filter(message => !message.LocalOnly).map(toRequestMessage),
+      Streaming: streaming,
+    };
+
+    try {
+      const response = await apiFetch('/v1/chat/prompt', {
+        method: 'POST',
+        body: JSON.stringify(request),
+      });
+
+      if (response.status === 401) {
+        navigate('/login');
+        return '### Prompt Preview\n\nSign in is required to inspect the prompt.';
+      }
+
+      if (!response.ok) {
+        const message = await response.text();
+        return ['### Prompt Preview', '', message || 'Prompt preview could not be prepared.'].join('\n');
+      }
+
+      const preview: ChatPromptPreviewResponse = await response.json();
+      return buildPromptPreviewMarkdown(preview);
+    } catch {
+      return '### Prompt Preview\n\nCould not connect to the server.';
+    }
   }
 
   function handleDatabaseChanged(nextDatabaseId: string) {
@@ -840,49 +880,125 @@ function buildContextUsageMarkdown({
   const includedTables = maxContextTables == null ? null : Math.min(tables.length, maxContextTables);
   const omittedTables = includedTables == null ? null : Math.max(0, tables.length - includedTables);
   const databaseLabel = database?.Name || database?.DatabaseName || detail?.DatabaseName || database?.Filename || database?.Id || 'None';
-  const providerLabel = provider ? `${provider.Name || provider.Id} (${provider.Model || provider.Type})` : 'None';
+  const databaseValue = database?.Id
+    ? `${markdownLink(databaseLabel, `/databases/${encodeURIComponent(database.Id)}`)} (${inlineCode(database.Id)})`
+    : plainTableCell(databaseLabel);
+  const providerValue = provider
+    ? `${markdownLink(provider.Name || provider.Id, `/models?provider=${encodeURIComponent(provider.Id)}`)} (${plainTableCell(provider.Model || provider.Type)})`
+    : 'None';
+  const rows: Array<[string, string]> = [
+    ['Database', databaseValue],
+    ['Provider', providerValue],
+    ['Streaming', streaming ? 'On' : 'Off'],
+    ['Conversation history messages', `${formatNumber(modelHistory.length)} (${formatNumber(userMessages)} user, ${formatNumber(assistantMessages)} assistant)`],
+    ['Conversation history characters', formatNumber(historyChars)],
+    ['Conversation history token estimate', formatNumber(estimateTokens(historyChars))],
+    ['Saved database context', databaseContextChars > 0 ? 'Present' : 'None'],
+    ['Saved database context characters', formatNumber(databaseContextChars)],
+    ['Saved database context token estimate', formatNumber(estimateTokens(databaseContextChars))],
+  ];
 
   const lines = ['### Context Usage', ''];
   if (loadWarning) {
     lines.push(`> ${loadWarning}`, '');
   }
 
-  lines.push(
-    `- Database: ${databaseLabel}${database?.Id ? ` (\`${database.Id}\`)` : ''}`,
-    `- Provider: ${providerLabel}`,
-    `- Streaming: ${streaming ? 'on' : 'off'}`,
-    `- Conversation history sent with the next request: ${modelHistory.length} message(s) (${userMessages} user, ${assistantMessages} assistant), ${formatNumber(historyChars)} character(s), about ${formatNumber(estimateTokens(historyChars))} conversation token(s).`,
-    `- Saved database context: ${databaseContextChars > 0 ? `${formatNumber(databaseContextChars)} character(s), about ${formatNumber(estimateTokens(databaseContextChars))} token(s)` : 'none'}.`
-  );
-
   if (detail) {
-    lines.push(
-      `- Crawl state: ${detail.IsCrawled ? 'crawled' : 'degraded'}${detail.CrawlError ? ` (${detail.CrawlError})` : ''}.`,
-      `- Schema context: ${formatNumber(tables.length)} table(s) available.`
+    rows.push(
+      ['Crawl state', `${detail.IsCrawled ? 'Crawled' : 'Degraded'}${detail.CrawlError ? ` (${plainTableCell(detail.CrawlError)})` : ''}`],
+      ['Schema tables available', formatNumber(tables.length)]
     );
 
     if (maxContextTables != null && includedTables != null && omittedTables != null) {
-      lines.push(`- Prompt table limit: up to ${formatNumber(maxContextTables)} table(s); ${formatNumber(includedTables)} currently included and ${formatNumber(omittedTables)} omitted.`);
+      rows.push(
+        ['Prompt table limit', formatNumber(maxContextTables)],
+        ['Prompt tables included', formatNumber(includedTables)],
+        ['Prompt tables omitted', formatNumber(omittedTables)]
+      );
     }
 
-    lines.push(`- Table context: ${formatNumber(tablesWithContext)} of ${formatNumber(tables.length)} table(s), ${formatNumber(tableContextChars)} character(s), about ${formatNumber(estimateTokens(tableContextChars))} token(s).`);
+    rows.push(
+      ['Saved table context tables', `${formatNumber(tablesWithContext)} of ${formatNumber(tables.length)}`],
+      ['Saved table context characters', formatNumber(tableContextChars)],
+      ['Saved table context token estimate', formatNumber(estimateTokens(tableContextChars))]
+    );
   } else {
-    lines.push(`- Crawl state: ${database?.IsCrawled ? 'crawled' : 'degraded or unavailable'}.`);
+    rows.push(['Crawl state', database?.IsCrawled ? 'Crawled' : 'Degraded or unavailable']);
   }
 
   if (settings) {
-    lines.push(
-      `- Query tools: ${settings.Chat.Tools.Enabled ? 'enabled' : 'disabled'}; read-only execution is ${settings.Chat.Tools.AllowReadOnlyQueries ? 'allowed' : 'disabled'}.`,
-      `- Context update tools: ${settings.Chat.Tools.AllowContextUpdates ? 'enabled' : 'disabled'}.`
+    rows.push(
+      ['Query tools', settings.Chat.Tools.Enabled ? 'Enabled' : 'Disabled'],
+      ['Read-only execution', settings.Chat.Tools.AllowReadOnlyQueries ? 'Allowed' : 'Disabled'],
+      ['Context update tools', settings.Chat.Tools.AllowContextUpdates ? 'Enabled' : 'Disabled']
     );
   }
 
   if (provider) {
-    lines.push(`- Tool mode: ${provider.UseNativeToolCalls && provider.SupportsNativeToolCalls ? 'native tool calls' : 'server fallback/plain chat depending on request and settings'}.`);
+    rows.push(['Tool mode', provider.UseNativeToolCalls && provider.SupportsNativeToolCalls ? 'Native tool calls' : 'Server fallback/plain chat depending on request and settings']);
   }
 
+  lines.push('| Key | Value |', '| --- | --- |', ...rows.map(([key, value]) => markdownTableRow(key, value)));
   lines.push('', '`/clear` removes the visible conversation and the model-bound history used for the next request.');
   return lines.join('\n');
+}
+
+function buildPromptPreviewMarkdown(preview: ChatPromptPreviewResponse) {
+  const systemPrompt = preview.SystemPrompt || '(empty)';
+  const contextPrompt = preview.ContextPrompt || '(empty)';
+  const rows: Array<[string, string]> = [
+    ['Database', inlineCode(preview.DatabaseId || 'n/a')],
+    ['Provider', inlineCode(preview.ProviderId || 'n/a')],
+    ['Model', plainTableCell(preview.Model || 'n/a')],
+    ['Conversation messages included', formatNumber(preview.ConversationMessages)],
+    ['System prompt characters', formatNumber(preview.SystemPromptCharacters)],
+    ['System prompt token estimate', formatNumber(preview.SystemPromptEstimatedTokens)],
+    ['Database context prompt characters', formatNumber(preview.ContextPromptCharacters)],
+    ['Database context prompt token estimate', formatNumber(preview.ContextPromptEstimatedTokens)],
+  ];
+
+  return [
+    '### Prompt Preview',
+    '',
+    '| Key | Value |',
+    '| --- | --- |',
+    ...rows.map(([key, value]) => markdownTableRow(key, value)),
+    '',
+    '#### Effective System Prompt',
+    fencedMarkdownBlock(systemPrompt),
+    '',
+    '#### Database Context Prompt',
+    fencedMarkdownBlock(contextPrompt),
+  ].join('\n');
+}
+
+function markdownTableRow(key: string, value: string) {
+  return `| ${plainTableCell(key)} | ${value || 'n/a'} |`;
+}
+
+function markdownLink(label: string, href: string) {
+  return `[${escapeMarkdownLinkText(label)}](${href})`;
+}
+
+function inlineCode(value: string) {
+  return '`' + String(value).replace(/`/g, '\\`') + '`';
+}
+
+function plainTableCell(value: string | number | null) {
+  if (value == null) return 'n/a';
+  return String(value).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+}
+
+function escapeMarkdownLinkText(value: string) {
+  return String(value).replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+}
+
+function fencedMarkdownBlock(value: string) {
+  const content = value || '(empty)';
+  const runs = content.match(/`+/g)?.map(run => run.length) || [];
+  const fenceLength = Math.max(3, ...runs.map(length => length + 1));
+  const fence = '`'.repeat(fenceLength);
+  return `${fence}\n${content}\n${fence}`;
 }
 
 function estimateTokens(characters: number) {

@@ -6,9 +6,12 @@ if "%~1"=="" (
 )
 
 set "VERSION_TAG=%~1"
+set "DOCKER_BUILD_CLOUD_BUILDER=cloud-jchristn77-jchristn77"
 
 pushd "%~dp0" >nul
 if errorlevel 1 exit /b 1
+
+echo Using Docker Build Cloud builder %DOCKER_BUILD_CLOUD_BUILDER%.
 
 call build-dashboard.bat "%VERSION_TAG%"
 if errorlevel 1 (

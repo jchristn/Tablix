@@ -178,6 +178,21 @@ export interface ChatRequest {
   FallbackWhenNativeToolNotCalled?: boolean | null;
 }
 
+export interface ChatPromptPreviewResponse {
+  Success: boolean;
+  DatabaseId: string;
+  ProviderId: string;
+  Model: string | null;
+  SystemPrompt: string | null;
+  ContextPrompt: string | null;
+  SystemPromptCharacters: number;
+  ContextPromptCharacters: number;
+  SystemPromptEstimatedTokens: number;
+  ContextPromptEstimatedTokens: number;
+  ConversationMessages: number;
+  Error: string | null;
+}
+
 export interface ChatTelemetry {
   TimeToFirstTokenMs: number | null;
   TotalStreamingTimeMs: number | null;
