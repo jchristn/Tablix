@@ -2398,8 +2398,13 @@ namespace Test.Shared
                         Contains(modelsPage, "HealthHistogram", "Dashboard should expose model provider health history.");
                         Contains(modelsPage, "HealthStatusIcon", "Models table should render provider health as an icon.");
                         Contains(modelsPage, "model-health-inline", "Models table should keep health status and history in one row.");
+                        Contains(modelsPage, "openHealthDetails", "Models table health icon and histogram should open provider health details.");
+                        Contains(modelsPage, "OnOpenDetails", "Models table health histogram should be clickable.");
+                        Contains(modelsPage, "slice(Compact ? -10 : -72)", "Compact model health history should show the last ten samples.");
+                        Contains(modelsPage, "Newest sample is on the right", "Model health histogram should document newest-sample orientation.");
                         Contains(stylesheet, ".model-health-inline", "Models table health status/history row should be styled.");
                         Contains(stylesheet, "flex-wrap: nowrap", "Models table health status/history should not wrap.");
+                        Contains(stylesheet, "button.health-histogram", "Clickable health histograms should preserve chart styling.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "ReleaseVersion030Documented", "Release version 0.3.0 is reflected in docs, compose tags, package metadata, and product constants", ct =>

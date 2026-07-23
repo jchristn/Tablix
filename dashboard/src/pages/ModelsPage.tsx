@@ -252,6 +252,12 @@ export default function ModelsPage() {
     openEdit(model.Id);
   }
 
+  function openHealthDetails(model: ModelProviderSummary, event: React.MouseEvent<HTMLElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setHealthTarget(model);
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -296,15 +302,16 @@ export default function ModelsPage() {
                         className={`health-status-button ${health.Tone}`}
                         title={`${health.Label}: ${health.Title}`}
                         aria-label={`${health.Label}: ${health.Title}`}
-                        onClick={event => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setHealthTarget(model);
-                        }}
+                        onClick={event => openHealthDetails(model, event)}
                       >
                         <HealthStatusIcon Tone={health.Tone} />
                       </button>
-                      <HealthHistogram History={model.Health?.History || []} Compact={true} />
+                      <HealthHistogram
+                        History={model.Health?.History || []}
+                        Compact={true}
+                        Label={`Open health details for ${model.Name || model.Id}`}
+                        OnOpenDetails={event => openHealthDetails(model, event)}
+                      />
                     </div>
                   </td>
                   <td>{model.Enabled ? <span className="badge badge-success">Enabled</span> : <span className="badge badge-warning">Disabled</span>}</td>
@@ -603,25 +610,47 @@ function HealthConfigRow({ Label, Value }: { Label: string; Value: string }) {
   );
 }
 
-function HealthHistogram({ History, Compact = false }: { History: HealthCheckRecord[]; Compact?: boolean }) {
+function HealthHistogram({
+  History,
+  Compact = false,
+  Label = 'Health history',
+  OnOpenDetails,
+}: {
+  History: HealthCheckRecord[];
+  Compact?: boolean;
+  Label?: string;
+  OnOpenDetails?: (event: React.MouseEvent<HTMLButtonElement>) => void;
+}) {
   const records = (History || [])
     .slice()
     .sort((left, right) => new Date(left.TimestampUtc).getTime() - new Date(right.TimestampUtc).getTime())
-    .slice(Compact ? -18 : -72);
+    .slice(Compact ? -10 : -72);
+  const className = `health-histogram ${Compact ? 'compact' : ''}`;
+  const title = records.length > 0
+    ? `${records.length} recent health sample(s). Newest sample is on the right.`
+    : 'No health history.';
 
-  if (records.length === 0) {
-    return <div className={`health-histogram ${Compact ? 'compact' : ''}`}><span className="health-histogram-empty">No data</span></div>;
-  }
-
-  return (
-    <div className={`health-histogram ${Compact ? 'compact' : ''}`} aria-label="Health history">
-      {records.map((record, index) => (
+  const content = records.length === 0
+    ? <span className="health-histogram-empty">No data</span>
+    : records.map((record, index) => (
         <span
           key={`${record.TimestampUtc}-${index}`}
           className={`health-bar ${record.Success ? 'success' : 'failure'}`}
           title={`${formatTimestamp(record.TimestampUtc)} - ${record.Success ? 'Success' : 'Failure'}`}
         />
-      ))}
+      ));
+
+  if (OnOpenDetails) {
+    return (
+      <button type="button" className={className} aria-label={Label} title={title} onClick={OnOpenDetails}>
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <div className={className} aria-label={Label} title={title}>
+      {content}
     </div>
   );
 }
