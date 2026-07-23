@@ -26,7 +26,7 @@ Tablix is a database gateway for AI agents, connecting your databases through MC
     <img src="assets/ss4.png" alt="Tablix dashboard screenshot 4" />
   </p>
   <p>
-    <img src="assets/ss5.png" alt="Tablix chat verified answer screenshot" />
+    <img src="assets/ss5.png" alt="Tablix chat recent purchases verified answer screenshot" />
   </p>
 </details>
 
