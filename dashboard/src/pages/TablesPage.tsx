@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import ButtonBusyContent from '../components/ButtonBusyContent';
 import RecordViewModal, { isInteractiveRowClick, type RecordViewRow } from '../components/RecordViewModal';
 import type {
   BuildTableContextResponse,
@@ -334,11 +335,12 @@ export default function TablesPage() {
                       </td>
                       <td className="actions-column">
                         <button
-                          className="btn-secondary compact-button"
+                          className="btn-secondary compact-button table-build-action"
                           onClick={() => buildTableContext(table)}
                           disabled={!canBuild || !table.TableId || rowBuilding || buildingAll}
+                          title={rowBuilding ? 'Building table context' : 'Build table context'}
                         >
-                          {rowBuilding ? 'Building...' : 'Build Context'}
+                          <ButtonBusyContent Busy={rowBuilding} Label="Build Context" BusyLabel="Building table context" />
                         </button>
                       </td>
                     </tr>
@@ -359,11 +361,12 @@ export default function TablesPage() {
         Actions={viewTable?.TableId ? (
           <button
             type="button"
-            className="btn-primary"
+            className="btn-primary table-build-action"
             onClick={() => buildTableContext(viewTable)}
             disabled={!canBuild || buildingAll || buildingTableIds.has(viewTable.TableId)}
+            title={buildingTableIds.has(viewTable.TableId) ? 'Building table context' : 'Build table context'}
           >
-            {buildingTableIds.has(viewTable.TableId) ? 'Building...' : 'Build Context'}
+            <ButtonBusyContent Busy={buildingTableIds.has(viewTable.TableId)} Label="Build Context" BusyLabel="Building table context" />
           </button>
         ) : null}
       />

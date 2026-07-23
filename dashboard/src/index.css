@@ -289,6 +289,49 @@ tr:hover {
   font-size: 13px;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.button-busy-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+}
+
+.button-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: button-spinner-rotate 0.75s linear infinite;
+}
+
+.table-build-action {
+  width: 112px;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+@keyframes button-spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .row-actions-button {
   width: 30px;
   height: 30px;
@@ -599,6 +642,11 @@ tr:hover {
   table-layout: fixed;
 }
 
+.tables-page-table th.actions-column,
+.tables-page-table td.actions-column {
+  width: 148px;
+}
+
 .tables-page-table th:nth-child(1),
 .tables-page-table td:nth-child(1) {
   width: 130px;
@@ -747,9 +795,9 @@ tr:hover {
   border: 1px solid var(--border-color);
   border-left: 4px solid var(--text-muted);
   border-radius: var(--radius);
-  padding: 10px 12px;
   background-color: var(--bg-secondary);
   font-size: 12px;
+  overflow: hidden;
 }
 
 .verification-panel.verified {
@@ -767,10 +815,35 @@ tr:hover {
 .verification-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
-  margin-bottom: 6px;
   color: var(--text-secondary);
+  cursor: pointer;
+  padding: 10px 12px;
+}
+
+.verification-header::marker {
+  content: "";
+}
+
+.verification-header::before {
+  content: ">";
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 0.15s ease;
+}
+
+.verification-panel[open] .verification-header::before {
+  transform: rotate(90deg);
+}
+
+.verification-header span:last-child {
+  margin-left: auto;
+}
+
+.verification-body {
+  padding: 0 12px 10px;
 }
 
 .verification-state {
@@ -1051,6 +1124,55 @@ tr:hover {
 .chat-input-stack {
   display: grid;
   gap: 5px;
+}
+
+.slash-command-menu {
+  display: grid;
+  gap: 4px;
+  max-width: 560px;
+  padding: 6px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background-color: var(--bg-secondary);
+}
+
+.slash-command-item {
+  display: grid;
+  grid-template-columns: 78px 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 8px;
+  background-color: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  border-radius: 4px;
+}
+
+.slash-command-item:hover,
+.slash-command-item:focus {
+  background-color: var(--bg-tertiary);
+}
+
+.slash-command-item span {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.slash-command-item strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.slash-command-item small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-send-column {

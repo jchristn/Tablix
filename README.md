@@ -10,6 +10,26 @@
 
 Tablix is a database gateway for AI agents, connecting your databases through MCP, REST, and a dashboard with schema discovery, durable context, NL2SQL-powered query generation, guarded execution, and database-aware chat. Tablix helps agents understand what your data means, generate safer SQL, execute permitted queries, and return answers grounded in actual results.
 
+<details>
+  <summary><strong>Dashboard Screenshots</strong></summary>
+
+  <p>
+    <img src="assets/ss1.png" alt="Tablix dashboard screenshot 1" />
+  </p>
+  <p>
+    <img src="assets/ss2.png" alt="Tablix dashboard screenshot 2" />
+  </p>
+  <p>
+    <img src="assets/ss3.png" alt="Tablix dashboard screenshot 3" />
+  </p>
+  <p>
+    <img src="assets/ss4.png" alt="Tablix dashboard screenshot 4" />
+  </p>
+  <p>
+    <img src="assets/ss5.png" alt="Tablix dashboard screenshot 5" />
+  </p>
+</details>
+
 ## What's New in v0.3.0
 
 v0.3.0 turns Tablix into a more complete database-agent workspace: product state lives in SQLite, large schemas are discoverable in pages, durable context can be managed at database and table scope, and the dashboard can take a user from first login to database chat.

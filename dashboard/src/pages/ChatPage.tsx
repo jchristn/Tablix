@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import { translateTooltip } from '../i18n';
-import type { AmbiguitySignal, ChatMessageRequest, ChatOptionsResponse, ChatRequest, ChatResponseResult, ChatStreamEvent, ChatTelemetry, ChatToolCall, VerifiedAnswer } from '../types';
+import type { AmbiguitySignal, ChatMessageRequest, ChatOptionsResponse, ChatRequest, ChatResponseResult, ChatStreamEvent, ChatTelemetry, ChatToolCall, DatabaseDetail, SettingsReadResponse, VerifiedAnswer } from '../types';
 
 interface ChatUiMessage {
   Id: string;
@@ -16,12 +16,25 @@ interface ChatUiMessage {
   Ambiguities: AmbiguitySignal[];
   ExecutionPath: string | null;
   CapabilityNotice: string | null;
+  LocalOnly?: boolean;
 }
 
 interface ParsedSseFrame {
   event: string;
   data: string;
 }
+
+interface SlashCommandDefinition {
+  Command: string;
+  Label: string;
+  Description: string;
+}
+
+const slashCommands: SlashCommandDefinition[] = [
+  { Command: '/help', Label: 'Help', Description: 'Show available chat commands.' },
+  { Command: '/clear', Label: 'Clear', Description: 'Clear the visible conversation and the history sent to the model.' },
+  { Command: '/context', Label: 'Context', Description: 'Show what context the next chat request will use.' },
+];
 
 export default function ChatPage() {
   const navigate = useNavigate();
@@ -76,6 +89,17 @@ export default function ChatPage() {
     () => options?.Providers.find(provider => provider.Id === providerId) || null,
     [options, providerId]
   );
+  const selectedDatabase = useMemo(
+    () => options?.Databases.find(database => database.Id === databaseId) || null,
+    [options, databaseId]
+  );
+  const slashCommandQuery = getSlashCommandQuery(input);
+  const filteredSlashCommands = useMemo(
+    () => slashCommandQuery
+      ? slashCommands.filter(command => command.Command.startsWith(slashCommandQuery) || command.Label.toLowerCase().startsWith(slashCommandQuery.slice(1)))
+      : [],
+    [slashCommandQuery]
+  );
 
   async function loadOptions() {
     try {
@@ -98,6 +122,10 @@ export default function ChatPage() {
     event.preventDefault();
     const trimmed = input.trim();
     if (!trimmed || sending) return;
+    if (trimmed.startsWith('/')) {
+      await runSlashCommand(trimmed);
+      return;
+    }
 
     const userMessage: ChatUiMessage = {
       Id: crypto.randomUUID(),
@@ -134,7 +162,7 @@ export default function ChatPage() {
     const request: ChatRequest = {
       DatabaseId: databaseId,
       ProviderId: providerId,
-      Messages: [...messages, userMessage].map(toRequestMessage),
+      Messages: [...messages, userMessage].filter(message => !message.LocalOnly).map(toRequestMessage),
       Streaming: streaming,
     };
 
@@ -154,6 +182,29 @@ export default function ChatPage() {
 
   function stopGeneration() {
     activeRequestRef.current?.abort();
+  }
+
+  async function runSlashCommand(value: string) {
+    const command = value.split(/\s+/)[0].toLowerCase();
+    setInput('');
+    setError('');
+
+    if (command === '/clear') {
+      clearConversation();
+      return;
+    }
+
+    if (command === '/help') {
+      appendLocalAssistantMessage(buildSlashHelpMessage());
+      return;
+    }
+
+    if (command === '/context') {
+      appendLocalAssistantMessage(await buildContextUsageMessage());
+      return;
+    }
+
+    appendLocalAssistantMessage(buildUnknownCommandMessage(command));
   }
 
   async function sendNonStreaming(request: ChatRequest, assistantId: string, signal: AbortSignal) {
@@ -309,6 +360,73 @@ export default function ChatPage() {
     scrollTranscriptToBottom();
   }
 
+  function clearConversation() {
+    activeRequestRef.current?.abort();
+    activeRequestRef.current = null;
+    setSending(false);
+    resetConversation();
+  }
+
+  function appendLocalAssistantMessage(content: string) {
+    const message: ChatUiMessage = {
+      Id: crypto.randomUUID(),
+      Role: 'assistant',
+      Content: content,
+      Telemetry: null,
+      ToolCalls: [],
+      VerifiedAnswer: null,
+      Ambiguities: [],
+      ExecutionPath: null,
+      CapabilityNotice: null,
+      LocalOnly: true,
+    };
+
+    stickToBottomRef.current = true;
+    setMessages(previous => [...previous, message]);
+  }
+
+  async function buildContextUsageMessage() {
+    if (!databaseId) return '### Context Usage\n\nNo database is selected.';
+
+    let detail: DatabaseDetail | null = null;
+    let settings: SettingsReadResponse | null = null;
+    let loadWarning = '';
+
+    try {
+      const [detailResponse, settingsResponse] = await Promise.all([
+        apiFetch(`/v1/database/${databaseId}`),
+        apiFetch('/v1/settings'),
+      ]);
+
+      if (detailResponse.status === 401 || settingsResponse.status === 401) {
+        navigate('/login');
+        return '### Context Usage\n\nSign in is required to inspect context usage.';
+      }
+
+      if (detailResponse.ok) {
+        detail = await detailResponse.json();
+      } else {
+        loadWarning = 'Database detail could not be loaded.';
+      }
+
+      if (settingsResponse.ok) {
+        settings = await settingsResponse.json();
+      }
+    } catch {
+      loadWarning = 'Context detail could not be loaded from the server.';
+    }
+
+    return buildContextUsageMarkdown({
+      database: selectedDatabase,
+      detail,
+      provider: selectedProvider,
+      settings,
+      messages,
+      streaming,
+      loadWarning,
+    });
+  }
+
   function handleDatabaseChanged(nextDatabaseId: string) {
     if (nextDatabaseId === databaseId) return;
     setDatabaseId(nextDatabaseId);
@@ -323,7 +441,7 @@ export default function ChatPage() {
 
   function toRequestMessage(message: ChatUiMessage): ChatMessageRequest {
     return {
-    Role: message.Role,
+      Role: message.Role,
       Content: message.Content,
     };
   }
@@ -382,6 +500,15 @@ export default function ChatPage() {
     <div className="chat-page">
       <div className="page-header">
         <h2 title={translateTooltip('nav.chat')}>Chat</h2>
+        <button
+          type="button"
+          className="btn-secondary"
+          title="Clear the visible conversation and the chat history sent with the next request"
+          onClick={clearConversation}
+          disabled={!sending && messages.length === 0 && !input.trim()}
+        >
+          Clear
+        </button>
       </div>
 
       <div className="chat-shell">
@@ -451,7 +578,12 @@ export default function ChatPage() {
                     />
                   )}
                   {message.Role === 'assistant' && message.VerifiedAnswer && (
-                    <VerificationPanel verifiedAnswer={message.VerifiedAnswer} ambiguities={message.Ambiguities} />
+                    <VerificationPanel
+                      verifiedAnswer={message.VerifiedAnswer}
+                      ambiguities={message.Ambiguities}
+                      onToggleStart={captureTranscriptStickiness}
+                      onToggled={handleTranscriptContentToggled}
+                    />
                   )}
                   {message.Role === 'assistant' && (message.ExecutionPath || message.CapabilityNotice) && (
                     <div className="chat-execution-note">
@@ -469,15 +601,32 @@ export default function ChatPage() {
 
         <form className="chat-composer" onSubmit={handleSubmit}>
           <div className="chat-input-stack">
-          <textarea
-            title={translateTooltip('chat.input')}
-            value={input}
-            onChange={event => setInput(event.target.value)}
-            onKeyDown={handleComposerKeyDown}
-            placeholder="Ask a question about the selected database..."
-            rows={3}
-            disabled={sending || !databaseId || !providerId || !options?.Enabled}
-          />
+            {slashCommandQuery && filteredSlashCommands.length > 0 && (
+              <div className="slash-command-menu" role="listbox" aria-label="Slash commands">
+                {filteredSlashCommands.map(command => (
+                  <button
+                    key={command.Command}
+                    type="button"
+                    className="slash-command-item"
+                    onMouseDown={event => event.preventDefault()}
+                    onClick={() => { void runSlashCommand(command.Command); }}
+                  >
+                    <span>{command.Command}</span>
+                    <strong>{command.Label}</strong>
+                    <small>{command.Description}</small>
+                  </button>
+                ))}
+              </div>
+            )}
+            <textarea
+              title={translateTooltip('chat.input')}
+              value={input}
+              onChange={event => setInput(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
+              placeholder="Ask a question about the selected database, or type / for commands..."
+              rows={3}
+              disabled={sending || !databaseId || !providerId || !options?.Enabled}
+            />
             <span className="chat-input-help">Enter to send, Shift+Enter for newline</span>
           </div>
           <div className="chat-send-column">
@@ -559,32 +708,50 @@ function AssistantWaitingIndicator() {
   );
 }
 
-function VerificationPanel({ verifiedAnswer, ambiguities }: { verifiedAnswer: VerifiedAnswer; ambiguities: AmbiguitySignal[] }) {
+function VerificationPanel({
+  verifiedAnswer,
+  ambiguities,
+  onToggleStart,
+  onToggled,
+}: {
+  verifiedAnswer: VerifiedAnswer;
+  ambiguities: AmbiguitySignal[];
+  onToggleStart: () => void;
+  onToggled: () => void;
+}) {
   return (
-    <div className={`verification-panel ${verifiedAnswer.State || 'partial'}`}>
-      <div className="verification-header">
+    <details className={`verification-panel ${verifiedAnswer.State || 'partial'}`} open onToggle={onToggled}>
+      <summary
+        className="verification-header"
+        onMouseDown={onToggleStart}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') onToggleStart();
+        }}
+      >
         <span className="verification-state">{formatVerificationState(verifiedAnswer.State)}</span>
         {verifiedAnswer.RowsReturned != null && <span>{verifiedAnswer.RowsReturned} row(s)</span>}
+      </summary>
+      <div className="verification-body">
+        {verifiedAnswer.Summary && <p>{verifiedAnswer.Summary}</p>}
+        {verifiedAnswer.Sql && <pre>{verifiedAnswer.Sql}</pre>}
+        {verifiedAnswer.Evidence?.length > 0 && (
+          <ul>
+            {verifiedAnswer.Evidence.slice(0, 4).map(item => <li key={item}>{item}</li>)}
+          </ul>
+        )}
+        {verifiedAnswer.Error && <p className="error-text">{verifiedAnswer.Error}</p>}
+        {ambiguities?.length > 0 && (
+          <div className="ambiguity-list">
+            {ambiguities.slice(0, 3).map(signal => (
+              <div key={`${signal.Term}-${signal.Question}`}>
+                <strong>{signal.Question || signal.Term}</strong>
+                {signal.Candidates.length > 0 && <span>{signal.Candidates.slice(0, 5).join('; ')}</span>}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
-      {verifiedAnswer.Summary && <p>{verifiedAnswer.Summary}</p>}
-      {verifiedAnswer.Sql && <pre>{verifiedAnswer.Sql}</pre>}
-      {verifiedAnswer.Evidence?.length > 0 && (
-        <ul>
-          {verifiedAnswer.Evidence.slice(0, 4).map(item => <li key={item}>{item}</li>)}
-        </ul>
-      )}
-      {verifiedAnswer.Error && <p className="error-text">{verifiedAnswer.Error}</p>}
-      {ambiguities?.length > 0 && (
-        <div className="ambiguity-list">
-          {ambiguities.slice(0, 3).map(signal => (
-            <div key={`${signal.Term}-${signal.Question}`}>
-              <strong>{signal.Question || signal.Term}</strong>
-              {signal.Candidates.length > 0 && <span>{signal.Candidates.slice(0, 5).join('; ')}</span>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    </details>
   );
 }
 
@@ -613,6 +780,114 @@ function selectAvailableProviderId(options: ChatOptionsResponse) {
   }
 
   return options.Providers[0]?.Id || '';
+}
+
+function getSlashCommandQuery(value: string) {
+  const trimmed = value.trimStart();
+  if (!trimmed.startsWith('/') || trimmed.includes('\n')) return '';
+  return trimmed.split(/\s+/)[0].toLowerCase();
+}
+
+function buildSlashHelpMessage() {
+  return [
+    '### Chat Commands',
+    '',
+    '| Command | Action |',
+    '| --- | --- |',
+    ...slashCommands.map(command => `| \`${command.Command}\` | ${command.Description} |`),
+    '',
+    'Slash commands run locally in the dashboard and are not sent to the model.',
+  ].join('\n');
+}
+
+function buildUnknownCommandMessage(command: string) {
+  return [
+    '### Unknown Command',
+    '',
+    `\`${command || '/'}\` is not a recognized chat command.`,
+    '',
+    'Use `/help` to show available commands.',
+  ].join('\n');
+}
+
+function buildContextUsageMarkdown({
+  database,
+  detail,
+  provider,
+  settings,
+  messages,
+  streaming,
+  loadWarning,
+}: {
+  database: ChatOptionsResponse['Databases'][number] | null;
+  detail: DatabaseDetail | null;
+  provider: ChatOptionsResponse['Providers'][number] | null;
+  settings: SettingsReadResponse | null;
+  messages: ChatUiMessage[];
+  streaming: boolean;
+  loadWarning: string;
+}) {
+  const modelHistory = messages.filter(message => !message.LocalOnly);
+  const historyChars = modelHistory.reduce((total, message) => total + message.Content.length, 0);
+  const userMessages = modelHistory.filter(message => message.Role === 'user').length;
+  const assistantMessages = modelHistory.filter(message => message.Role === 'assistant').length;
+  const databaseContext = detail?.Context ?? database?.Context ?? '';
+  const databaseContextChars = databaseContext.trim().length;
+  const tables = detail?.Tables || [];
+  const tableContextChars = tables.reduce((total, table) => total + (table.Context || '').trim().length, 0);
+  const tablesWithContext = tables.filter(table => Boolean((table.Context || '').trim())).length;
+  const maxContextTables = settings?.Chat.MaxContextTables ?? null;
+  const includedTables = maxContextTables == null ? null : Math.min(tables.length, maxContextTables);
+  const omittedTables = includedTables == null ? null : Math.max(0, tables.length - includedTables);
+  const databaseLabel = database?.Name || database?.DatabaseName || detail?.DatabaseName || database?.Filename || database?.Id || 'None';
+  const providerLabel = provider ? `${provider.Name || provider.Id} (${provider.Model || provider.Type})` : 'None';
+
+  const lines = ['### Context Usage', ''];
+  if (loadWarning) {
+    lines.push(`> ${loadWarning}`, '');
+  }
+
+  lines.push(
+    `- Database: ${databaseLabel}${database?.Id ? ` (\`${database.Id}\`)` : ''}`,
+    `- Provider: ${providerLabel}`,
+    `- Streaming: ${streaming ? 'on' : 'off'}`,
+    `- Conversation history sent with the next request: ${modelHistory.length} message(s) (${userMessages} user, ${assistantMessages} assistant), ${formatNumber(historyChars)} character(s), about ${formatNumber(estimateTokens(historyChars))} conversation token(s).`,
+    `- Saved database context: ${databaseContextChars > 0 ? `${formatNumber(databaseContextChars)} character(s), about ${formatNumber(estimateTokens(databaseContextChars))} token(s)` : 'none'}.`
+  );
+
+  if (detail) {
+    lines.push(
+      `- Crawl state: ${detail.IsCrawled ? 'crawled' : 'degraded'}${detail.CrawlError ? ` (${detail.CrawlError})` : ''}.`,
+      `- Schema context: ${formatNumber(tables.length)} table(s) available.`
+    );
+
+    if (maxContextTables != null && includedTables != null && omittedTables != null) {
+      lines.push(`- Prompt table limit: up to ${formatNumber(maxContextTables)} table(s); ${formatNumber(includedTables)} currently included and ${formatNumber(omittedTables)} omitted.`);
+    }
+
+    lines.push(`- Table context: ${formatNumber(tablesWithContext)} of ${formatNumber(tables.length)} table(s), ${formatNumber(tableContextChars)} character(s), about ${formatNumber(estimateTokens(tableContextChars))} token(s).`);
+  } else {
+    lines.push(`- Crawl state: ${database?.IsCrawled ? 'crawled' : 'degraded or unavailable'}.`);
+  }
+
+  if (settings) {
+    lines.push(
+      `- Query tools: ${settings.Chat.Tools.Enabled ? 'enabled' : 'disabled'}; read-only execution is ${settings.Chat.Tools.AllowReadOnlyQueries ? 'allowed' : 'disabled'}.`,
+      `- Context update tools: ${settings.Chat.Tools.AllowContextUpdates ? 'enabled' : 'disabled'}.`
+    );
+  }
+
+  if (provider) {
+    lines.push(`- Tool mode: ${provider.UseNativeToolCalls && provider.SupportsNativeToolCalls ? 'native tool calls' : 'server fallback/plain chat depending on request and settings'}.`);
+  }
+
+  lines.push('', '`/clear` removes the visible conversation and the model-bound history used for the next request.');
+  return lines.join('\n');
+}
+
+function estimateTokens(characters: number) {
+  if (!characters || characters <= 0) return 0;
+  return Math.max(1, Math.ceil(characters / 4));
 }
 
 function formatExecutionPath(value: string) {

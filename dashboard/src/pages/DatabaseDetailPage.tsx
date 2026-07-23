@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
+import ButtonBusyContent from '../components/ButtonBusyContent';
 import ClipboardButton from '../components/ClipboardButton';
 import ConfirmDialog from '../components/ConfirmDialog';
 import RecordViewModal, { isInteractiveRowClick, type RecordViewRow } from '../components/RecordViewModal';
@@ -616,11 +617,12 @@ export default function DatabaseDetailPage() {
                   <div className="table-context-actions">
                     <ClipboardButton text={table.Context || ''} title="Copy table context" label="Copy table context" />
                     <button
-                      className="btn-secondary compact-button"
+                      className="btn-secondary compact-button table-build-action"
                       onClick={() => handleBuildTableContext(table)}
                       disabled={!table.TableId || providers.length === 0 || buildingTableContext === table.TableId}
+                      title={buildingTableContext === table.TableId ? 'Building table context' : 'Build table context'}
                     >
-                      {buildingTableContext === table.TableId ? 'Building...' : 'Build'}
+                      <ButtonBusyContent Busy={buildingTableContext === table.TableId} Label="Build" BusyLabel="Building table context" />
                     </button>
                     <button
                       className="btn-secondary compact-button"
