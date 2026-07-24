@@ -5,7 +5,7 @@ namespace Tablix.Server.Handlers
     using System.IO;
     using System.Linq;
     using System.Threading.Tasks;
-    using SwiftStack.Rest;
+    using WatsonWebserver.Core;
     using Tablix.Core.Enums;
     using Tablix.Core.Models;
     using Tablix.Core.Persistence;
@@ -44,7 +44,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/settings - read redacted server settings.
         /// </summary>
-        public Task<object> GetSettingsAsync(AppRequest req)
+        public Task<object> GetSettingsAsync(ApiRequest req)
         {
             return Task.FromResult((object)CreateReadResponse(_SettingsManager.Settings, _SettingsManager.Filename, _Persistence));
         }
@@ -52,7 +52,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// PUT /v1/settings - update editable server settings.
         /// </summary>
-        public Task<object> UpdateSettingsAsync(AppRequest req)
+        public Task<object> UpdateSettingsAsync(ApiRequest req)
         {
             SettingsUpdateRequest request = req.GetData<SettingsUpdateRequest>();
             if (request == null)

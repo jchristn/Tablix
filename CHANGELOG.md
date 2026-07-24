@@ -17,6 +17,7 @@
 ### Changed
 
 - Updated dashboard chat prompt guidance so models persist durable database/table insights through context update tools without storing secrets, raw rows, or unsupported guesses.
+- Consolidated REST hosting on Watson 7 built-in API routing/OpenAPI support and removed the deprecated SwiftStack server dependency.
 - Updated release docs, Docker Compose image tags, product constants, and package versions for v0.3.0.
 
 ## v0.2.0 - ALPHA (2026-07-11)
@@ -52,7 +53,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Added Databases row action overflow menu with Build Context and Delete actions
 - Added Query result JSON copy and CSV download controls
 - Added PolyPrompt-backed REST chat APIs: `GET /v1/chat/options`, `POST /v1/chat`, and `POST /v1/chat/stream`
-- Upgraded PolyPrompt usage to `1.5.0` and added native tool-call orchestration for providers/models configured to support tools
+- Upgraded PolyPrompt usage to `2.0.0` and added native streaming tool-chat orchestration for providers/models configured to support tools
 - Added prompt-processing settings for native tool preference, data-request execution, SQL-only intent preservation, server fallback planning, schema-refresh retry, and planning/tool iteration limits
 - Added dashboard Chat page with database/provider selectors, streaming and non-streaming responses, markdown rendering, inline query tool calls, and telemetry hover details
 - Added server-side Chat fallback execution loop so permitted data requests can still execute when a model/provider does not emit a native tool call
@@ -101,7 +102,7 @@ This release changes Tablix from a primarily full-schema discovery surface into 
 - Fixed SQLite persistence consistency by disabling connection pooling, serializing reads and writes through a single operation gate, and wrapping write batches in explicit immediate transactions with rollback
 - Fixed setup wizard table-context generation so model request timeouts apply per table and model calls are bounded by provider concurrency instead of sending one long UI-proxied batch request
 - Fixed dashboard container startup so its generated nginx config preserves long-running API proxy timeouts for context generation
-- Fixed `/v1/chat/stream` so plain responses and post-tool summaries stream PolyPrompt token chunks instead of emitting the completed assistant message as one token event
+- Fixed `/v1/chat/stream` so plain responses, fallback post-query answers, and native post-tool summaries stream PolyPrompt token chunks instead of emitting the completed assistant message as one token event
 - Removed a credential-bearing local database entry from the checked-in Docker default configuration
 
 ### Testing

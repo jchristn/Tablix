@@ -12,7 +12,7 @@ namespace Tablix.Server.Handlers
     using Tablix.Core.Models;
     using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
-    using SwiftStack.Rest;
+    using WatsonWebserver.Core;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
 
     /// <summary>
@@ -49,7 +49,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/database — list all databases, paginated.
         /// </summary>
-        public async Task<object> ListDatabasesAsync(AppRequest req)
+        public async Task<object> ListDatabasesAsync(ApiRequest req)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
 
@@ -98,7 +98,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/database/{id} — get a single database entry with cached crawl detail.
         /// </summary>
-        public async Task<object> GetDatabaseAsync(AppRequest req)
+        public async Task<object> GetDatabaseAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -148,7 +148,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/database/{id}/tables - list crawled tables, paginated.
         /// </summary>
-        public async Task<object> ListTablesAsync(AppRequest req)
+        public async Task<object> ListTablesAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -173,7 +173,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/database/{id}/relationships - list compact relationship edges, paginated.
         /// </summary>
-        public async Task<object> ListRelationshipsAsync(AppRequest req)
+        public async Task<object> ListRelationshipsAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -204,7 +204,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/database/{id}/intelligence - derive domain, relationship, ambiguity, and quality guidance.
         /// </summary>
-        public async Task<object> GetIntelligenceAsync(AppRequest req)
+        public async Task<object> GetIntelligenceAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -229,7 +229,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/database/{id}/agent-pack - derive MCP-ready agent instructions.
         /// </summary>
-        public async Task<object> GetAgentPackAsync(AppRequest req)
+        public async Task<object> GetAgentPackAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -250,7 +250,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/database/{id}/table-context - list table contexts for a database.
         /// </summary>
-        public async Task<object> ListTableContextsAsync(AppRequest req)
+        public async Task<object> ListTableContextsAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -267,7 +267,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/database/{id}/table-context/{tableId} - read table context.
         /// </summary>
-        public async Task<object> GetTableContextAsync(AppRequest req)
+        public async Task<object> GetTableContextAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             string tableId = req.Parameters["tableId"];
@@ -291,7 +291,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// PUT /v1/database/{id}/table-context/{tableId} - update table context.
         /// </summary>
-        public async Task<object> UpdateTableContextAsync(AppRequest req)
+        public async Task<object> UpdateTableContextAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             string tableId = req.Parameters["tableId"];
@@ -340,7 +340,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database — add a new database entry.
         /// </summary>
-        public async Task<object> AddDatabaseAsync(AppRequest req)
+        public async Task<object> AddDatabaseAsync(ApiRequest req)
         {
             DatabaseEntry entry = req.GetData<DatabaseEntry>();
             if (entry == null)
@@ -369,7 +369,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// PUT /v1/database/{id} — update an existing database entry.
         /// </summary>
-        public async Task<object> UpdateDatabaseAsync(AppRequest req)
+        public async Task<object> UpdateDatabaseAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = req.GetData<DatabaseEntry>();
@@ -422,7 +422,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database/{id}/context - update only the user-supplied database context.
         /// </summary>
-        public async Task<object> UpdateDatabaseContextAsync(AppRequest req)
+        public async Task<object> UpdateDatabaseContextAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             ContextUpdateRequest request = req.GetData<ContextUpdateRequest>();
@@ -464,13 +464,19 @@ namespace Tablix.Server.Handlers
             if (cached != null)
                 cached.Context = context;
 
-            return new { Success = true, DatabaseId = id, Context = context, Mode = mode.ToLowerInvariant() };
+            return new DatabaseContextUpdateResponse
+            {
+                Success = true,
+                DatabaseId = id,
+                Context = context,
+                Mode = mode.ToLowerInvariant()
+            };
         }
 
         /// <summary>
         /// POST /v1/database/test - test unsaved database settings.
         /// </summary>
-        public async Task<object> TestDatabaseRequestAsync(AppRequest req)
+        public async Task<object> TestDatabaseRequestAsync(ApiRequest req)
         {
             DatabaseConnectivityTestRequest request = req.GetData<DatabaseConnectivityTestRequest>();
             if (request == null || request.Database == null)
@@ -485,7 +491,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database/{id}/test - test saved database settings.
         /// </summary>
-        public async Task<object> TestSavedDatabaseAsync(AppRequest req)
+        public async Task<object> TestSavedDatabaseAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -501,7 +507,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// DELETE /v1/database/{id} — delete a database entry.
         /// </summary>
-        public async Task<object> DeleteDatabaseAsync(AppRequest req)
+        public async Task<object> DeleteDatabaseAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
 
@@ -524,7 +530,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database/{id}/crawl — re-crawl the database schema.
         /// </summary>
-        public async Task<object> CrawlDatabaseAsync(AppRequest req)
+        public async Task<object> CrawlDatabaseAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -542,7 +548,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database/{id}/crawl/stream - re-crawl the database schema and stream status events.
         /// </summary>
-        public async Task<object> CrawlDatabaseStreamAsync(AppRequest req)
+        public async Task<object> CrawlDatabaseStreamAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -634,7 +640,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database/{id}/query — execute a SQL query.
         /// </summary>
-        public async Task<object> ExecuteQueryAsync(AppRequest req)
+        public async Task<object> ExecuteQueryAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             DatabaseEntry entry = await _Persistence.DatabaseConnections.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -755,7 +761,7 @@ namespace Tablix.Server.Handlers
         }
 
         private static void ReadEnumerationQuery(
-            AppRequest req,
+            ApiRequest req,
             out int maxResults,
             out int skip,
             out string filter,
@@ -832,7 +838,7 @@ namespace Tablix.Server.Handlers
             return 35;
         }
 
-        private static async Task SendCrawlEventAsync(AppRequest req, CrawlProgressEvent evt, bool final)
+        private static async Task SendCrawlEventAsync(ApiRequest req, CrawlProgressEvent evt, bool final)
         {
             string eventName = String.IsNullOrWhiteSpace(evt.EventType) ? "progress" : evt.EventType;
             string json = Serializer.SerializeJson(evt, false);

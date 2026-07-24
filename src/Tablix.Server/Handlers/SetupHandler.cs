@@ -2,7 +2,7 @@ namespace Tablix.Server.Handlers
 {
     using System;
     using System.Threading.Tasks;
-    using SwiftStack.Rest;
+    using WatsonWebserver.Core;
     using Tablix.Core.Enums;
     using Tablix.Core.Models;
     using Tablix.Core.Persistence;
@@ -29,7 +29,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Setup state.</returns>
-        public async Task<object> GetSetupAsync(AppRequest req)
+        public async Task<object> GetSetupAsync(ApiRequest req)
         {
             SetupStateRead state = await _Persistence.SetupState.ReadAsync(req.CancellationToken).ConfigureAwait(false);
             await EnrichStateAsync(state, req).ConfigureAwait(false);
@@ -41,7 +41,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Updated setup state.</returns>
-        public async Task<object> UpdateSetupAsync(AppRequest req)
+        public async Task<object> UpdateSetupAsync(ApiRequest req)
         {
             SetupStateUpdateRequest request = req.GetData<SetupStateUpdateRequest>();
             if (request == null)
@@ -60,7 +60,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Updated setup state.</returns>
-        public async Task<object> CompleteSetupAsync(AppRequest req)
+        public async Task<object> CompleteSetupAsync(ApiRequest req)
         {
             SetupStateRead state = await _Persistence.SetupState.CompleteAsync(req.CancellationToken).ConfigureAwait(false);
             await EnrichStateAsync(state, req).ConfigureAwait(false);
@@ -72,14 +72,14 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Updated setup state.</returns>
-        public async Task<object> DismissSetupAsync(AppRequest req)
+        public async Task<object> DismissSetupAsync(ApiRequest req)
         {
             SetupStateRead state = await _Persistence.SetupState.DismissAsync(req.CancellationToken).ConfigureAwait(false);
             await EnrichStateAsync(state, req).ConfigureAwait(false);
             return state;
         }
 
-        private async Task EnrichStateAsync(SetupStateRead state, AppRequest req)
+        private async Task EnrichStateAsync(SetupStateRead state, ApiRequest req)
         {
             if (state == null) return;
 

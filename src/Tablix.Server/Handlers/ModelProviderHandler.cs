@@ -8,7 +8,7 @@ namespace Tablix.Server.Handlers
     using System.Threading.Tasks;
     using PolyPrompt.Clients;
     using PolyPrompt.Models;
-    using SwiftStack.Rest;
+    using WatsonWebserver.Core;
     using SyslogLogging;
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
@@ -48,7 +48,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Paginated provider summaries.</returns>
-        public async Task<object> ListProvidersAsync(AppRequest req)
+        public async Task<object> ListProvidersAsync(ApiRequest req)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
             ReadEnumerationQuery(req, out int maxResults, out int skip, out string filter, out bool? enabled);
@@ -78,7 +78,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Redacted provider details.</returns>
-        public async Task<object> GetProviderAsync(AppRequest req)
+        public async Task<object> GetProviderAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -96,7 +96,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Health statuses.</returns>
-        public async Task<object> ListProviderHealthAsync(AppRequest req)
+        public async Task<object> ListProviderHealthAsync(ApiRequest req)
         {
             await Task.CompletedTask.ConfigureAwait(false);
             if (_HealthChecks != null)
@@ -111,7 +111,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Health status.</returns>
-        public async Task<object> GetProviderHealthAsync(AppRequest req)
+        public async Task<object> GetProviderHealthAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -136,7 +136,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Created provider summary.</returns>
-        public async Task<object> AddProviderAsync(AppRequest req)
+        public async Task<object> AddProviderAsync(ApiRequest req)
         {
             ModelProviderUpdate request = req.GetData<ModelProviderUpdate>();
             if (request == null)
@@ -171,7 +171,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Updated provider summary.</returns>
-        public async Task<object> UpdateProviderAsync(AppRequest req)
+        public async Task<object> UpdateProviderAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             ModelProviderUpdate request = req.GetData<ModelProviderUpdate>();
@@ -206,7 +206,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Null response.</returns>
-        public async Task<object> DeleteProviderAsync(AppRequest req)
+        public async Task<object> DeleteProviderAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             bool deleted = await _Persistence.ModelProviders.DeleteAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -227,7 +227,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Connectivity test result.</returns>
-        public async Task<object> TestSavedProviderAsync(AppRequest req)
+        public async Task<object> TestSavedProviderAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             ModelProviderSettings provider = await _Persistence.ModelProviders.ReadAsync(id, req.CancellationToken).ConfigureAwait(false);
@@ -245,7 +245,7 @@ namespace Tablix.Server.Handlers
         /// </summary>
         /// <param name="req">REST request.</param>
         /// <returns>Connectivity test result.</returns>
-        public async Task<object> TestProviderRequestAsync(AppRequest req)
+        public async Task<object> TestProviderRequestAsync(ApiRequest req)
         {
             ProviderConnectivityTestRequest request = req.GetData<ProviderConnectivityTestRequest>();
             if (request == null || request.Provider == null)
@@ -440,7 +440,7 @@ namespace Tablix.Server.Handlers
             _SettingsManager.UpdateSettings(settings);
         }
 
-        private static void ReadEnumerationQuery(AppRequest req, out int maxResults, out int skip, out string filter, out bool? enabled)
+        private static void ReadEnumerationQuery(ApiRequest req, out int maxResults, out int skip, out string filter, out bool? enabled)
         {
             maxResults = 100;
             skip = 0;

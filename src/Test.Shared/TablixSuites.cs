@@ -4,6 +4,10 @@ namespace Test.Shared
     using System.Collections.Generic;
     using System.IO;
     using System.Linq;
+    using System.Net;
+    using System.Net.Http;
+    using System.Net.Sockets;
+    using System.Text.Json;
     using System.Text.RegularExpressions;
     using System.Threading;
     using System.Threading.Tasks;
@@ -635,6 +639,41 @@ namespace Test.Shared
                             True(File.Exists(filename), "Settings file should exist.");
                         });
                         return Task.CompletedTask;
+                    }),
+                    Case("ServerLifecycle", "WatsonHostStartsAndStops", "Tablix starts Watson REST and stops it cleanly", async ct =>
+                    {
+                        string directory = Path.Combine(Path.GetTempPath(), "tablix_server_" + Guid.NewGuid().ToString("N"));
+                        Directory.CreateDirectory(directory);
+                        string settingsFile = Path.Combine(directory, "tablix.json");
+
+                        TablixSettings settings = new TablixSettings();
+                        settings.Rest.Hostname = "127.0.0.1";
+                        settings.Rest.Port = GetAvailableTcpPort();
+                        settings.Rest.McpPort = GetAvailableTcpPort();
+                        settings.Persistence.Filename = "tablix.db";
+                        settings.Logging.ConsoleLogging = false;
+                        settings.Logging.FileLogging = false;
+                        File.WriteAllText(settingsFile, Serializer.SerializeJson(settings, true));
+
+                        TablixServer server = new TablixServer(settingsFile);
+                        using CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+
+                        try
+                        {
+                            await server.StartAsync(linked.Token).ConfigureAwait(false);
+                            string baseUrl = "http://127.0.0.1:" + settings.Rest.Port;
+                            string rootJson = await WaitForHttpOkAsync(baseUrl + "/", linked.Token).ConfigureAwait(false);
+                            Contains(rootJson, Constants.ProductName, "Root health response should come from the running Tablix Watson host.");
+                            string openApiJson = await WaitForHttpOkAsync(baseUrl + "/openapi.json", linked.Token).ConfigureAwait(false);
+                            AssertOpenApiMetadataComplete(openApiJson);
+                        }
+                        finally
+                        {
+                            linked.Cancel();
+                            await server.StopAsync().ConfigureAwait(false);
+                            TryDeleteDirectory(directory);
+                        }
                     }),
                     Case("Persistence", "DatabaseCreateRead", "Persistence creates and reads database entries", async ct =>
                     {
@@ -2308,14 +2347,14 @@ namespace Test.Shared
                         string repositoryRoot = FindRepositoryRoot();
                         string serverRoutes = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "TablixServer.cs"));
 
-                        Contains(serverRoutes, "new OpenApiTag(\"Database\"", "OpenAPI should include Database tag.");
-                        Contains(serverRoutes, "new OpenApiTag(\"Metadata\"", "OpenAPI should include Metadata tag.");
-                        Contains(serverRoutes, "new OpenApiTag(\"Models\"", "OpenAPI should include Models tag.");
-                        Contains(serverRoutes, "new OpenApiTag(\"Context\"", "OpenAPI should include Context tag.");
-                        Contains(serverRoutes, "new OpenApiTag(\"Setup\"", "OpenAPI should include Setup tag.");
-                        Contains(serverRoutes, "new OpenApiTag(\"Chat\"", "OpenAPI should include Chat tag.");
-                        Contains(serverRoutes, "new OpenApiTag(\"Settings\"", "OpenAPI should include Settings tag.");
-                        Contains(serverRoutes, "new OpenApiTag(\"Health\"", "OpenAPI should include Health tag.");
+                        Contains(serverRoutes, "new OpenApiTag { Name = \"Database\"", "OpenAPI should include Database tag.");
+                        Contains(serverRoutes, "new OpenApiTag { Name = \"Metadata\"", "OpenAPI should include Metadata tag.");
+                        Contains(serverRoutes, "new OpenApiTag { Name = \"Models\"", "OpenAPI should include Models tag.");
+                        Contains(serverRoutes, "new OpenApiTag { Name = \"Context\"", "OpenAPI should include Context tag.");
+                        Contains(serverRoutes, "new OpenApiTag { Name = \"Setup\"", "OpenAPI should include Setup tag.");
+                        Contains(serverRoutes, "new OpenApiTag { Name = \"Chat\"", "OpenAPI should include Chat tag.");
+                        Contains(serverRoutes, "new OpenApiTag { Name = \"Settings\"", "OpenAPI should include Settings tag.");
+                        Contains(serverRoutes, "new OpenApiTag { Name = \"Health\"", "OpenAPI should include Health tag.");
                         Contains(serverRoutes, "OpenApiResponseMetadata.Json<BuildTableContextResponse>", "OpenAPI should document generated table context responses.");
                         Contains(serverRoutes, "OpenApiRequestBodyMetadata.Json<BuildTableContextRequest>", "OpenAPI should document generated table context requests.");
                         return Task.CompletedTask;
@@ -2421,6 +2460,9 @@ namespace Test.Shared
                         string buildDashboard = File.ReadAllText(Path.Combine(repositoryRoot, "build-dashboard.bat"));
                         string serverDockerfile = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Dockerfile"));
                         string constants = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Core", "Helpers", "Constants.cs"));
+                        string serverProject = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Tablix.Server.csproj"));
+                        string serverSource = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "TablixServer.cs"));
+                        string serverProgram = File.ReadAllText(Path.Combine(repositoryRoot, "src", "Tablix.Server", "Program.cs"));
                         string dockerCloudBuilderRef = "jchristn77/jchristn77";
                         string dockerCloudBuilderName = "cloud-" + "jchristn77-" + "jchristn77";
                         string builderArgument = "-" + "-builder";
@@ -2465,6 +2507,17 @@ namespace Test.Shared
                         Contains(serverDockerfile, "https://security.ubuntu.com/ubuntu", "Server Dockerfile should use HTTPS Ubuntu security sources.");
                         Contains(serverDockerfile, "Acquire::Retries \"5\";", "Server Dockerfile should retry transient apt fetch failures.");
                         Contains(serverDockerfile, "Acquire::https::Timeout \"30\";", "Server Dockerfile should set an apt HTTPS timeout.");
+                        Contains(serverProject, "<PackageReference Include=\"Watson\" Version=\"7.0.15\" />", "Server project should explicitly use Watson 7.");
+                        DoesNotContain(serverProject, "SwiftStack", "Server project should not depend on deprecated SwiftStack.");
+                        Contains(serverSource, "using WatsonWebserver;", "REST hosting should use Watson 7 directly.");
+                        Contains(serverSource, "_RestServer.Start(runToken)", "REST hosting should start Watson 7 with its non-blocking Start method.");
+                        Contains(serverSource, "public async Task StopAsync()", "Server host should expose a managed shutdown path.");
+                        Contains(serverSource, "_RestServer.Stop()", "Server host should explicitly stop Watson during shutdown.");
+                        Contains(serverSource, "_RestServer.Dispose()", "Server host should explicitly dispose Watson during shutdown.");
+                        Contains(serverSource, "CancellationTokenSource.CreateLinkedTokenSource(token)", "Server host should own a linked runtime cancellation token.");
+                        Contains(serverProgram, "await server.StopAsync().ConfigureAwait(false)", "Program shutdown should stop the server host cleanly.");
+                        DoesNotContain(serverSource, "_RestTask", "REST hosting should not manage Watson StartAsync as a SwiftStack-style task.");
+                        DoesNotContain(serverSource, "SwiftStack", "REST hosting should not use deprecated SwiftStack.");
                         foreach (string projectFile in projectFiles)
                         {
                             string project = File.ReadAllText(projectFile);
@@ -2596,13 +2649,17 @@ namespace Test.Shared
                         Contains(chatHandler, "ExecuteChatResponseStreamingAsync", "SSE chat should use a dedicated streaming execution path.");
                         Contains(chatHandler, "ChatStreamingAsync", "SSE chat should call PolyPrompt streaming APIs.");
                         Contains(chatHandler, "await foreach (ChatStreamingChunk chunk", "SSE chat should enumerate provider chunks.");
+                        Contains(chatHandler, "ToolChatStreamingAsync", "SSE native tool chat should use PolyPrompt streaming tool APIs.");
+                        Contains(chatHandler, "await foreach (ToolChatStreamingChunk chunk", "SSE native tool chat should enumerate streamed tool-chat chunks.");
+                        Contains(chatHandler, "StreamToolChatResponseAsync", "SSE native tool chat should stream final tool-chat text through dashboard events.");
+                        Contains(chatHandler, "ToolChoice = \"none\"", "SSE native post-tool answer should use a tool-chat follow-up with tools disabled.");
                         Contains(chatHandler, "Delta = delta", "SSE token events should send bounded text deltas.");
                         Contains(chatHandler, "SplitStreamingText", "SSE token events should split large provider chunks.");
                         Contains(chatHandler, "StreamBufferedExecutionResultAsync", "Native direct answers should still be emitted as token events after fallback planning declines execution.");
-                        Contains(chatHandler, "BuildToolFollowupPrompt(preparation.Prompt, executedTools)", "Native tool execution should stream the final post-tool answer.");
                         Contains(chatHandler, "ExecuteFallbackPlanningStreamingAsync", "Fallback tool execution should stream the final post-tool answer.");
-                        Contains(chatHandler, "Message = response.Text ?? String.Empty", "Native no-tool streaming should return the model response without pre-streaming a plain fallback candidate.");
+                        Contains(chatHandler, "string noToolMessage = response.Text ?? String.Empty", "Native no-tool streaming should return the model response without pre-streaming a plain fallback candidate.");
                         DoesNotContain(chatHandler, "return await ExecutePlainChatStreamingAsync(client, preparation, \"native_no_tool_call\"", "Native no-tool streaming should not stream a plain response before server fallback can run.");
+                        DoesNotContain(chatHandler, "BuildToolFollowupPrompt(preparation.Prompt, executedTools)", "Native streaming tool execution should not use a prompt-based post-tool workaround.");
                         DoesNotContain(chatHandler, "Delta = execution.Message", "SSE chat should not send the full completed answer as one token event.");
                         return Task.CompletedTask;
                     }),
@@ -3176,6 +3233,117 @@ namespace Test.Shared
         private static string GetTempDatabaseFilename()
         {
             return Path.Combine(Path.GetTempPath(), "tablix_persistence_" + Guid.NewGuid().ToString("N") + ".db");
+        }
+
+        private static int GetAvailableTcpPort()
+        {
+            TcpListener listener = new TcpListener(IPAddress.Loopback, 0);
+            try
+            {
+                listener.Start();
+                IPEndPoint endpoint = (IPEndPoint)listener.LocalEndpoint;
+                return endpoint.Port;
+            }
+            finally
+            {
+                listener.Stop();
+            }
+        }
+
+        private static async Task<string> WaitForHttpOkAsync(string url, CancellationToken token)
+        {
+            using HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            Exception lastException = null;
+
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+
+                try
+                {
+                    using HttpResponseMessage response = await client.GetAsync(url, token).ConfigureAwait(false);
+                    string content = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                    if (response.IsSuccessStatusCode) return content;
+
+                    lastException = new InvalidOperationException("HTTP " + (int)response.StatusCode + ": " + content);
+                }
+                catch (Exception ex) when (!token.IsCancellationRequested && (ex is HttpRequestException || ex is TaskCanceledException || ex is IOException))
+                {
+                    lastException = ex;
+                }
+
+                await Task.Delay(100, token).ConfigureAwait(false);
+            }
+
+            throw new InvalidOperationException("Timed out waiting for " + url, lastException);
+        }
+
+        private static void AssertOpenApiMetadataComplete(string openApiJson)
+        {
+            using JsonDocument document = JsonDocument.Parse(openApiJson);
+            JsonElement root = document.RootElement;
+            JsonElement schemas = Required(root, "components", "schemas");
+
+            AssertOpenApiSchemaHasProperties(schemas, "ApiErrorResponse", "Error", "Message", "StatusCode", "Description");
+            AssertOpenApiSchemaHasProperties(schemas, "ChatRequest", "DatabaseId", "ProviderId", "Messages", "Streaming", "PreferNativeToolCalls", "FallbackWhenNativeToolNotCalled");
+            AssertOpenApiSchemaHasProperties(schemas, "ChatMessage", "Role", "Content");
+            AssertOpenApiSchemaHasProperties(schemas, "ChatResponseResult", "Success", "DatabaseId", "ProviderId", "Message", "Telemetry", "ToolCalls", "VerifiedAnswer", "Ambiguities", "ExecutionPath", "CapabilityNotice", "Error");
+            AssertOpenApiSchemaHasProperties(schemas, "QueryResult", "Success", "DatabaseId", "RowsReturned", "TotalMs", "Data", "Error");
+            AssertOpenApiSchemaHasProperties(schemas, "DatabaseContextUpdateResponse", "Success", "DatabaseId", "Context", "Mode");
+            AssertOpenApiSchemaHasProperties(schemas, "EnumerationResultOfModelProviderSummary", "Success", "MaxResults", "Skip", "TotalRecords", "RecordsRemaining", "EndOfResults", "NextSkip", "TotalMs", "Objects");
+
+            Equal("#/components/schemas/ChatMessage", Required(schemas, "ChatRequest", "properties", "Messages", "items", "$ref").GetString(), "ChatRequest.Messages should reference ChatMessage.");
+            Equal("#/components/schemas/ChatRequest", Required(root, "paths", "/v1/chat", "post", "requestBody", "content", "application/json", "schema", "$ref").GetString(), "Chat request body should reference ChatRequest.");
+            Equal("#/components/schemas/ChatResponseResult", Required(root, "paths", "/v1/chat", "post", "responses", "200", "content", "application/json", "schema", "$ref").GetString(), "Chat response should reference ChatResponseResult.");
+            Equal("#/components/schemas/DatabaseContextUpdateResponse", Required(root, "paths", "/v1/database/{id}/context", "post", "responses", "200", "content", "application/json", "schema", "$ref").GetString(), "Database context update should reference a concrete response schema.");
+            Equal("#/components/schemas/ApiErrorResponse", Required(root, "paths", "/v1/database/{id}/query", "post", "responses", "403", "content", "application/json", "schema", "$ref").GetString(), "Forbidden query response should reference ApiErrorResponse.");
+            Equal("#/components/schemas/ApiErrorResponse", Required(root, "paths", "/v1/model/{id}", "get", "responses", "401", "content", "application/json", "schema", "$ref").GetString(), "Secured routes should document authentication errors.");
+            Equal("integer", Required(OpenApiQueryParameter(root, "/v1/model", "get", "maxResults"), "schema", "type").GetString(), "maxResults query parameter should be integer.");
+            Equal("integer", Required(OpenApiQueryParameter(root, "/v1/model", "get", "skip"), "schema", "type").GetString(), "skip query parameter should be integer.");
+            Equal("boolean", Required(OpenApiQueryParameter(root, "/v1/model", "get", "enabled"), "schema", "type").GetString(), "enabled query parameter should be boolean.");
+            Equal("boolean", Required(OpenApiQueryParameter(root, "/v1/database/{id}/relationships", "get", "includeInferred"), "schema", "type").GetString(), "includeInferred query parameter should be boolean.");
+            Equal("boolean", Required(OpenApiQueryParameter(root, "/v1/database/{id}/intelligence", "get", "includeAgentPack"), "schema", "type").GetString(), "includeAgentPack query parameter should be boolean.");
+            False(Required(root, "paths", "/v1/database/{id}", "delete", "responses", "204").TryGetProperty("content", out _), "204 delete response should not document response content.");
+        }
+
+        private static JsonElement Required(JsonElement element, params string[] path)
+        {
+            JsonElement current = element;
+            foreach (string segment in path)
+            {
+                if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(segment, out JsonElement next))
+                {
+                    string available = current.ValueKind == JsonValueKind.Object
+                        ? String.Join(", ", current.EnumerateObject().Select(property => property.Name))
+                        : current.ValueKind.ToString();
+                    throw new InvalidOperationException("OpenAPI document missing path segment '" + segment + "' in '" + String.Join(".", path) + "'. Available properties: " + available + ".");
+                }
+                current = next;
+            }
+
+            return current;
+        }
+
+        private static void AssertOpenApiSchemaHasProperties(JsonElement schemas, string schemaName, params string[] propertyNames)
+        {
+            JsonElement properties = Required(schemas, schemaName, "properties");
+            foreach (string propertyName in propertyNames)
+            {
+                if (!properties.TryGetProperty(propertyName, out _))
+                    throw new InvalidOperationException("OpenAPI schema '" + schemaName + "' missing property '" + propertyName + "'.");
+            }
+        }
+
+        private static JsonElement OpenApiQueryParameter(JsonElement root, string path, string method, string name)
+        {
+            JsonElement parameters = Required(root, "paths", path, method, "parameters");
+            foreach (JsonElement parameter in parameters.EnumerateArray())
+            {
+                if (String.Equals(Required(parameter, "name").GetString(), name, StringComparison.Ordinal))
+                    return parameter;
+            }
+
+            throw new InvalidOperationException("OpenAPI route '" + method.ToUpperInvariant() + " " + path + "' missing query parameter '" + name + "'.");
         }
 
         private static async Task WithCustomSqliteDatabaseAsync(string setupSql, Func<DatabaseEntry, Task> action)

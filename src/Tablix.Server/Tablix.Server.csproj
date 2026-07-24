@@ -6,10 +6,10 @@
 
   <ItemGroup>
     <PackageReference Include="SerializableDataTable" Version="1.0.6" />
-    <PackageReference Include="PolyPrompt" Version="1.5.0" />
-    <PackageReference Include="SwiftStack" Version="0.4.8" />
-    <PackageReference Include="SyslogLogging" Version="2.0.13" />
-    <PackageReference Include="Voltaic" Version="0.2.0" />
+    <PackageReference Include="PolyPrompt" Version="2.0.0" />
+    <PackageReference Include="SyslogLogging" Version="2.1.0" />
+    <PackageReference Include="Voltaic" Version="0.4.0" />
+    <PackageReference Include="Watson" Version="7.0.15" />
   </ItemGroup>
 
   <PropertyGroup>

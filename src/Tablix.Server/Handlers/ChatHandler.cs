@@ -11,7 +11,7 @@ namespace Tablix.Server.Handlers
     using PolyPrompt.Clients;
     using PolyPrompt.Models;
     using SyslogLogging;
-    using SwiftStack.Rest;
+    using WatsonWebserver.Core;
     using Tablix.Core.DatabaseDrivers;
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
@@ -64,7 +64,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// GET /v1/chat/options - get chat database and provider options.
         /// </summary>
-        public async Task<object> GetOptionsAsync(AppRequest req)
+        public async Task<object> GetOptionsAsync(ApiRequest req)
         {
             TablixSettings settings = _SettingsManager.Settings;
             List<DatabaseEntry> databases = await _Persistence.DatabaseConnections.EnumerateAsync(1000, 0, null, req.CancellationToken).ConfigureAwait(false);
@@ -96,7 +96,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database/{id}/context/build - generate and persist database context.
         /// </summary>
-        public async Task<object> BuildContextAsync(AppRequest req)
+        public async Task<object> BuildContextAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             BuildContextRequest request = req.GetData<BuildContextRequest>();
@@ -185,7 +185,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database/{id}/table-context/build - generate and persist table context for every selected table.
         /// </summary>
-        public async Task<object> BuildAllTableContextsAsync(AppRequest req)
+        public async Task<object> BuildAllTableContextsAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             BuildTableContextRequest request = req.GetData<BuildTableContextRequest>();
@@ -218,7 +218,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/database/{id}/table-context/{tableId}/build - generate and persist context for one table.
         /// </summary>
-        public async Task<object> BuildTableContextAsync(AppRequest req)
+        public async Task<object> BuildTableContextAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             string tableId = req.Parameters["tableId"];
@@ -246,7 +246,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/chat - non-streaming chat.
         /// </summary>
-        public async Task<object> ChatAsync(AppRequest req)
+        public async Task<object> ChatAsync(ApiRequest req)
         {
             ChatRequest request = req.GetData<ChatRequest>();
             ChatPreparation preparation = await PrepareChatAsync(req, request).ConfigureAwait(false);
@@ -286,7 +286,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/chat/stream - streaming chat using server-sent events.
         /// </summary>
-        public async Task<object> ChatStreamAsync(AppRequest req)
+        public async Task<object> ChatStreamAsync(ApiRequest req)
         {
             ChatRequest request = req.GetData<ChatRequest>();
             ChatPreparation preparation = await PrepareChatAsync(req, request).ConfigureAwait(false);
@@ -354,7 +354,7 @@ namespace Tablix.Server.Handlers
         /// <summary>
         /// POST /v1/chat/prompt - preview the prepared chat prompt.
         /// </summary>
-        public async Task<object> PromptPreviewAsync(AppRequest req)
+        public async Task<object> PromptPreviewAsync(ApiRequest req)
         {
             ChatRequest request = req.GetData<ChatRequest>();
             ChatPreparation preparation = await PreparePromptPreviewAsync(req, request).ConfigureAwait(false);
@@ -383,17 +383,17 @@ namespace Tablix.Server.Handlers
 
         #region Private-Methods
 
-        private async Task<ChatPreparation> PrepareChatAsync(AppRequest req, ChatRequest request)
+        private async Task<ChatPreparation> PrepareChatAsync(ApiRequest req, ChatRequest request)
         {
             return await PrepareChatAsync(req, request, true).ConfigureAwait(false);
         }
 
-        private async Task<ChatPreparation> PreparePromptPreviewAsync(AppRequest req, ChatRequest request)
+        private async Task<ChatPreparation> PreparePromptPreviewAsync(ApiRequest req, ChatRequest request)
         {
             return await PrepareChatAsync(req, request, false).ConfigureAwait(false);
         }
 
-        private async Task<ChatPreparation> PrepareChatAsync(AppRequest req, ChatRequest request, bool requireUserMessage)
+        private async Task<ChatPreparation> PrepareChatAsync(ApiRequest req, ChatRequest request, bool requireUserMessage)
         {
             if (request == null)
             {
@@ -466,7 +466,7 @@ namespace Tablix.Server.Handlers
             };
         }
 
-        private async Task<ChatPreparation> PrepareContextBuildAsync(AppRequest req, string databaseId, string providerId)
+        private async Task<ChatPreparation> PrepareContextBuildAsync(ApiRequest req, string databaseId, string providerId)
         {
             TablixSettings settings = _SettingsManager.Settings;
             if (!settings.Chat.Enabled)
@@ -508,7 +508,7 @@ namespace Tablix.Server.Handlers
             };
         }
 
-        private async Task<object> GenerateTableContextsAsync(AppRequest req, ChatPreparation preparation, BuildTableContextRequest request, List<TableDetail> selectedTables)
+        private async Task<object> GenerateTableContextsAsync(ApiRequest req, ChatPreparation preparation, BuildTableContextRequest request, List<TableDetail> selectedTables)
         {
             string instructions = String.IsNullOrWhiteSpace(request.Prompt) ? DefaultTableContextBuildInstructions() : request.Prompt.Trim();
             string systemPrompt = "You generate concise, durable table context for Tablix. Restrict output to the selected database, selected table, its structure, contents, and relationships. Do not include credentials, secrets, raw result rows, or speculative facts.";
@@ -594,7 +594,7 @@ namespace Tablix.Server.Handlers
         }
 
         private async Task<TableContextRead> GenerateOneTableContextAsync(
-            AppRequest req,
+            ApiRequest req,
             ChatPreparation preparation,
             TableDetail table,
             string instructions,
@@ -1167,7 +1167,7 @@ namespace Tablix.Server.Handlers
             Stopwatch stopwatch = Stopwatch.StartNew();
             List<PromptChatMessage> messages = BuildPromptMessages(preparation);
             List<ChatToolCall> executedTools = new List<ChatToolCall>();
-            ToolChatResponse response = null;
+            ToolChatStreamingResponse response = null;
 
             for (int iteration = 0; iteration < policy.MaxNativeToolIterations; iteration++)
             {
@@ -1182,7 +1182,15 @@ namespace Tablix.Server.Handlers
                     MaxTokens = preparation.Provider.MaxTokens
                 };
 
-                response = await client.ToolChatAsync(toolRequest, token).ConfigureAwait(false);
+                response = await StreamToolChatResponseAsync(
+                    client,
+                    toolRequest,
+                    preparation,
+                    "native_tool_calls",
+                    policy.CapabilityNotice,
+                    false,
+                    token,
+                    sendEventAsync).ConfigureAwait(false);
                 if (!response.Success)
                 {
                     stopwatch.Stop();
@@ -1228,30 +1236,64 @@ namespace Tablix.Server.Handlers
 
             if (executedTools.Count == 0)
             {
+                string noToolMessage = response.Text ?? String.Empty;
                 return new ChatExecutionResult
                 {
                     Success = true,
-                    Message = response.Text ?? String.Empty,
+                    Message = noToolMessage,
                     Model = String.IsNullOrWhiteSpace(response.Model) ? preparation.Provider.Model : response.Model,
                     ExecutionPath = "native_no_tool_call",
                     CapabilityNotice = policy.CapabilityNotice,
                     ToolCalls = executedTools,
-                    Telemetry = CreateTelemetry(response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, preparation.Prompt, response.Text, null)
+                    Telemetry = CreateTelemetry(response.TimeToFirstTokenMs, response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds, preparation.Prompt, noToolMessage, response.Usage)
                 };
             }
 
-            string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, executedTools);
-            ChatExecutionResult finalResult = await ExecutePromptStreamingAsync(
+            ToolChatRequest finalRequest = new ToolChatRequest
+            {
+                Model = preparation.Provider.Model,
+                Messages = messages,
+                Tools = new List<ToolDefinition>(),
+                ToolChoice = "none",
+                Temperature = preparation.Provider.Temperature,
+                TopP = preparation.Provider.TopP,
+                MaxTokens = preparation.Provider.MaxTokens
+            };
+
+            ToolChatStreamingResponse finalResponse = await StreamToolChatResponseAsync(
                 client,
+                finalRequest,
                 preparation,
-                followupPrompt,
                 "native_tool_calls",
                 policy.CapabilityNotice,
-                executedTools,
+                true,
                 token,
                 sendEventAsync).ConfigureAwait(false);
 
-            return finalResult;
+            if (!finalResponse.Success)
+            {
+                return new ChatExecutionResult
+                {
+                    Success = false,
+                    Error = finalResponse.Error,
+                    Model = String.IsNullOrWhiteSpace(finalResponse.Model) ? preparation.Provider.Model : finalResponse.Model,
+                    ExecutionPath = "native_final_failed",
+                    CapabilityNotice = policy.CapabilityNotice,
+                    ToolCalls = executedTools
+                };
+            }
+
+            string message = finalResponse.Text ?? String.Empty;
+            return new ChatExecutionResult
+            {
+                Success = true,
+                Message = message,
+                Model = String.IsNullOrWhiteSpace(finalResponse.Model) ? preparation.Provider.Model : finalResponse.Model,
+                ExecutionPath = "native_tool_calls",
+                CapabilityNotice = policy.CapabilityNotice,
+                ToolCalls = executedTools,
+                Telemetry = CreateTelemetry(finalResponse.TimeToFirstTokenMs, finalResponse.OverallRuntimeMs, preparation.Prompt, message, finalResponse.Usage)
+            };
         }
 
         private async Task<ChatExecutionResult> ExecuteFallbackPlanningAsync(
@@ -1433,6 +1475,44 @@ namespace Tablix.Server.Handlers
                 new List<ChatToolCall>(),
                 token,
                 sendEventAsync).ConfigureAwait(false);
+        }
+
+        private async Task<ToolChatStreamingResponse> StreamToolChatResponseAsync(
+            CompletionClientBase client,
+            ToolChatRequest request,
+            ChatPreparation preparation,
+            string executionPath,
+            string capabilityNotice,
+            bool streamText,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            ToolChatStreamingResponse response = await client.ToolChatStreamingAsync(request, token).ConfigureAwait(false);
+            if (!response.Success)
+                return response;
+
+            await foreach (ToolChatStreamingChunk chunk in response.Chunks.WithCancellation(token).ConfigureAwait(false))
+            {
+                if (!streamText || String.IsNullOrEmpty(chunk.Text))
+                    continue;
+
+                string model = String.IsNullOrWhiteSpace(chunk.Model) ? preparation.Provider.Model : chunk.Model;
+                foreach (string delta in SplitStreamingText(chunk.Text))
+                {
+                    await sendEventAsync(new ChatStreamEvent
+                    {
+                        EventType = "token",
+                        DatabaseId = preparation.Database.Id,
+                        ProviderId = preparation.Provider.Id,
+                        Model = model,
+                        Delta = delta,
+                        ExecutionPath = executionPath,
+                        CapabilityNotice = capabilityNotice
+                    }).ConfigureAwait(false);
+                }
+            }
+
+            return response;
         }
 
         private async Task<ChatExecutionResult> ExecutePromptStreamingAsync(
@@ -2312,7 +2392,7 @@ namespace Tablix.Server.Handlers
             return Math.Max(1, (int)Math.Ceiling(text.Length / 4.0));
         }
 
-        private static async Task SendChatEventAsync(AppRequest req, ChatStreamEvent evt, bool final)
+        private static async Task SendChatEventAsync(ApiRequest req, ChatStreamEvent evt, bool final)
         {
             string eventName = String.IsNullOrWhiteSpace(evt.EventType) ? "message" : evt.EventType;
             string json = Serializer.SerializeJson(evt, false);

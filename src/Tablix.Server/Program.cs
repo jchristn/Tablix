@@ -15,7 +15,6 @@ namespace Tablix.Server
     {
         private static readonly string _Header = "[Program] ";
         private static CancellationTokenSource _TokenSource = new CancellationTokenSource();
-        private static Task _ServerTask = null;
 
         /// <summary>
         /// Main entry point.
@@ -43,27 +42,33 @@ namespace Tablix.Server
             }
 
             TablixServer server = new TablixServer(settingsFilename);
-            _ServerTask = server.StartAsync(_TokenSource.Token);
-            await _ServerTask.ConfigureAwait(false);
-
-            EventWaitHandle waitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
-            AssemblyLoadContext.Default.Unloading += (ctx) => waitHandle.Set();
-            Console.CancelKeyPress += (sender, eventArgs) =>
+            try
             {
-                Console.WriteLine(_Header + "termination signal received");
-                eventArgs.Cancel = true;
-                waitHandle.Set();
-            };
+                await server.StartAsync(_TokenSource.Token).ConfigureAwait(false);
 
-            bool waitHandleSignal = false;
-            do
-            {
-                waitHandleSignal = waitHandle.WaitOne(1000);
+                EventWaitHandle waitHandle = new EventWaitHandle(false, EventResetMode.AutoReset);
+                AssemblyLoadContext.Default.Unloading += (ctx) => waitHandle.Set();
+                Console.CancelKeyPress += (sender, eventArgs) =>
+                {
+                    Console.WriteLine(_Header + "termination signal received");
+                    eventArgs.Cancel = true;
+                    waitHandle.Set();
+                };
+
+                bool waitHandleSignal = false;
+                do
+                {
+                    waitHandleSignal = waitHandle.WaitOne(1000);
+                }
+                while (!waitHandleSignal);
             }
-            while (!waitHandleSignal);
-
-            _TokenSource.Cancel();
-            Console.WriteLine(_Header + "stopping at " + DateTime.UtcNow);
+            finally
+            {
+                _TokenSource.Cancel();
+                Console.WriteLine(_Header + "stopping at " + DateTime.UtcNow);
+                await server.StopAsync().ConfigureAwait(false);
+                _TokenSource.Dispose();
+            }
         }
     }
 }
