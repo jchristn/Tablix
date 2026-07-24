@@ -35,7 +35,7 @@ namespace Tablix.Server.Handlers
         private readonly CrawlCache _CrawlCache;
         private readonly LoggingModule _Logging;
         private readonly ChatQueryExecutionService _QueryExecution;
-        private const string MandatoryExecutionSystemPrompt = "Mandatory Tablix execution rules: when the user asks for database data, database contents, computed values, counts, examples from rows, or an answer that depends on actual rows, call the available Tablix query execution tool or use Tablix server-side execution if a permitted query can answer it. Do not merely return SQL for the user to run unless the user explicitly asks for SQL only or says not to execute. Never fabricate table contents, result rows, counts, IDs, names, dates, metrics, or other database facts. If execution is unavailable, denied, or fails, say the data could not be verified instead of inventing an answer.";
+        private const string MandatoryExecutionSystemPrompt = "Mandatory Tablix execution rules: when the user asks for database data, database contents, computed values, counts, examples from rows, or an answer that depends on actual rows, call the available Tablix query execution tool or use Tablix server-side execution if a permitted query can answer it. Do not merely return SQL for the user to run unless the user explicitly asks for SQL only or says not to execute. When calling query tools, provide one SQL statement and do not include a semicolon or trailing SQL terminator in the Query value. Never fabricate table contents, result rows, counts, IDs, names, dates, metrics, or other database facts. If execution is unavailable, denied, or fails, say the data could not be verified instead of inventing an answer.";
 
         #endregion
 
@@ -774,7 +774,7 @@ namespace Tablix.Server.Handlers
             StringBuilder builder = new StringBuilder();
             builder.AppendLine("You are answering questions about a configured Tablix database.");
             builder.AppendLine("Use the database context and schema below as authoritative metadata. Do not invent tables or columns.");
-            builder.AppendLine("Execution contract: if the user asks for data, row contents, counts, totals, latest/top records, examples from rows, or a database change and an allowed query can answer or perform it, call the available Tablix query execution tool instead of only describing SQL. Provide one compatible SQL statement with no semicolons and only needed columns so Tablix can execute it, then answer from the tool result.");
+            builder.AppendLine("Execution contract: if the user asks for data, row contents, counts, totals, latest/top records, examples from rows, or a database change and an allowed query can answer or perform it, call the available Tablix query execution tool instead of only describing SQL. Provide one compatible SQL statement with no semicolons, no trailing SQL terminator, and only needed columns so Tablix can execute it, then answer from the tool result.");
             builder.AppendLine("Do not tell the user they can run a query when they asked for the answer; Tablix will execute permitted SQL and provide results. Return SQL text only when the user explicitly asks for SQL only, asks what query to use, or execution is unavailable or denied.");
             builder.AppendLine("Never fabricate database contents or result values. If no successful tool result is available for a data question, say the data could not be verified.");
             builder.AppendLine("If the user names a table, use that exact table when it exists; do not silently substitute a different table. If the named table is not present, explain the closest match or ask for clarification.");
@@ -1824,19 +1824,23 @@ namespace Tablix.Server.Handlers
 
         private async Task<ChatToolCall> ExecutePlannedQueryAsync(ChatPreparation preparation, string query, string phase, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync, ChatToolCall existingToolCall = null)
         {
+            string normalizedQuery = QueryValidator.NormalizeSingleStatement(query);
             ChatToolCall toolCall = existingToolCall ?? new ChatToolCall
             {
                 Id = Guid.NewGuid().ToString("n"),
                 Name = TablixChatToolDefinitions.ExecuteQueryToolName,
-                Arguments = Serializer.SerializeJson(new TablixExecuteQueryArguments { DatabaseId = preparation.Database.Id, Query = query }, false),
+                Arguments = Serializer.SerializeJson(new TablixExecuteQueryArguments { DatabaseId = preparation.Database.Id, Query = normalizedQuery }, false),
                 Phase = phase
             };
+
+            if (existingToolCall != null && !String.Equals(normalizedQuery, query, StringComparison.Ordinal))
+                toolCall.Arguments = Serializer.SerializeJson(new TablixExecuteQueryArguments { DatabaseId = preparation.Database.Id, Query = normalizedQuery }, false);
 
             await SendToolLifecycleEventAsync(sendEventAsync, preparation, toolCall, "tool_started").ConfigureAwait(false);
 
             ChatQueryExecutionResult executionResult = await _QueryExecution.ExecuteAsync(
                 preparation.Database,
-                query,
+                normalizedQuery,
                 preparation.Settings.Chat.PromptProcessing.RetryAfterSchemaRefresh,
                 token).ConfigureAwait(false);
 
@@ -2264,7 +2268,7 @@ namespace Tablix.Server.Handlers
             builder.AppendLine("Set Execute to false when the user asks how to query, asks about schema/context without row data, is making conversation, explicitly says not to run a query, or the request is ambiguous.");
             builder.AppendLine("When Preserve explicit SQL-only requests is true, SQL-only requests must use Intent SqlOnlyRequest and Execute false.");
             builder.AppendLine("When Execute is false, Query must be null or empty.");
-            builder.AppendLine("Use the selected database ID only. Do not include semicolons.");
+            builder.AppendLine("Use the selected database ID only. Do not include semicolons or a trailing SQL terminator.");
             builder.AppendLine("For counts, prefer SELECT COUNT(*) with a clear alias.");
             builder.AppendLine("For parent/detail requests such as recent orders and purchased items, limit parent rows in a CTE or subquery before joining detail rows. Aggregate detail rows when the user expects one row per parent.");
             builder.AppendLine("For relative date windows on static sample data, use the latest relevant date in the database as the anchor if filtering against the real current date would return no useful rows.");

@@ -350,14 +350,14 @@ namespace Tablix.Server.Mcp
         {
             register(
                 "tablix_execute_query",
-                "Execute one SQL statement against a database after discovering enough schema to be confident. Use this tool to answer user requests for actual data or requested database changes, including phrases like show me, how many, count, list, find, total, average, latest, top, summarize, add, update, or delete. Do not merely provide SQL when the user asks for an answer or action and the statement type is allowed; run the permitted query and return the result. The query must contain no semicolons and its statement type must be allowed by the database's AllowedQueries from tablix_discover_databases. Prefer SELECT for exploration. Never run write statements unless the user explicitly asks for the change and AllowedQueries permits that statement type. Check AllowedQueries first. For row-reading queries, project only needed columns and include sensible limits when exploring row data; aggregate queries such as COUNT do not need a LIMIT. Validate table and column names with tablix_discover_table before querying. If execution fails because of a bad or unknown column, missing column, or column type mismatch, refresh schema by re-discovering the relevant table or database before retrying. If refreshed schema proves saved database context has wrong column names, wrong column types, or stale relationship guidance, update database context with tablix_update_database_context. If refreshed schema proves saved table context is stale for a specific table, update that table context with tablix_update_table_context.",
+                "Execute one SQL statement against a database after discovering enough schema to be confident. Use this tool to answer user requests for actual data or requested database changes, including phrases like show me, how many, count, list, find, total, average, latest, top, summarize, add, update, or delete. Do not merely provide SQL when the user asks for an answer or action and the statement type is allowed; run the permitted query and return the result. The query must contain no semicolons, must not end with a semicolon, and its statement type must be allowed by the database's AllowedQueries from tablix_discover_databases. Prefer SELECT for exploration. Never run write statements unless the user explicitly asks for the change and AllowedQueries permits that statement type. Check AllowedQueries first. For row-reading queries, project only needed columns and include sensible limits when exploring row data; aggregate queries such as COUNT do not need a LIMIT. Validate table and column names with tablix_discover_table before querying. If execution fails because of a bad or unknown column, missing column, or column type mismatch, refresh schema by re-discovering the relevant table or database before retrying. If refreshed schema proves saved database context has wrong column names, wrong column types, or stale relationship guidance, update database context with tablix_update_database_context. If refreshed schema proves saved table context is stale for a specific table, update that table context with tablix_update_table_context.",
                 new
                 {
                     type = "object",
                     properties = new
                     {
                         databaseId = new { type = "string", description = "Database entry ID" },
-                        query = new { type = "string", description = "Single SQL statement to execute. Do not include semicolons or multiple statements." }
+                        query = new { type = "string", description = "Single SQL statement to execute. Do not include semicolons, a trailing SQL terminator, or multiple statements." }
                     },
                     required = new[] { "databaseId", "query" }
                 },
@@ -377,15 +377,17 @@ namespace Tablix.Server.Mcp
                     if (entry == null)
                         return (object)new QueryResult { Success = false, DatabaseId = request.DatabaseId, Error = "Database '" + request.DatabaseId + "' not found" };
 
+                    string normalizedQuery = QueryValidator.NormalizeSingleStatement(request.Query);
+
                     // Validate query against allowed types
-                    string validationError = QueryValidator.Validate(request.Query, entry.AllowedQueries);
+                    string validationError = QueryValidator.Validate(normalizedQuery, entry.AllowedQueries);
                     if (validationError != null)
                         return (object)new QueryResult { Success = false, DatabaseId = request.DatabaseId, Error = validationError };
 
                     try
                     {
                         IDatabaseCrawler crawler = CrawlerFactory.Create(entry.Type);
-                        QueryResult result = await crawler.ExecuteQueryAsync(entry, request.Query).ConfigureAwait(false);
+                        QueryResult result = await crawler.ExecuteQueryAsync(entry, normalizedQuery).ConfigureAwait(false);
                         return (object)result;
                     }
                     catch (Exception ex)

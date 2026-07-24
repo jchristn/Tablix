@@ -107,7 +107,7 @@ namespace Tablix.Core.Helpers
                 "Start with tablix_discover_databases and select databaseId " + databaseId + ".",
                 "Use saved database and table context as guidance, then validate table geometry before writing SQL.",
                 "Prefer tablix_list_tables and tablix_list_relationships before requesting full table geometry on large schemas.",
-                "Execute only one permitted SQL statement with no semicolons and only after checking AllowedQueries.",
+                "Execute only one permitted SQL statement with no semicolons, no trailing SQL terminator, and only after checking AllowedQueries.",
                 "Ask a clarification question before executing SQL when an ambiguity signal applies."
             };
 

@@ -658,7 +658,7 @@ Do not merely provide SQL when the user asks for a result or action and the stat
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `databaseId` | string | Yes | n/a | Database entry ID |
-| `query` | string | Yes | n/a | Single SQL statement with no semicolons |
+| `query` | string | Yes | n/a | Single SQL statement; do not include semicolons or a trailing SQL terminator |
 
 #### Example Request
 
@@ -709,7 +709,8 @@ Validation and execution failures are returned as `QueryResult` with `Success: f
 #### Query Validation Rules
 
 - `query` must not be empty.
-- Queries containing semicolons are rejected.
+- A single trailing SQL terminator is removed before validation and execution.
+- Multi-statement queries with embedded or repeated semicolons are rejected.
 - Leading SQL comments are stripped before statement-type detection.
 - The first statement keyword must appear in the database's `AllowedQueries`.
 - This validation is a heuristic safeguard, not a database security boundary.

@@ -1411,7 +1411,8 @@ Execute a SQL query against a database.
 **Query Validation Rules**
 
 - Only statement types listed in the database's `AllowedQueries` are permitted
-- Multi-statement queries (containing `;`) are rejected
+- A single trailing SQL terminator is removed before validation and execution
+- Multi-statement queries with embedded or repeated semicolons are rejected
 - Leading SQL comments are stripped before validation
 - This is a heuristic safeguard, not a security boundary; always use database-level permissions for production safety
 

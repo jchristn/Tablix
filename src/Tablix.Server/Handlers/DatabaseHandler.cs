@@ -657,8 +657,10 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.BadRequest, "Query is required.");
             }
 
+            string normalizedQuery = QueryValidator.NormalizeSingleStatement(queryRequest.Query);
+
             // Validate query against allowed types
-            string validationError = QueryValidator.Validate(queryRequest.Query, entry.AllowedQueries);
+            string validationError = QueryValidator.Validate(normalizedQuery, entry.AllowedQueries);
             if (validationError != null)
             {
                 req.Http.Response.StatusCode = 403;
@@ -668,7 +670,7 @@ namespace Tablix.Server.Handlers
             try
             {
                 IDatabaseCrawler crawler = CrawlerFactory.Create(entry.Type);
-                QueryResult result = await crawler.ExecuteQueryAsync(entry, queryRequest.Query).ConfigureAwait(false);
+                QueryResult result = await crawler.ExecuteQueryAsync(entry, normalizedQuery).ConfigureAwait(false);
                 return result;
             }
             catch (Exception ex)

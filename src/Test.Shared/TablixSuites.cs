@@ -244,10 +244,17 @@ namespace Test.Shared
                         Null(result, "Allowed list should be case-insensitive.");
                         return Task.CompletedTask;
                     }),
-                    Case("QueryValidator", "TrailingSemicolonRejected", "Trailing semicolon is rejected", ct =>
+                    Case("QueryValidator", "TrailingSemicolonNormalized", "Single trailing statement terminator is normalized", ct =>
                     {
                         string result = QueryValidator.Validate("SELECT 1;", new List<string> { "SELECT" });
-                        Contains(result, "semicolon", "Expected semicolon validation error.");
+                        Null(result, "A single trailing statement terminator should be allowed.");
+                        Equal("SELECT 1", QueryValidator.NormalizeSingleStatement("SELECT 1; \r\n"), "Trailing terminator should be removed.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("QueryValidator", "RepeatedTrailingSemicolonRejected", "Repeated trailing semicolons remain rejected", ct =>
+                    {
+                        string result = QueryValidator.Validate("SELECT 1;;", new List<string> { "SELECT" });
+                        Contains(result, "semicolon", "Expected repeated semicolon validation error.");
                         return Task.CompletedTask;
                     }),
                     Case("QueryValidator", "SemicolonInStringRejected", "Semicolon inside string literal is conservatively rejected", ct =>
@@ -256,16 +263,23 @@ namespace Test.Shared
                         Contains(result, "semicolon", "Expected conservative semicolon rejection.");
                         return Task.CompletedTask;
                     }),
-                    Case("QueryValidator", "WithClauseRejectedUnlessAllowed", "CTE leading WITH requires WITH permission", ct =>
+                    Case("QueryValidator", "WithSelectAllowedWhenSelectAllowed", "CTE SELECT uses SELECT permission", ct =>
                     {
                         string result = QueryValidator.Validate("WITH x AS (SELECT 1) SELECT * FROM x", new List<string> { "SELECT" });
-                        Contains(result, "WITH", "Expected WITH validation error.");
+                        Null(result, "WITH SELECT should be allowed when SELECT is allowed.");
                         return Task.CompletedTask;
                     }),
-                    Case("QueryValidator", "WithClauseAllowed", "CTE leading WITH is allowed when configured", ct =>
+                    Case("QueryValidator", "WithSelectTrailingSemicolonAllowed", "CTE SELECT allows one trailing semicolon", ct =>
                     {
-                        string result = QueryValidator.Validate("WITH x AS (SELECT 1) SELECT * FROM x", new List<string> { "WITH" });
-                        Null(result, "WITH should be allowed when configured.");
+                        string query = "WITH last_order AS (\n  SELECT Id FROM orders ORDER BY OrderDate DESC LIMIT 1\n)\nSELECT * FROM last_order;";
+                        string result = QueryValidator.Validate(query, new List<string> { "SELECT" });
+                        Null(result, "WITH SELECT with one trailing terminator should be allowed when SELECT is allowed.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("QueryValidator", "WithDeleteRejectedUnlessDeleteAllowed", "CTE DELETE uses DELETE permission", ct =>
+                    {
+                        string result = QueryValidator.Validate("WITH x AS (SELECT 1) DELETE FROM users", new List<string> { "SELECT" });
+                        Contains(result, "DELETE", "Expected CTE DELETE validation error.");
                         return Task.CompletedTask;
                     }),
                     Case("QueryValidator", "AllowedListNullRejectsAll", "Null allowed query list rejects all", ct =>
@@ -549,6 +563,7 @@ namespace Test.Shared
                         Contains(settings.Chat.SystemPrompt, "Never fabricate table contents", "Default chat prompt should prohibit fabricated database facts.");
                         Contains(settings.Chat.SystemPrompt, "Return SQL text only when", "Default chat prompt should limit SQL-only answers to explicit requests or unavailable execution.");
                         Contains(settings.Chat.SystemPrompt, "one permitted SQL statement", "Default chat prompt should give concise query tool usage guidance.");
+                        Contains(settings.Chat.SystemPrompt, "no trailing SQL terminator", "Default chat prompt should prohibit trailing SQL terminators in tool calls.");
                         Contains(settings.Chat.SystemPrompt, "bad or unknown column", "Default chat prompt should handle unknown column failures.");
                         Contains(settings.Chat.SystemPrompt, "column type mismatch", "Default chat prompt should handle column type failures.");
                         Contains(settings.Chat.SystemPrompt, "update database context", "Default chat prompt should correct stale database context.");
@@ -2173,7 +2188,7 @@ namespace Test.Shared
                             }).ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     }),
-                    Case("McpToolBehavior", "ExecuteQueryReturnsRows", "MCP execute query returns actual result rows", async ct =>
+                    Case("McpToolBehavior", "ExecuteQueryReturnsRows", "MCP execute query returns actual result rows with trailing semicolon normalized", async ct =>
                     {
                         await WithTempDatabaseAsync(async entry =>
                         {
@@ -2182,7 +2197,7 @@ namespace Test.Shared
                             {
                                 await ConfigureOnlyDatabaseAsync(persistence, entry, ct).ConfigureAwait(false);
                                 Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, new CrawlCache());
-                                QueryResult result = ConvertObject<QueryResult>(await tools["tablix_execute_query"](new McpExecuteQueryRequest { DatabaseId = "test_sqlite", Query = "SELECT COUNT(*) AS total_users FROM users" }).ConfigureAwait(false));
+                                QueryResult result = ConvertObject<QueryResult>(await tools["tablix_execute_query"](new McpExecuteQueryRequest { DatabaseId = "test_sqlite", Query = "SELECT COUNT(*) AS total_users FROM users;" }).ConfigureAwait(false));
                                 string resultJson = Serializer.SerializeJson(result, false);
                                 True(result.Success, "SELECT count should succeed.");
                                 Equal(1, result.RowsReturned, "Count query should return one row.");
@@ -2246,6 +2261,7 @@ namespace Test.Shared
                     {
                         Dictionary<string, string> descriptions = RegisteredToolDescriptions();
                         Contains(descriptions["tablix_execute_query"], "AllowedQueries", "Query tool should mention AllowedQueries.");
+                        Contains(descriptions["tablix_execute_query"], "must not end with a semicolon", "Query tool should explicitly reject trailing SQL terminators.");
                         Contains(descriptions["tablix_execute_query"], "Prefer SELECT for exploration", "Query tool should prefer read-only exploration.");
                         Contains(descriptions["tablix_execute_query"], "Validate table and column names", "Query tool should require schema validation.");
                         Contains(descriptions["tablix_execute_query"], "Do not merely provide SQL", "Query tool should tell models to run queries for answer requests.");

@@ -70,7 +70,8 @@ namespace Tablix.Server
         private static async Task<ChatQueryExecutionResult> ExecuteOnceAsync(DatabaseEntry database, string query, CancellationToken token)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
-            string validationError = QueryValidator.Validate(query, database.AllowedQueries);
+            string normalizedQuery = QueryValidator.NormalizeSingleStatement(query);
+            string validationError = QueryValidator.Validate(normalizedQuery, database.AllowedQueries);
             if (validationError != null)
             {
                 stopwatch.Stop();
@@ -86,7 +87,7 @@ namespace Tablix.Server
             try
             {
                 IDatabaseCrawler crawler = CrawlerFactory.Create(database.Type);
-                QueryResult queryResult = await crawler.ExecuteQueryAsync(database, query, token).ConfigureAwait(false);
+                QueryResult queryResult = await crawler.ExecuteQueryAsync(database, normalizedQuery, token).ConfigureAwait(false);
                 stopwatch.Stop();
 
                 return new ChatQueryExecutionResult

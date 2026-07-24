@@ -376,7 +376,7 @@ Get full geometry for a single table: columns, data types, primary keys, foreign
 
 #### `tablix_execute_query`
 
-Execute a SQL query against a database. The query must be a single statement with no semicolons, and the statement type must be in the database's `AllowedQueries` list. Validate relevant tables and columns first with `tablix_discover_table`.
+Execute a SQL query against a database. The query must be a single statement with no semicolons or trailing SQL terminator, and the statement type must be in the database's `AllowedQueries` list. Validate relevant tables and columns first with `tablix_discover_table`.
 
 When the user asks for actual data or a requested database change using phrases like "show me", "how many", "count", "list", "find", "total", "average", "latest", "top", "add", "update", or "delete", agents should execute a permitted query and report the returned result or write outcome instead of only providing SQL text.
 
@@ -724,7 +724,8 @@ All endpoints except health checks require `Authorization: Bearer <api-key>`. Se
 ### Query Validation
 
 - Only statement types listed in `AllowedQueries` are permitted
-- Multi-statement queries (containing `;`) are rejected
+- A single trailing SQL terminator is removed before validation and execution
+- Multi-statement queries with embedded or repeated semicolons are rejected
 - Leading SQL comments are stripped before validation
 - **This is a heuristic safeguard, not a security boundary**; always use database-level permissions for production safety
 - Database passwords and provider API keys in `tablix.db` are stored in cleartext for v0.3.0; protect the file with OS-level permissions
