@@ -7,11 +7,13 @@ namespace Test.Shared
     using System.Net;
     using System.Net.Http;
     using System.Net.Sockets;
+    using System.Reflection;
     using System.Text.Json;
     using System.Text.RegularExpressions;
     using System.Threading;
     using System.Threading.Tasks;
     using Microsoft.Data.Sqlite;
+    using PolyPrompt.Models;
     using Tablix.Core.DatabaseDrivers;
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
@@ -20,6 +22,7 @@ namespace Test.Shared
     using Tablix.Core.Persistence.Sqlite;
     using Tablix.Core.Settings;
     using Tablix.Server;
+    using Tablix.Server.Handlers;
     using Tablix.Server.Mcp;
     using Touchstone.Core;
 
@@ -1818,6 +1821,24 @@ namespace Test.Shared
                         Contains(responseJson, "\"Objects\"", "Generated table contexts should serialize.");
                         Contains(responseJson, "\"Context\":\"Generated table context.\"", "Table context should serialize.");
                         Contains(responseJson, "\"Telemetry\"", "Telemetry should serialize.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("ModelGuards", "GeminiContextExtractionConcatenatesAllTextParts", "Gemini context extraction keeps every returned text part", ct =>
+                    {
+                        MethodInfo method = typeof(ChatHandler).GetMethod("ExtractGeminiTextFromResponseBody", BindingFlags.NonPublic | BindingFlags.Static);
+                        NotNull(method, "Gemini response extraction helper should exist.");
+
+                        string json = "{\"responseId\":\"ctx-test\",\"modelVersion\":\"gemini-test\",\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"First part. \"},{\"text\":\"Second part.\"}]},\"finishReason\":\"STOP\",\"index\":0}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"totalTokenCount\":15}}";
+                        object[] args = new object[] { json, null, null };
+                        string text = Convert.ToString(method.Invoke(null, args));
+
+                        Equal("First part. Second part.", text, "Gemini parser should concatenate all text parts.");
+                        Equal("STOP", Convert.ToString(args[1]), "Gemini parser should expose finish reason.");
+                        ChatStreamingUsage usage = args[2] as ChatStreamingUsage;
+                        NotNull(usage, "Gemini parser should expose usage metadata.");
+                        Equal(10, usage.PromptTokens.Value, "Prompt token count mismatch.");
+                        Equal(5, usage.CompletionTokens.Value, "Completion token count mismatch.");
+                        Equal(15, usage.TotalTokens.Value, "Total token count mismatch.");
                         return Task.CompletedTask;
                     }),
                     Case("ModelGuards", "SyslogHostnameNullThrows", "SyslogServer null hostname throws", ct =>

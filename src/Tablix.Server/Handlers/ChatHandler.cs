@@ -5,6 +5,7 @@ namespace Tablix.Server.Handlers
     using System.Diagnostics;
     using System.Linq;
     using System.Text;
+    using System.Text.Json;
     using System.Text.RegularExpressions;
     using System.Threading;
     using System.Threading.Tasks;
@@ -36,6 +37,7 @@ namespace Tablix.Server.Handlers
         private readonly LoggingModule _Logging;
         private readonly ChatQueryExecutionService _QueryExecution;
         private const string MandatoryExecutionSystemPrompt = "Mandatory Tablix execution rules: when the user asks for database data, database contents, computed values, counts, examples from rows, or an answer that depends on actual rows, call the available Tablix query execution tool or use Tablix server-side execution if a permitted query can answer it. Do not merely return SQL for the user to run unless the user explicitly asks for SQL only or says not to execute. When calling query tools, provide one SQL statement and do not include a semicolon or trailing SQL terminator in the Query value. Never fabricate table contents, result rows, counts, IDs, names, dates, metrics, or other database facts. If execution is unavailable, denied, or fails, say the data could not be verified instead of inventing an answer.";
+        private static readonly JsonSerializerOptions GeminiResponseJsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
         #endregion
 
@@ -154,7 +156,15 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.InternalError, response.Error ?? "Provider context generation failed.");
             }
 
-            string context = NormalizeGeneratedContext(response.Text);
+            string finishReason;
+            ChatStreamingUsage usage;
+            string context = NormalizeGeneratedContext(client, provider, response, out finishReason, out usage);
+            if (IsRejectedContextFinishReason(finishReason))
+            {
+                req.Http.Response.StatusCode = 502;
+                return new ApiErrorResponse(ApiErrorEnum.InternalError, "Provider stopped context generation with finish reason '" + finishReason + "'. Context was not saved.");
+            }
+
             if (String.IsNullOrWhiteSpace(context))
             {
                 req.Http.Response.StatusCode = 502;
@@ -169,7 +179,7 @@ namespace Tablix.Server.Handlers
                 response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds,
                 prompt,
                 context,
-                null);
+                usage);
 
             return new BuildContextResponse
             {
@@ -617,7 +627,12 @@ namespace Tablix.Server.Handlers
                 if (!response.Success)
                     throw new InvalidOperationException(response.Error ?? "Provider table context generation failed.");
 
-                string context = NormalizeGeneratedContext(response.Text);
+                string finishReason;
+                ChatStreamingUsage usage;
+                string context = NormalizeGeneratedContext(client, preparation.Provider, response, out finishReason, out usage);
+                if (IsRejectedContextFinishReason(finishReason))
+                    throw new InvalidOperationException("Provider stopped table context generation for " + table.SchemaName + "." + table.TableName + " with finish reason '" + finishReason + "'. Context was not saved.");
+
                 if (String.IsNullOrWhiteSpace(context))
                     throw new InvalidOperationException("Provider returned empty table context for " + table.SchemaName + "." + table.TableName + ".");
 
@@ -956,6 +971,111 @@ namespace Tablix.Server.Handlers
             }
 
             return normalized.Trim();
+        }
+
+        private static string NormalizeGeneratedContext(CompletionClientBase client, ModelProviderSettings provider, ChatResponse response, out string finishReason, out ChatStreamingUsage usage)
+        {
+            finishReason = null;
+            usage = null;
+            string context = response?.Text;
+
+            if (provider != null && provider.Type == ModelProviderTypeEnum.Gemini && client != null)
+            {
+                string responseBody = client.CallDetails
+                    .LastOrDefault(detail => !String.IsNullOrWhiteSpace(detail.ResponseBody) && detail.StatusCode.HasValue && detail.StatusCode.Value >= 200 && detail.StatusCode.Value < 300)
+                    ?.ResponseBody;
+
+                string geminiContext = ExtractGeminiTextFromResponseBody(responseBody, out finishReason, out usage);
+                if (!String.IsNullOrWhiteSpace(geminiContext))
+                    context = geminiContext;
+            }
+
+            return NormalizeGeneratedContext(context);
+        }
+
+        private static string ExtractGeminiTextFromResponseBody(string responseBody, out string finishReason, out ChatStreamingUsage usage)
+        {
+            finishReason = null;
+            usage = null;
+            if (String.IsNullOrWhiteSpace(responseBody)) return null;
+
+            try
+            {
+                GeminiGenerateResponse parsed = JsonSerializer.Deserialize<GeminiGenerateResponse>(responseBody, GeminiResponseJsonOptions);
+                usage = ExtractGeminiUsage(parsed?.UsageMetadata);
+
+                GeminiCandidate candidate = parsed?.Candidates?.FirstOrDefault();
+                if (candidate == null) return null;
+                finishReason = candidate.FinishReason;
+
+                List<GeminiPart> parts = candidate.Content?.Parts;
+                if (parts == null) return null;
+
+                StringBuilder builder = new StringBuilder();
+                foreach (GeminiPart part in parts)
+                {
+                    if (!String.IsNullOrEmpty(part?.Text)) builder.Append(part.Text);
+                }
+
+                string text = builder.ToString();
+                return String.IsNullOrWhiteSpace(text) ? null : text;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private static ChatStreamingUsage ExtractGeminiUsage(GeminiUsageMetadata usageMetadata)
+        {
+            if (usageMetadata == null) return null;
+
+            ChatStreamingUsage usage = new ChatStreamingUsage
+            {
+                PromptTokens = usageMetadata.PromptTokenCount,
+                CompletionTokens = usageMetadata.CandidatesTokenCount,
+                TotalTokens = usageMetadata.TotalTokenCount
+            };
+
+            if (!usage.PromptTokens.HasValue && !usage.CompletionTokens.HasValue && !usage.TotalTokens.HasValue)
+                return null;
+
+            return usage;
+        }
+
+        private static bool IsRejectedContextFinishReason(string finishReason)
+        {
+            if (String.IsNullOrWhiteSpace(finishReason)) return false;
+            return !String.Equals(finishReason, "STOP", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private class GeminiGenerateResponse
+        {
+            public List<GeminiCandidate> Candidates { get; set; } = null;
+            public GeminiUsageMetadata UsageMetadata { get; set; } = null;
+        }
+
+        private class GeminiCandidate
+        {
+            public GeminiContent Content { get; set; } = null;
+            public string FinishReason { get; set; } = null;
+        }
+
+        private class GeminiContent
+        {
+            public List<GeminiPart> Parts { get; set; } = null;
+        }
+
+        private class GeminiPart
+        {
+            public string Text { get; set; } = null;
+        }
+
+        private class GeminiUsageMetadata
+        {
+            public int? PromptTokenCount { get; set; } = null;
+            public int? CandidatesTokenCount { get; set; } = null;
+            public int? TotalTokenCount { get; set; } = null;
         }
 
         private async Task<ChatExecutionResult> ExecuteChatResponseAsync(
