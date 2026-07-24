@@ -331,7 +331,7 @@ namespace Tablix.Core.Helpers
             AddAmbiguityIfNeeded(signals, promptSpecific, normalizedMessage, "status", new List<string> { "status", "state" }, statuses, "Which status column should be used?", "Multiple status-like columns exist.");
             AddAmbiguityIfNeeded(signals, promptSpecific, normalizedMessage, "revenue", new List<string> { "revenue", "sales", "amount", "total" }, metrics, "Which metric column defines revenue or total value?", "Multiple numeric amount-like columns exist.");
             AddAmbiguityIfNeeded(signals, promptSpecific, normalizedMessage, "owner", new List<string> { "owner", "assignee" }, ownerColumns, "Which ownership column should be used?", "Multiple owner-like columns exist.");
-            AddAmbiguityIfNeeded(signals, promptSpecific, normalizedMessage, "customer", new List<string> { "customer", "client", "user", "account" }, partyTables, "Which party table should represent the user or customer?", "Multiple person, customer, user, or account tables exist.");
+            AddAmbiguityIfNeeded(signals, promptSpecific, normalizedMessage, "customer", new List<string> { "customer", "client", "account" }, partyTables, "Which party table should represent the user or customer?", "Multiple person, customer, user, or account tables exist.");
 
             if (!promptSpecific && String.IsNullOrWhiteSpace(context) && detail.Tables.Count > 0)
             {

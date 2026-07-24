@@ -1429,6 +1429,27 @@ namespace Test.Shared
                         List<AmbiguitySignal> signals = DatabaseIntelligenceBuilder.FindPromptAmbiguities(detail, null, "Show me the latest orders");
                         True(signals.Any(signal => signal.Term == "latest"), "Latest ambiguity should be detected.");
                         return Task.CompletedTask;
+                    }),
+                    Case("DatabaseIntelligence", "UserEmailDoesNotTriggerPartyAmbiguity", "Explicit user email questions do not ask for a customer/client table", ct =>
+                    {
+                        DatabaseDetail detail = new DatabaseDetail
+                        {
+                            DatabaseId = "jurat_like",
+                            IsCrawled = true,
+                            Tables = new List<TableDetail>
+                            {
+                                new TableDetail { SchemaName = "enotary", TableName = "usermaster" },
+                                new TableDetail { SchemaName = "enotary", TableName = "signing" },
+                                new TableDetail { SchemaName = "enotary", TableName = "combinedclientsignerdata" },
+                                new TableDetail { SchemaName = "enotary", TableName = "masterclientidentification" },
+                                new TableDetail { SchemaName = "enotary", TableName = "masterclientsigner" },
+                                new TableDetail { SchemaName = "enotary", TableName = "signingdraft_masterclientsigner" }
+                            }
+                        };
+
+                        List<AmbiguitySignal> signals = DatabaseIntelligenceBuilder.FindPromptAmbiguities(detail, "User-centric signing data uses saved context.", "how many signings does the user joel.christner@gmail.com have");
+                        False(signals.Any(signal => signal.Term == "customer"), "The word user should not be treated as a customer/client ambiguity trigger.");
+                        return Task.CompletedTask;
                     })
                 });
         }
@@ -2722,8 +2743,11 @@ namespace Test.Shared
                         Contains(chatHandler, "Classify the latest user message", "Fallback planner should classify the latest user intent.");
                         Contains(chatHandler, "Intent must be one of", "Fallback planner should use explicit intent labels.");
                         Contains(chatHandler, "Execute to false", "Fallback planner should allow no-query decisions.");
+                        Contains(chatHandler, "Ambiguity signals:", "Ambiguity signals should remain planner prompt guidance.");
                         Contains(executionPolicy, "UseFallbackPlanner", "Execution policy should route to model-based fallback planning.");
                         Contains(fallbackPlan, "PromptIntentTypeEnum Intent", "Fallback query plan should preserve the model-classified intent.");
+                        DoesNotContain(chatHandler, "ShouldClarifyAmbiguity", "Ambiguity signals should not bypass context-aware model planning.");
+                        DoesNotContain(chatHandler, "ambiguity_check", "Ambiguity signals should not create a pre-planner execution path.");
                         DoesNotContain(chatHandler, "user.Contains(", "Chat intent routing should not use substring matching against user prompts.");
                         DoesNotContain(chatHandler, "UserAskedForData", "Chat intent routing should not keep the old data-request heuristic.");
                         DoesNotContain(chatHandler, "UserAskedOnlyForSql", "Chat intent routing should not keep the old SQL-only heuristic.");

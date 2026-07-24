@@ -1086,9 +1086,6 @@ namespace Tablix.Server.Handlers
             Func<ChatStreamEvent, Task> sendEventAsync)
         {
             ChatExecutionPolicy policy = BuildExecutionPolicy(preparation, request);
-            if (ShouldClarifyAmbiguity(preparation))
-                return BuildAmbiguityClarificationResult(preparation, policy.CapabilityNotice);
-
             if (!policy.ToolsEnabled)
             {
                 return await ExecutePlainChatAsync(client, preparation, "execution_disabled", policy.CapabilityNotice, token).ConfigureAwait(false);
@@ -1126,9 +1123,6 @@ namespace Tablix.Server.Handlers
             Func<ChatStreamEvent, Task> sendEventAsync)
         {
             ChatExecutionPolicy policy = BuildExecutionPolicy(preparation, request);
-            if (ShouldClarifyAmbiguity(preparation))
-                return BuildAmbiguityClarificationResult(preparation, policy.CapabilityNotice);
-
             if (!policy.ToolsEnabled)
             {
                 return await ExecutePlainChatStreamingAsync(client, preparation, "execution_disabled", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
@@ -2149,53 +2143,6 @@ namespace Tablix.Server.Handlers
                 execution.VerifiedAnswer = BuildVerifiedAnswer(preparation, execution);
         }
 
-        private static bool ShouldClarifyAmbiguity(ChatPreparation preparation)
-        {
-            if (preparation == null || preparation.Ambiguities == null || preparation.Ambiguities.Count == 0) return false;
-            if (!LooksLikeDataRequest(preparation.LatestUserMessage)) return false;
-
-            return true;
-        }
-
-        private static ChatExecutionResult BuildAmbiguityClarificationResult(ChatPreparation preparation, string capabilityNotice)
-        {
-            string message = BuildAmbiguityClarificationMessage(preparation.Ambiguities);
-            VerifiedAnswer verifiedAnswer = new VerifiedAnswer
-            {
-                State = "ambiguous",
-                Summary = "Tablix did not execute SQL because the request has multiple plausible database interpretations.",
-                Evidence = preparation.Ambiguities.Select(ambiguity => ambiguity.Question).ToList()
-            };
-
-            return new ChatExecutionResult
-            {
-                Success = true,
-                Message = message,
-                Model = preparation.Provider.Model,
-                ExecutionPath = "ambiguity_check",
-                CapabilityNotice = capabilityNotice,
-                Ambiguities = preparation.Ambiguities,
-                VerifiedAnswer = verifiedAnswer,
-                Telemetry = CreateTelemetry(0, 0, preparation.Prompt, message, null)
-            };
-        }
-
-        private static string BuildAmbiguityClarificationMessage(List<AmbiguitySignal> ambiguities)
-        {
-            StringBuilder builder = new StringBuilder();
-            builder.AppendLine("I need one clarification before I run SQL.");
-            builder.AppendLine();
-
-            foreach (AmbiguitySignal ambiguity in ambiguities.Take(3))
-            {
-                builder.AppendLine("- " + ambiguity.Question);
-                if (ambiguity.Candidates.Count > 0)
-                    builder.AppendLine("  Candidates: " + String.Join("; ", ambiguity.Candidates.Take(6)));
-            }
-
-            return builder.ToString().Trim();
-        }
-
         private static VerifiedAnswer BuildVerifiedAnswer(ChatPreparation preparation, ChatExecutionResult execution)
         {
             if (execution == null)
@@ -2219,16 +2166,6 @@ namespace Tablix.Server.Handlers
 
             if (failedQuery != null)
                 return BuildVerifiedAnswerFromFailedQuery(failedQuery);
-
-            if (preparation.Ambiguities != null && preparation.Ambiguities.Count > 0 && String.Equals(execution.ExecutionPath, "ambiguity_check", StringComparison.OrdinalIgnoreCase))
-            {
-                return new VerifiedAnswer
-                {
-                    State = "ambiguous",
-                    Summary = "No SQL was executed because Tablix needs a clarified database definition.",
-                    Evidence = preparation.Ambiguities.Select(ambiguity => ambiguity.Question).ToList()
-                };
-            }
 
             if (LooksLikeDataRequest(preparation.LatestUserMessage))
             {
