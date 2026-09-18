@@ -2041,23 +2041,27 @@ button.health-histogram:focus-visible {
   grid-template-columns: 1fr 1fr 1fr;
 }
 
-.checkbox-grid {
+.query-check-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px 22px;
+  gap: 8px 20px;
 }
 
-.checkbox-option {
+.query-check {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  padding: 0;
+  border: none;
+  background: none;
   font-size: 13px;
+  font-weight: 400;
   color: var(--text-primary);
   cursor: pointer;
   user-select: none;
 }
 
-.checkbox-option input[type="checkbox"] {
+.query-check input[type="checkbox"] {
   appearance: auto;
   width: 15px;
   min-width: 15px;

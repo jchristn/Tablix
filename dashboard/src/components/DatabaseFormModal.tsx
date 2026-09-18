@@ -311,9 +311,9 @@ export default function DatabaseFormModal({ Open, DatabaseId, OnClose, OnSaved }
               <h4 className="form-section-title">Permissions &amp; Context</h4>
               <div className="form-group">
                 <label title="SQL statement types permitted for this database">Allowed Queries</label>
-                <div className="checkbox-grid" role="group" aria-label="Allowed query types">
+                <div className="query-check-list" role="group" aria-label="Allowed query types">
                   {[...queryOptions, ...allowed.filter(query => !queryOptions.includes(query))].map(query => (
-                    <label key={query} className="checkbox-option" title={`Permit ${query} statements`}>
+                    <label key={query} className="query-check" title={`Permit ${query} statements`}>
                       <input
                         type="checkbox"
                         checked={allowed.includes(query)}
