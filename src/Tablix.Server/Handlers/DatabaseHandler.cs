@@ -144,6 +144,8 @@ namespace Tablix.Server.Handlers
                 Port = entry.Port,
                 HasUser = !String.IsNullOrEmpty(entry.User),
                 HasPassword = !String.IsNullOrEmpty(entry.Password),
+                User = entry.User,
+                Password = entry.Password,
                 Filename = entry.Filename,
                 AllowedQueries = new List<string>(entry.AllowedQueries)
             };

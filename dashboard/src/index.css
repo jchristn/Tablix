@@ -2042,13 +2042,13 @@ button.health-histogram:focus-visible {
 }
 
 .checkbox-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
 }
 
 .checkbox-option {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
   font-size: 13px;
@@ -2057,10 +2057,16 @@ button.health-histogram:focus-visible {
   user-select: none;
 }
 
-.checkbox-option input {
-  width: 16px;
-  height: 16px;
+.checkbox-option input[type="checkbox"] {
+  appearance: auto;
+  width: 15px;
+  min-width: 15px;
+  height: 15px;
   margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
   flex: 0 0 auto;
   cursor: pointer;
   accent-color: var(--accent);

@@ -76,8 +76,8 @@ export default function DatabaseFormModal({ Open, DatabaseId, OnClose, OnSaved }
         Type: data.Type || 'Sqlite',
         Hostname: data.Hostname || '',
         Port: data.Port ?? null,
-        User: '',
-        Password: '',
+        User: data.User || '',
+        Password: data.Password || '',
         HasUser: data.HasUser || false,
         HasPassword: data.HasPassword || false,
         DatabaseName: data.DatabaseName || '',
@@ -244,27 +244,25 @@ export default function DatabaseFormModal({ Open, DatabaseId, OnClose, OnSaved }
                     </div>
                   </div>
 
-                  <div className="form-grid">
-                    <div className="form-group">
+                  <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr 1fr', marginBottom: 0 }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
                       <label title="Database authentication username">User</label>
                       <input
-                        title="Username for database authentication. Leave blank when editing to keep the existing username."
+                        title="Username for database authentication."
                         value={entry.User || ''}
                         onChange={e => handleChange('User', e.target.value)}
-                        placeholder={isEdit && entry.HasUser ? 'Configured — leave blank to keep' : ''}
                         autoComplete="off"
                         name="tablix-db-user"
                       />
                     </div>
-                    <div className="form-group">
+                    <div className="form-group" style={{ marginBottom: 0 }}>
                       <label title="Database authentication password">Password</label>
                       <div className="input-with-affix">
                         <input
-                          title="Password for database authentication. Leave blank when editing to keep the existing password."
+                          title="Password for database authentication."
                           type={showPassword ? 'text' : 'password'}
                           value={entry.Password || ''}
                           onChange={e => handleChange('Password', e.target.value)}
-                          placeholder={isEdit && entry.HasPassword ? 'Configured — leave blank to keep' : ''}
                           autoComplete="new-password"
                           name="tablix-db-password"
                         />
@@ -281,9 +279,6 @@ export default function DatabaseFormModal({ Open, DatabaseId, OnClose, OnSaved }
                         </button>
                       </div>
                     </div>
-                  </div>
-
-                  <div className={isMysql ? '' : 'form-grid'} style={{ marginBottom: 0 }}>
                     <div className="form-group" style={{ marginBottom: 0 }}>
                       <label title={isMysql ? 'Name of the database/schema to connect to' : 'Name of the database to connect to'}>Database Name</label>
                       <input
@@ -294,19 +289,20 @@ export default function DatabaseFormModal({ Open, DatabaseId, OnClose, OnSaved }
                         autoComplete="off"
                       />
                     </div>
-                    {!isMysql && (
-                      <div className="form-group" style={{ marginBottom: 0 }}>
-                        <label title="Database schema to crawl (default: public)">Schema</label>
-                        <input
-                          title="Schema name used when discovering tables"
-                          value={entry.Schema || ''}
-                          onChange={e => handleChange('Schema', e.target.value)}
-                          placeholder="public"
-                          autoComplete="off"
-                        />
-                      </div>
-                    )}
                   </div>
+
+                  {!isMysql && (
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label title="Database schema to crawl (default: public)">Schema</label>
+                      <input
+                        title="Schema name used when discovering tables"
+                        value={entry.Schema || ''}
+                        onChange={e => handleChange('Schema', e.target.value)}
+                        placeholder="public"
+                        autoComplete="off"
+                      />
+                    </div>
+                  )}
                 </>
               )}
             </section>
@@ -332,7 +328,7 @@ export default function DatabaseFormModal({ Open, DatabaseId, OnClose, OnSaved }
                 <label title="Free-form description of the database for AI agents">Context</label>
                 <textarea
                   title="This text is provided to AI agents to help them understand the database"
-                  rows={5}
+                  rows={12}
                   value={entry.Context || ''}
                   onChange={e => handleChange('Context', e.target.value)}
                   placeholder="Describe the database, its tables, and how they relate..."

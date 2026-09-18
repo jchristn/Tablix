@@ -25,14 +25,24 @@ namespace Tablix.Core.Models
         public int? Port { get; set; } = null;
 
         /// <summary>
-        /// Whether a username is configured. The username itself is not returned.
+        /// Whether a username is configured.
         /// </summary>
         public bool HasUser { get; set; } = false;
 
         /// <summary>
-        /// Whether a password is configured. The password itself is not returned.
+        /// Whether a password is configured.
         /// </summary>
         public bool HasPassword { get; set; } = false;
+
+        /// <summary>
+        /// Configured database username, returned so the dashboard edit form can pre-populate it.
+        /// </summary>
+        public string User { get; set; } = null;
+
+        /// <summary>
+        /// Configured database password, returned so the dashboard edit form can pre-populate and reveal it.
+        /// </summary>
+        public string Password { get; set; } = null;
 
         /// <summary>
         /// SQLite filename or configured file path.
