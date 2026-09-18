@@ -187,6 +187,8 @@ export interface DatabaseSummary {
   Id: string;
   Name: string | null;
   Type: string;
+  Hostname: string | null;
+  Port: number | null;
   DatabaseName: string | null;
   Schema: string | null;
   Filename: string | null;

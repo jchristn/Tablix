@@ -4,6 +4,7 @@ import { apiFetch } from '../api/client';
 import ButtonBusyContent from '../components/ButtonBusyContent';
 import ClipboardButton from '../components/ClipboardButton';
 import ConfirmDialog from '../components/ConfirmDialog';
+import DatabaseFormModal from '../components/DatabaseFormModal';
 import RecordViewModal, { isInteractiveRowClick, type RecordViewRow } from '../components/RecordViewModal';
 import type {
   BuildContextResponse,
@@ -52,6 +53,7 @@ export default function DatabaseDetailPage() {
   const [viewRecord, setViewRecord] = useState<DetailViewRecord | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [intelligence, setIntelligence] = useState<DatabaseIntelligenceResponse | null>(null);
   const [intelligenceError, setIntelligenceError] = useState('');
 
@@ -462,10 +464,17 @@ export default function DatabaseDetailPage() {
           <button className="btn-secondary" title="Validate this saved database connection" onClick={handleTestConnection} disabled={testingConnection}>
             {testingConnection ? 'Testing...' : 'Test'}
           </button>
-          <button className="btn-secondary" title="Edit this database entry's connection settings and context" onClick={() => navigate(`/databases/${id}/edit`)}>Edit</button>
+          <button className="btn-secondary" title="Edit this database entry's connection settings and context" onClick={() => setEditOpen(true)}>Edit</button>
           <button className="btn-danger" title="Permanently remove this database entry from the configuration" onClick={() => setDeleteOpen(true)}>Delete</button>
         </div>
       </div>
+
+      <DatabaseFormModal
+        Open={editOpen}
+        DatabaseId={id}
+        OnClose={() => setEditOpen(false)}
+        OnSaved={() => { setEditOpen(false); loadDetail(); }}
+      />
 
       <ConfirmDialog
         Open={deleteOpen}
@@ -536,17 +545,38 @@ export default function DatabaseDetailPage() {
       )}
 
       <div className="card" style={{ marginBottom: '16px' }}>
-        <table>
+        <table className="detail-facts-table">
           <tbody>
-            <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Database ID', [{ Label: 'ID', Value: detail.DatabaseId }], event)}><td title="Unique identifier for this database entry" style={{ fontWeight: 500, width: '140px' }}>ID</td><td>{detail.DatabaseId}</td></tr>
-            <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Database Type', [{ Label: 'Type', Value: detail.Type }], event)}><td title="Database engine type" style={{ fontWeight: 500 }}>Type</td><td>{detail.Type}</td></tr>
-            <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Database Schema', [{ Label: 'Schema', Value: detail.Schema }], event)}><td title="Database schema name" style={{ fontWeight: 500 }}>Schema</td><td>{detail.Schema || '-'}</td></tr>
-            <tr title="Click to view crawl status" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Crawl Status', [
-              { Label: 'Crawled', Value: detail.IsCrawled },
-              { Label: 'Last Crawl', Value: detail.CrawledUtc ? new Date(detail.CrawledUtc).toLocaleString() : null },
-              { Label: 'Crawl Error', Value: detail.CrawlError },
-            ], event)}>
-              <td title="Whether the schema has been successfully crawled" style={{ fontWeight: 500 }}>Status</td>
+            <tr><td title="Unique identifier for this database entry">ID</td><td>{detail.DatabaseId}</td></tr>
+            {detail.Name && <tr><td title="Human-readable display name">Name</td><td>{detail.Name}</td></tr>}
+            <tr><td title="Database engine type">Type</td><td>{detail.Type}</td></tr>
+            {detail.Type === 'Sqlite' ? (
+              <tr><td title="Path to the SQLite database file">Filename</td><td>{detail.Filename || '-'}</td></tr>
+            ) : (
+              <>
+                <tr><td title="Database server host and port">Host</td><td>{detail.Hostname ? `${detail.Hostname}${detail.Port ? ':' + detail.Port : ''}` : '-'}</td></tr>
+                <tr><td title="Database name on the server">Database</td><td>{detail.DatabaseName || '-'}</td></tr>
+                <tr><td title="Database schema name">Schema</td><td>{detail.Schema || '-'}</td></tr>
+                <tr>
+                  <td title="Whether a username is configured">User</td>
+                  <td>{detail.HasUser ? <span className="badge badge-success">Configured</span> : <span className="muted-text">Not set</span>}</td>
+                </tr>
+                <tr>
+                  <td title="Whether a password is configured">Password</td>
+                  <td>{detail.HasPassword ? <span className="badge badge-success">Configured</span> : <span className="muted-text">Not set</span>}</td>
+                </tr>
+              </>
+            )}
+            <tr>
+              <td title="SQL statement types permitted for this database">Allowed Queries</td>
+              <td>
+                {detail.AllowedQueries && detail.AllowedQueries.length > 0
+                  ? <div className="chip-row">{detail.AllowedQueries.map(query => <span key={query} className="chip">{query}</span>)}</div>
+                  : <span className="muted-text">None configured</span>}
+              </td>
+            </tr>
+            <tr>
+              <td title="Whether the schema has been successfully crawled">Status</td>
               <td>
                 {detail.IsCrawled
                   ? <span className="badge badge-success" title="Schema geometry has been successfully discovered">Crawled</span>
@@ -554,8 +584,8 @@ export default function DatabaseDetailPage() {
                 }
               </td>
             </tr>
-            {detail.CrawledUtc && <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Last Crawl', [{ Label: 'Last Crawl', Value: new Date(detail.CrawledUtc as string).toLocaleString() }], event)}><td title="Timestamp of the last successful crawl" style={{ fontWeight: 500 }}>Last Crawl</td><td>{new Date(detail.CrawledUtc).toLocaleString()}</td></tr>}
-            {detail.CrawlError && <tr title="Click to view this field" style={{ cursor: 'pointer' }} onClick={event => openDetailRecord('Crawl Error', [{ Label: 'Error', Value: detail.CrawlError }], event)}><td title="Error from the last crawl attempt" style={{ fontWeight: 500 }}>Error</td><td className="error-text">{detail.CrawlError}</td></tr>}
+            {detail.CrawledUtc && <tr><td title="Timestamp of the last successful crawl">Last Crawl</td><td>{new Date(detail.CrawledUtc).toLocaleString()}</td></tr>}
+            {detail.CrawlError && <tr><td title="Error from the last crawl attempt">Error</td><td className="error-text">{detail.CrawlError}</td></tr>}
           </tbody>
         </table>
       </div>

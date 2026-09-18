@@ -124,12 +124,16 @@ namespace Tablix.Server.Handlers
             }
 
             // Merge non-secret settings fields for dashboard display/edit flows.
+            // Connection-defining fields (type, schema, database/file name) must come from the
+            // authoritative saved entry, not the crawl detail: the persisted crawl record does not
+            // store the engine type, so reading it back from detail always yields the enum default
+            // (Sqlite) and would mask the real configured type in edit/display flows.
             return new DatabaseReadDetail
             {
                 DatabaseId = detail.DatabaseId,
-                Type = detail.Type,
-                DatabaseName = detail.DatabaseName,
-                Schema = detail.Schema,
+                Type = entry.Type,
+                DatabaseName = entry.DatabaseName ?? entry.Filename,
+                Schema = entry.Schema,
                 Context = entry.Context,
                 Tables = detail.Tables,
                 CrawledUtc = detail.CrawledUtc,

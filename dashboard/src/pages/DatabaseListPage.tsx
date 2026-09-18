@@ -3,7 +3,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../api/client';
 import ActionMenu, { EllipsisIcon, openActionMenuFromButton, type ActionMenuState } from '../components/ActionMenu';
 import ConfirmDialog from '../components/ConfirmDialog';
-import RecordViewModal, { isInteractiveRowClick } from '../components/RecordViewModal';
+import DatabaseFormModal from '../components/DatabaseFormModal';
+import { isInteractiveRowClick } from '../components/RecordViewModal';
 import { translateTooltip } from '../i18n';
 import type { BuildContextResponse, ChatOptionsResponse, DatabaseSummary, EnumerationResult, ModelProviderSummary } from '../types';
 
@@ -22,7 +23,8 @@ export default function DatabaseListPage() {
   const [contextResult, setContextResult] = useState('');
   const [actionMenu, setActionMenu] = useState<DatabaseActionMenuState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DatabaseSummary | null>(null);
-  const [viewTarget, setViewTarget] = useState<DatabaseSummary | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [formDatabaseId, setFormDatabaseId] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const maxResults = 20;
   const navigate = useNavigate();
@@ -100,9 +102,26 @@ export default function DatabaseListPage() {
     setDeleteTarget(db);
   }
 
+  function openCreateForm() {
+    setFormDatabaseId(null);
+    setFormOpen(true);
+  }
+
+  function openEditForm(id: string) {
+    setActionMenu(null);
+    setFormDatabaseId(id);
+    setFormOpen(true);
+  }
+
+  async function handleFormSaved() {
+    setFormOpen(false);
+    setFormDatabaseId(null);
+    await loadDatabases();
+  }
+
   function openDatabaseRow(db: DatabaseSummary, event: React.MouseEvent<HTMLTableRowElement>) {
     if (isInteractiveRowClick(event)) return;
-    setViewTarget(db);
+    navigate(`/databases/${db.Id}`);
   }
 
   async function deleteDatabase() {
@@ -169,7 +188,7 @@ export default function DatabaseListPage() {
     <div>
       <div className="page-header">
         <h2 title="Configured database connections">Databases</h2>
-        <button className="btn-primary" title="Add a new database connection" onClick={() => navigate('/databases/new')}>Add Database</button>
+        <button className="btn-primary" title="Add a new database connection" onClick={openCreateForm}>Add Database</button>
       </div>
 
       {error && <p className="error-text">{error}</p>}
@@ -268,6 +287,16 @@ export default function DatabaseListPage() {
         OnClose={() => setActionMenu(null)}
         Items={actionMenu ? [
           {
+            Label: 'View Details',
+            TooltipKey: 'actions.details',
+            OnClick: () => navigate(`/databases/${actionMenu.Database.Id}`)
+          },
+          {
+            Label: 'Edit',
+            TooltipKey: 'actions.edit',
+            OnClick: () => openEditForm(actionMenu.Database.Id)
+          },
+          {
             Label: 'Build Context',
             TooltipKey: 'actions.buildContext',
             Disabled: providers.length === 0 || !actionMenu.Database.IsCrawled,
@@ -293,30 +322,11 @@ export default function DatabaseListPage() {
         OnCancel={() => !deleteBusy && setDeleteTarget(null)}
       />
 
-      <RecordViewModal
-        Open={viewTarget != null}
-        Title={viewTarget?.Name || viewTarget?.Id || 'Database'}
-        Subtitle={viewTarget?.Id}
-        Rows={viewTarget ? [
-          { Label: 'ID', Value: viewTarget.Id },
-          { Label: 'Name', Value: viewTarget.Name },
-          { Label: 'Type', Value: viewTarget.Type },
-          { Label: 'Database Name', Value: viewTarget.DatabaseName },
-          { Label: 'Schema', Value: viewTarget.Schema },
-          { Label: 'Filename', Value: viewTarget.Filename },
-          { Label: 'Allowed Queries', Value: viewTarget.AllowedQueries },
-          { Label: 'Crawled', Value: viewTarget.IsCrawled },
-          { Label: 'Crawl Error', Value: viewTarget.CrawlError },
-          { Label: 'Has User', Value: viewTarget.HasUser },
-          { Label: 'Has Password', Value: viewTarget.HasPassword },
-        ] : []}
-        Actions={viewTarget && (
-          <>
-            <button type="button" className="btn-secondary" onClick={() => navigate(`/databases/${viewTarget.Id}`)}>View Details</button>
-            <button type="button" className="btn-primary" onClick={() => navigate(`/databases/${viewTarget.Id}/edit`)}>Edit</button>
-          </>
-        )}
-        OnClose={() => setViewTarget(null)}
+      <DatabaseFormModal
+        Open={formOpen}
+        DatabaseId={formDatabaseId}
+        OnClose={() => { setFormOpen(false); setFormDatabaseId(null); }}
+        OnSaved={handleFormSaved}
       />
 
       {contextTarget && (
