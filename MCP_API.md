@@ -3,7 +3,7 @@
 Tablix exposes an HTTP MCP server for AI agents. The MCP endpoint is:
 
 ```text
-http://localhost:9102/rpc
+http://localhost:9102/mcp
 ```
 
 The MCP host and port are configured in `tablix.json` under `Rest.Hostname` and `Rest.McpPort`.

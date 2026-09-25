@@ -18,7 +18,7 @@ The Docker deployment includes:
 | Dashboard | http://localhost:9101 |
 | REST API | http://localhost:9100 |
 | Swagger UI | http://localhost:9100/swagger |
-| MCP endpoint | http://localhost:9102/rpc |
+| MCP endpoint | http://localhost:9102/mcp |
 
 The default API key is:
 

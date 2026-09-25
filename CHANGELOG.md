@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Fixed MCP tool arguments not reaching Tablix tool handlers after the Voltaic 1.1.0 upgrade, which made every tool that takes a `databaseId` report it as missing.
+- MCP clients are now pointed at the Streamable HTTP endpoint `http://localhost:9102/mcp`. The JSON-RPC `/rpc` endpoint in Voltaic 1.1.0 does not return the stateless-revision results Claude Code requires, so Claude Code could connect but list no tools.
+- Fixed MCP table lookups returning null `TableId` values and failing to resolve table names. Crawls held only in the crawl cache, such as the startup crawl, now carry the same table IDs as persisted metadata.
+- Fixed `--install-mcp` writing Codex configuration to `~/.codex/config.json`, which Codex does not read. It now writes a `[mcp_servers.tablix]` table to `~/.codex/config.toml`.
+- Fixed `--install-mcp` rewriting JSON client configs with PascalCase keys and dropping unknown MCP server fields such as `headers`. Only the `tablix` entry is changed now.
+
+### Changed
+
+- Updated NuGet dependencies, including Voltaic 1.1.0, Watson 7.2.0, PolyPrompt 2.6.0, and SyslogLogging 2.2.2.
+- Stopped tracking `.claude/settings.local.json`, which holds machine-local settings.
+
 ## v0.3.0 - ALPHA (2026-07-22)
 
 ### Added

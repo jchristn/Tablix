@@ -693,6 +693,107 @@ namespace Test.Shared
                             TryDeleteDirectory(directory);
                         }
                     }),
+                    Case("McpInstaller", "JsonPreservesOtherEntries", "MCP installer replaces the Tablix JSON entry and preserves everything else", ct =>
+                    {
+                        string input = "{\n  \"theme\": \"dark\",\n  \"mcpServers\": {\n    \"other\": { \"type\": \"http\", \"url\": \"https://other.example.com/mcp\", \"headers\": { \"Authorization\": \"Bearer x\" } },\n    \"tablix\": { \"type\": \"http\", \"url\": \"http://localhost:9102/rpc\" }\n  },\n  \"projects\": { \"C:/Code/<x>\": { \"allowedTools\": [] } }\n}";
+                        string output = McpInstaller.PatchJson(input, McpInstaller.BuildUrl(9102));
+
+                        using JsonDocument document = JsonDocument.Parse(output);
+                        JsonElement root = document.RootElement;
+                        Equal("dark", root.GetProperty("theme").GetString(), "Unrelated top-level settings should be preserved.");
+                        True(root.GetProperty("projects").TryGetProperty("C:/Code/<x>", out _), "Unrelated nested settings should be preserved verbatim.");
+                        JsonElement servers = root.GetProperty("mcpServers");
+                        Equal("http", servers.GetProperty("tablix").GetProperty("type").GetString(), "Tablix entry type mismatch.");
+                        Equal("http://localhost:9102/mcp", servers.GetProperty("tablix").GetProperty("url").GetString(), "Tablix entry should point at the MCP endpoint.");
+                        Equal("Bearer x", servers.GetProperty("other").GetProperty("headers").GetProperty("Authorization").GetString(), "Other server headers should be preserved.");
+                        True(root.EnumerateObject().Any(property => property.Name == "mcpServers") && !root.EnumerateObject().Any(property => property.Name == "McpServers"), "Client config keys must keep their camelCase names.");
+                        DoesNotContain(output, "\\u003C", "Unrelated values should not be re-escaped.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("McpInstaller", "JsonCreatesServersObject", "MCP installer adds mcpServers to a config that has none", ct =>
+                    {
+                        using JsonDocument document = JsonDocument.Parse(McpInstaller.PatchJson("{ \"theme\": \"light\" }", McpInstaller.BuildUrl(9200)));
+                        Equal("http://localhost:9200/mcp", document.RootElement.GetProperty("mcpServers").GetProperty("tablix").GetProperty("url").GetString(), "Tablix entry URL mismatch.");
+                        Equal("light", document.RootElement.GetProperty("theme").GetString(), "Existing settings should be preserved.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("McpInstaller", "TomlReplacesExistingTable", "MCP installer replaces the Tablix TOML table and preserves other tables", ct =>
+                    {
+                        string input = "model = \"x\"\n\n[mcp_servers.tablix]\nurl = \"http://localhost:9102/rpc\"\n\n[mcp_servers.tablix.env]\nA = \"1\"\n\n[mcp_servers.other]\nurl = \"https://other.example.com/mcp\"\n";
+                        string output = McpInstaller.PatchToml(input, McpInstaller.BuildUrl(9102));
+                        Contains(output, "model = \"x\"", "Top-level settings should be preserved.");
+                        Contains(output, "[mcp_servers.tablix]\nurl = \"http://localhost:9102/mcp\"\n\n[mcp_servers.other]", "Tablix table should be replaced in place.");
+                        Contains(output, "url = \"https://other.example.com/mcp\"", "Other tables should be preserved.");
+                        DoesNotContain(output, "/rpc", "The old Tablix URL should be removed.");
+                        DoesNotContain(output, "[mcp_servers.tablix.env]", "Stale Tablix subtables should be removed.");
+                        Equal(1, Regex.Matches(output, Regex.Escape("[mcp_servers.tablix]")).Count, "Tablix table should appear once.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("McpInstaller", "TomlAppendsTable", "MCP installer appends a Tablix TOML table when none exists", ct =>
+                    {
+                        string output = McpInstaller.PatchToml("model = \"x\"\r\n", McpInstaller.BuildUrl(9102));
+                        Equal("model = \"x\"\r\n\r\n[mcp_servers.tablix]\r\nurl = \"http://localhost:9102/mcp\"\r\n", output, "Appended TOML mismatch.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("McpInstaller", "InstallPatchesClientFiles", "MCP installer patches Claude Code JSON and Codex TOML under a home directory", ct =>
+                    {
+                        string home = Path.Combine(Path.GetTempPath(), "tablix_home_" + Guid.NewGuid().ToString("N"));
+                        Directory.CreateDirectory(Path.Combine(home, ".codex"));
+                        try
+                        {
+                            File.WriteAllText(Path.Combine(home, ".claude.json"), "{ \"mcpServers\": { \"tablix\": { \"type\": \"http\", \"url\": \"http://localhost:9102/rpc\" } } }");
+                            File.WriteAllText(Path.Combine(home, ".codex", "config.toml"), "model = \"x\"\n");
+                            File.WriteAllText(Path.Combine(home, ".codex", "config.json"), "{}");
+
+                            McpInstaller.Install(9102, home);
+
+                            using JsonDocument claude = JsonDocument.Parse(File.ReadAllText(Path.Combine(home, ".claude.json")));
+                            Equal("http://localhost:9102/mcp", claude.RootElement.GetProperty("mcpServers").GetProperty("tablix").GetProperty("url").GetString(), "Claude Code entry URL mismatch.");
+                            Contains(File.ReadAllText(Path.Combine(home, ".codex", "config.toml")), "[mcp_servers.tablix]\nurl = \"http://localhost:9102/mcp\"", "Codex TOML should gain the Tablix table.");
+                            Equal("{}", File.ReadAllText(Path.Combine(home, ".codex", "config.json")), "Codex does not read config.json, so it should not be touched.");
+                        }
+                        finally
+                        {
+                            TryDeleteDirectory(home);
+                        }
+
+                        return Task.CompletedTask;
+                    }),
+                    Case("ServerLifecycle", "McpToolCallReceivesArguments", "MCP tools/call over HTTP delivers arguments to Tablix tool handlers", async ct =>
+                    {
+                        string directory = Path.Combine(Path.GetTempPath(), "tablix_server_" + Guid.NewGuid().ToString("N"));
+                        Directory.CreateDirectory(directory);
+                        string settingsFile = Path.Combine(directory, "tablix.json");
+
+                        TablixSettings settings = new TablixSettings();
+                        settings.Rest.Hostname = "127.0.0.1";
+                        settings.Rest.Port = GetAvailableTcpPort();
+                        settings.Rest.McpPort = GetAvailableTcpPort();
+                        settings.Persistence.Filename = "tablix.db";
+                        settings.Logging.ConsoleLogging = false;
+                        settings.Logging.FileLogging = false;
+                        File.WriteAllText(settingsFile, Serializer.SerializeJson(settings, true));
+
+                        TablixServer server = new TablixServer(settingsFile);
+                        using CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+
+                        try
+                        {
+                            await server.StartAsync(linked.Token).ConfigureAwait(false);
+                            string mcpUrl = "http://127.0.0.1:" + settings.Rest.McpPort + "/mcp";
+                            string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"tablix_discover_database\",\"arguments\":{\"databaseId\":\"missing_db\"}}}";
+                            string responseJson = await WaitForMcpPostOkAsync(mcpUrl, request, linked.Token).ConfigureAwait(false);
+                            DoesNotContain(responseJson, "databaseId is required", "MCP tool arguments should reach the tool handler.");
+                            Contains(responseJson, "missing_db", "MCP tool handler should see the supplied databaseId.");
+                        }
+                        finally
+                        {
+                            linked.Cancel();
+                            await server.StopAsync().ConfigureAwait(false);
+                            TryDeleteDirectory(directory);
+                        }
+                    }),
                     Case("Persistence", "DatabaseCreateRead", "Persistence creates and reads database entries", async ct =>
                     {
                         await WithTempPersistenceAsync(async driver =>
@@ -1972,6 +2073,20 @@ namespace Test.Shared
                         NotNull(detail.CrawlError, "CrawlError should be populated.");
                         False(cache.Get("bad_cache_db").IsCrawled, "Cached detail should be degraded.");
                     }),
+                    Case("CrawlCache", "CrawlAssignsTableIds", "Crawled tables carry the same table IDs persistence assigns", async ct =>
+                    {
+                        await WithTempDatabaseAsync(async entry =>
+                        {
+                            CrawlCache cache = new CrawlCache();
+                            DatabaseDetail detail = await cache.CrawlOneAsync(entry).ConfigureAwait(false);
+                            True(detail.IsCrawled, "Detail should be crawled.");
+                            True(detail.Tables.Count > 0, "Detail should contain tables.");
+                            foreach (TableDetail table in detail.Tables)
+                            {
+                                Equal(TableIdentity.Create(entry.Id, table.SchemaName, table.TableName), table.TableId, "Table ID mismatch for " + table.TableName + ".");
+                            }
+                        }).ConfigureAwait(false);
+                    }),
                     Case("CrawlCache", "SuccessfulCrawlCanBeRemoved", "Successful crawl is cached and removable", async ct =>
                     {
                         await WithTempDatabaseAsync(async entry =>
@@ -2019,6 +2134,30 @@ namespace Test.Shared
                             True(tools.ContainsKey("tablix_update_database_context"), "update database context missing.");
                             True(tools.ContainsKey("tablix_update_table_context"), "update table context missing.");
                             await Task.CompletedTask.ConfigureAwait(false);
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("McpToolBehavior", "TableContextResolvesNameFromCachedCrawl", "MCP table context resolves a table name against a crawl that was only cached", async ct =>
+                    {
+                        await WithTempPersistenceAsync(async persistence =>
+                        {
+                            await WithTempDatabaseAsync(async entry =>
+                            {
+                                await persistence.DatabaseConnections.CreateAsync(entry, ct).ConfigureAwait(false);
+                                CrawlCache crawlCache = new CrawlCache();
+                                await crawlCache.CrawlAllAsync(new List<DatabaseEntry> { entry }).ConfigureAwait(false);
+
+                                Dictionary<string, Func<object, Task<object>>> tools = RegisteredTools(persistence, crawlCache);
+                                McpTableContextReadResponse result = ConvertObject<McpTableContextReadResponse>(await tools["tablix_get_table_context"](new McpGetTableContextRequest
+                                {
+                                    DatabaseId = entry.Id,
+                                    TableName = "users"
+                                }).ConfigureAwait(false));
+
+                                True(result.Success, "Table context lookup by name should succeed.");
+                                Equal(0, result.MissingTableIds.Count, "No table IDs should be missing.");
+                                Equal(1, result.Objects.Count, "One table context should be returned.");
+                                Equal(TableIdentity.Create(entry.Id, result.Objects[0].SchemaName, "users"), result.Objects[0].TableId, "Returned table ID mismatch.");
+                            }).ConfigureAwait(false);
                         }).ConfigureAwait(false);
                     }),
                     Case("McpToolBehavior", "DiscoverDatabasesPaginates", "MCP discover databases paginates", async ct =>
@@ -2565,7 +2704,7 @@ namespace Test.Shared
                         Contains(serverDockerfile, "https://security.ubuntu.com/ubuntu", "Server Dockerfile should use HTTPS Ubuntu security sources.");
                         Contains(serverDockerfile, "Acquire::Retries \"5\";", "Server Dockerfile should retry transient apt fetch failures.");
                         Contains(serverDockerfile, "Acquire::https::Timeout \"30\";", "Server Dockerfile should set an apt HTTPS timeout.");
-                        Contains(serverProject, "<PackageReference Include=\"Watson\" Version=\"7.0.15\" />", "Server project should explicitly use Watson 7.");
+                        Contains(serverProject, "<PackageReference Include=\"Watson\" Version=\"7.", "Server project should explicitly use Watson 7.");
                         DoesNotContain(serverProject, "SwiftStack", "Server project should not depend on deprecated SwiftStack.");
                         Contains(serverSource, "using WatsonWebserver;", "REST hosting should use Watson 7 directly.");
                         Contains(serverSource, "_RestServer.Start(runToken)", "REST hosting should start Watson 7 with its non-blocking Start method.");
@@ -3323,6 +3462,39 @@ namespace Test.Shared
                 try
                 {
                     using HttpResponseMessage response = await client.GetAsync(url, token).ConfigureAwait(false);
+                    string content = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                    if (response.IsSuccessStatusCode) return content;
+
+                    lastException = new InvalidOperationException("HTTP " + (int)response.StatusCode + ": " + content);
+                }
+                catch (Exception ex) when (!token.IsCancellationRequested && (ex is HttpRequestException || ex is TaskCanceledException || ex is IOException))
+                {
+                    lastException = ex;
+                }
+
+                await Task.Delay(100, token).ConfigureAwait(false);
+            }
+
+            throw new InvalidOperationException("Timed out waiting for " + url, lastException);
+        }
+
+        private static async Task<string> WaitForMcpPostOkAsync(string url, string body, CancellationToken token)
+        {
+            using HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+            Exception lastException = null;
+
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                token.ThrowIfCancellationRequested();
+
+                try
+                {
+                    using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, url);
+                    request.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                    request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+                    request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2025-11-25");
+
+                    using HttpResponseMessage response = await client.SendAsync(request, token).ConfigureAwait(false);
                     string content = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
                     if (response.IsSuccessStatusCode) return content;
 

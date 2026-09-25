@@ -104,7 +104,7 @@ Once running, the following services are available:
 | REST API | http://localhost:9100 |
 | Swagger UI | http://localhost:9100/swagger |
 | Dashboard | http://localhost:9101 |
-| MCP | http://localhost:9102/rpc |
+| MCP | http://localhost:9102/mcp |
 
 Default API key: `tablixadmin`
 
@@ -224,8 +224,10 @@ This detects and patches configuration for:
 |--------|------------|
 | Claude Code | `~/.claude.json` |
 | Cursor | `~/.cursor/mcp.json` |
-| Codex | `~/.codex/config.json` |
+| Codex | `~/.codex/config.toml` |
 | Gemini | `~/.gemini/settings.json` |
+
+Only config files that already exist are patched. The installer replaces the `tablix` entry and leaves every other setting and MCP server untouched.
 
 After installing or updating MCP configuration, restart your AI agent or client to pick up the changes.
 
@@ -236,10 +238,17 @@ To configure manually, add to your client's MCP settings:
   "mcpServers": {
     "tablix": {
       "type": "http",
-      "url": "http://localhost:9102/rpc"
+      "url": "http://localhost:9102/mcp"
     }
   }
 }
+```
+
+For Codex, add to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.tablix]
+url = "http://localhost:9102/mcp"
 ```
 
 ### MCP Tools

@@ -6,6 +6,7 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
     using System.Threading;
     using System.Threading.Tasks;
     using Microsoft.Data.Sqlite;
+    using Tablix.Core.Helpers;
     using Tablix.Core.Models;
     using Tablix.Core.Persistence.Sqlite;
     using Tablix.Core.Persistence.Interfaces;
@@ -57,7 +58,7 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
 
                 foreach (TableDetail table in detail.Tables)
                 {
-                    string tableId = CreateTableId(detail.DatabaseId, table.SchemaName, table.TableName);
+                    string tableId = TableIdentity.Create(detail.DatabaseId, table.SchemaName, table.TableName);
                     table.TableId = tableId;
                     await UpsertTableAsync(connection, detail.DatabaseId, tableId, table, detail.CrawledUtc ?? now, token).ConfigureAwait(false);
                     await ReplaceColumnsAsync(connection, tableId, table, token).ConfigureAwait(false);
@@ -104,13 +105,6 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
 
                 return detail;
             }, token).ConfigureAwait(false);
-        }
-
-        internal static string CreateTableId(string databaseId, string schemaName, string tableName)
-        {
-            string raw = (databaseId ?? string.Empty) + "_" + (schemaName ?? string.Empty) + "_" + (tableName ?? string.Empty);
-            char[] chars = raw.ToLowerInvariant().Select(character => char.IsLetterOrDigit(character) ? character : '_').ToArray();
-            return "tbl_" + new string(chars).Trim('_');
         }
 
         private static int CountRelationships(DatabaseDetail detail)

@@ -6,6 +6,7 @@ namespace Tablix.Server
     using System.Linq;
     using System.Threading.Tasks;
     using Tablix.Core.DatabaseDrivers;
+    using Tablix.Core.Helpers;
     using Tablix.Core.Models;
     using Tablix.Core.Settings;
 
@@ -78,6 +79,7 @@ namespace Tablix.Server
                 _LogInfo?.Invoke("crawling database '" + entry.Id + "'");
                 IDatabaseCrawler crawler = CrawlerFactory.Create(entry.Type);
                 DatabaseDetail detail = await crawler.CrawlAsync(entry, progressCallback).ConfigureAwait(false);
+                TableIdentity.Assign(detail);
                 _Cache[entry.Id] = detail;
                 _LogInfo?.Invoke("crawled database '" + entry.Id + "': " + detail.Tables.Count + " tables");
                 return detail;

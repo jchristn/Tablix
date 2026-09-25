@@ -33,3 +33,6 @@ Thumbs.db
 !docker/factory/database.db
 !docker/tablix.db
 !docker/factory/tablix.db
+
+# Claude Code machine-local settings
+.claude/settings.local.json

@@ -16,6 +16,11 @@ namespace Tablix.Server
         public string[] ConfigPaths { get; set; } = null;
 
         /// <summary>
+        /// File format of the client's config files.
+        /// </summary>
+        public ClientConfigFormatEnum Format { get; set; } = ClientConfigFormatEnum.Json;
+
+        /// <summary>
         /// Instantiate.
         /// </summary>
         public ClientConfig()
@@ -27,10 +32,12 @@ namespace Tablix.Server
         /// </summary>
         /// <param name="name">Display name.</param>
         /// <param name="configPaths">Candidate config file paths.</param>
-        public ClientConfig(string name, string[] configPaths)
+        /// <param name="format">File format of the config files.</param>
+        public ClientConfig(string name, string[] configPaths, ClientConfigFormatEnum format = ClientConfigFormatEnum.Json)
         {
             Name = name;
             ConfigPaths = configPaths;
+            Format = format;
         }
     }
 }

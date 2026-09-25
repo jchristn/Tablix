@@ -3,12 +3,14 @@ namespace Tablix.Server
     using System;
     using System.Collections.Generic;
     using System.IO;
+    using System.Text.Json;
     using System.Threading;
     using System.Threading.Tasks;
     using SyslogLogging;
     using WatsonWebserver;
     using WatsonWebserver.Core;
     using WatsonWebserver.Core.OpenApi;
+    using Voltaic.Core;
     using Voltaic.Mcp;
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
@@ -98,7 +100,7 @@ namespace Tablix.Server
 
             // Start MCP
             _McpTask = Task.Run(() => _McpServer.StartAsync(runToken), runToken);
-            _Logging.Info(_Header + "MCP server available at http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.McpPort + "/rpc");
+            _Logging.Info(_Header + "MCP server available at http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.McpPort + "/mcp");
 
             StartInitialCrawl(runToken);
             _Started = true;
@@ -834,11 +836,25 @@ namespace Tablix.Server
                         name,
                         description,
                         inputSchema,
-                        async (args) => await handler(args).ConfigureAwait(false));
+                        async (args) => await handler(ToToolArguments(args)).ConfigureAwait(false));
                 },
                 _Persistence,
                 _CrawlCache,
                 (msg) => _Logging.Debug(_Header + msg));
+        }
+
+        /// <summary>
+        /// Convert Voltaic RPC parameters into a JSON value the tool registrar can deserialize.
+        /// RpcParameters itself must not be serialized directly; its raw JSON carries the arguments.
+        /// </summary>
+        private static object ToToolArguments(RpcParameters args)
+        {
+            if (args == null || !args.HasValue || String.IsNullOrWhiteSpace(args.RawJson)) return null;
+
+            using (JsonDocument document = JsonDocument.Parse(args.RawJson))
+            {
+                return document.RootElement.Clone();
+            }
         }
 
         #endregion
