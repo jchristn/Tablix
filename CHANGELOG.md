@@ -12,7 +12,10 @@
 
 ### Changed
 
-- Updated NuGet dependencies, including Voltaic 1.1.0, Watson 7.2.0, PolyPrompt 2.6.0, and SyslogLogging 2.2.2.
+- Updated NuGet dependencies, including Voltaic 2.0.0, Watson 7.2.0, PolyPrompt 2.6.0, and SyslogLogging 2.2.2.
+- With Voltaic 2.0.0 the MCP server lists only the Tablix tools. Voltaic's demo tools (`ping`, `echo`, `getTime`, `getSessions`) are no longer published; `getSessions` had disclosed every client's session ID.
+- MCP `ping` now returns an empty result (`{}`) instead of `"pong"`, as the MCP specification requires.
+- Tablix tools are reachable only through `tools/call`. Calling a tool name as a bare JSON-RPC method returns `-32601` (method not found).
 - Stopped tracking `.claude/settings.local.json`, which holds machine-local settings.
 
 ## v0.3.0 - ALPHA (2026-07-22)

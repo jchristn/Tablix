@@ -761,38 +761,89 @@ namespace Test.Shared
                     }),
                     Case("ServerLifecycle", "McpToolCallReceivesArguments", "MCP tools/call over HTTP delivers arguments to Tablix tool handlers", async ct =>
                     {
-                        string directory = Path.Combine(Path.GetTempPath(), "tablix_server_" + Guid.NewGuid().ToString("N"));
-                        Directory.CreateDirectory(directory);
-                        string settingsFile = Path.Combine(directory, "tablix.json");
-
-                        TablixSettings settings = new TablixSettings();
-                        settings.Rest.Hostname = "127.0.0.1";
-                        settings.Rest.Port = GetAvailableTcpPort();
-                        settings.Rest.McpPort = GetAvailableTcpPort();
-                        settings.Persistence.Filename = "tablix.db";
-                        settings.Logging.ConsoleLogging = false;
-                        settings.Logging.FileLogging = false;
-                        File.WriteAllText(settingsFile, Serializer.SerializeJson(settings, true));
-
-                        TablixServer server = new TablixServer(settingsFile);
-                        using CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-                        using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
-
-                        try
+                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
                         {
-                            await server.StartAsync(linked.Token).ConfigureAwait(false);
-                            string mcpUrl = "http://127.0.0.1:" + settings.Rest.McpPort + "/mcp";
                             string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"tablix_discover_database\",\"arguments\":{\"databaseId\":\"missing_db\"}}}";
-                            string responseJson = await WaitForMcpPostOkAsync(mcpUrl, request, linked.Token).ConfigureAwait(false);
+                            string responseJson = await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false);
                             DoesNotContain(responseJson, "databaseId is required", "MCP tool arguments should reach the tool handler.");
                             Contains(responseJson, "missing_db", "MCP tool handler should see the supplied databaseId.");
-                        }
-                        finally
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("ServerLifecycle", "McpToolsListReturnsOnlyTablixTools", "MCP tools/list over HTTP returns exactly the Tablix tools and no Voltaic demo tools", async ct =>
+                    {
+                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
                         {
-                            linked.Cancel();
-                            await server.StopAsync().ConfigureAwait(false);
-                            TryDeleteDirectory(directory);
-                        }
+                            string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}";
+                            using JsonDocument document = ParseMcpResponse(await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false));
+                            List<string> names = Required(document.RootElement, "result", "tools").EnumerateArray()
+                                .Select(tool => tool.GetProperty("name").GetString())
+                                .ToList();
+
+                            Equal(13, names.Count, "tools/list should return only the 13 Tablix tools.");
+                            True(names.All(name => name.StartsWith("tablix_", StringComparison.Ordinal)), "Every listed tool should be a Tablix tool: " + String.Join(", ", names));
+                            foreach (string demoTool in new[] { "ping", "echo", "getTime", "getSessions", "getClients" })
+                            {
+                                False(names.Contains(demoTool), "Voltaic demo tool '" + demoTool + "' should not be listed.");
+                            }
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("ServerLifecycle", "McpPingReturnsEmptyResult", "MCP ping over HTTP returns an empty result object instead of \"pong\"", async ct =>
+                    {
+                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        {
+                            string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}";
+                            using JsonDocument document = ParseMcpResponse(await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false));
+                            JsonElement root = document.RootElement;
+
+                            False(root.TryGetProperty("error", out _), "ping should not return an error.");
+                            JsonElement result = Required(root, "result");
+                            Equal(JsonValueKind.Object, result.ValueKind, "ping result should be an object, not \"pong\".");
+                            True(result.EnumerateObject().All(property => property.Name == "resultType"), "ping result should be empty: " + result.GetRawText());
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("ServerLifecycle", "McpBareToolMethodRejected", "MCP rejects a Tablix tool invoked as a bare JSON-RPC method", async ct =>
+                    {
+                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        {
+                            string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tablix_discover_databases\",\"params\":{}}";
+                            using JsonDocument document = ParseMcpResponse(await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false));
+                            JsonElement root = document.RootElement;
+
+                            False(root.TryGetProperty("result", out _), "A bare tool call should not return a result.");
+                            Equal(-32601, Required(root, "error", "code").GetInt32(), "A bare tool call should return method not found.");
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("ServerLifecycle", "McpDemoToolsNotCallable", "MCP tools/call rejects the removed Voltaic demo tools", async ct =>
+                    {
+                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        {
+                            foreach (string demoTool in new[] { "echo", "getTime", "getSessions" })
+                            {
+                                string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"" + demoTool + "\",\"arguments\":{}}}";
+                                string responseJson = await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false);
+                                using JsonDocument document = ParseMcpResponse(responseJson);
+                                JsonElement root = document.RootElement;
+
+                                bool isError = root.TryGetProperty("error", out _)
+                                    || (root.TryGetProperty("result", out JsonElement result) && result.TryGetProperty("isError", out JsonElement isErrorElement) && isErrorElement.ValueKind == JsonValueKind.True);
+                                True(isError, "tools/call for removed demo tool '" + demoTool + "' should fail: " + responseJson);
+                                DoesNotContain(responseJson, "Mcp-Session-Id", "Session identifiers must not be disclosed.");
+                            }
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("ServerLifecycle", "McpToolCallToleratesUndeclaredArgument", "MCP tools/call accepts an undeclared argument because Tablix schemas do not forbid additional properties", async ct =>
+                    {
+                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        {
+                            string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"tablix_discover_databases\",\"arguments\":{\"maxResults\":5,\"unexpectedArgument\":true}}}";
+                            string responseJson = await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false);
+                            using JsonDocument document = ParseMcpResponse(responseJson);
+                            JsonElement root = document.RootElement;
+
+                            False(root.TryGetProperty("error", out _), "An undeclared argument should not be rejected: " + responseJson);
+                            DoesNotContain(responseJson, "unexpected property", "Tablix tool schemas should not enforce additionalProperties.");
+                            True(Required(root, "result").TryGetProperty("content", out _), "tools/call should return tool content.");
+                        }).ConfigureAwait(false);
                     }),
                     Case("Persistence", "DatabaseCreateRead", "Persistence creates and reads database entries", async ct =>
                     {
@@ -3476,6 +3527,76 @@ namespace Test.Shared
             }
 
             throw new InvalidOperationException("Timed out waiting for " + url, lastException);
+        }
+
+        private static async Task WithLiveMcpServerAsync(CancellationToken ct, Func<string, CancellationToken, Task> action)
+        {
+            string directory = Path.Combine(Path.GetTempPath(), "tablix_server_" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            string settingsFile = Path.Combine(directory, "tablix.json");
+
+            TablixSettings settings = new TablixSettings();
+            settings.Rest.Hostname = "127.0.0.1";
+            settings.Rest.Port = GetAvailableTcpPort();
+            settings.Rest.McpPort = GetAvailableTcpPort();
+            settings.Persistence.Filename = "tablix.db";
+            settings.Logging.ConsoleLogging = false;
+            settings.Logging.FileLogging = false;
+            File.WriteAllText(settingsFile, Serializer.SerializeJson(settings, true));
+
+            TablixServer server = new TablixServer(settingsFile);
+            using CancellationTokenSource timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            using CancellationTokenSource linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+
+            try
+            {
+                await server.StartAsync(linked.Token).ConfigureAwait(false);
+                string mcpUrl = "http://127.0.0.1:" + settings.Rest.McpPort + "/mcp";
+                await WaitForMcpPostOkAsync(mcpUrl, "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"ping\"}", linked.Token).ConfigureAwait(false);
+                await action(mcpUrl, linked.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                linked.Cancel();
+                await server.StopAsync().ConfigureAwait(false);
+                TryDeleteDirectory(directory);
+            }
+        }
+
+        /// <summary>
+        /// Parse an MCP response body that may be plain JSON or a single Server-Sent Events message.
+        /// </summary>
+        private static JsonDocument ParseMcpResponse(string content)
+        {
+            string trimmed = (content ?? String.Empty).Trim();
+            if (!trimmed.StartsWith("{", StringComparison.Ordinal))
+            {
+                string data = trimmed
+                    .Split('\n')
+                    .Select(line => line.TrimEnd('\r'))
+                    .Where(line => line.StartsWith("data:", StringComparison.Ordinal))
+                    .Select(line => line.Substring(5).Trim())
+                    .LastOrDefault(line => line.StartsWith("{", StringComparison.Ordinal));
+                if (data == null) throw new InvalidOperationException("MCP response did not contain JSON: " + content);
+                trimmed = data;
+            }
+
+            return JsonDocument.Parse(trimmed);
+        }
+
+        /// <summary>
+        /// POST one MCP request to a ready endpoint and return the body regardless of HTTP status.
+        /// </summary>
+        private static async Task<string> PostMcpAsync(string url, string body, CancellationToken token)
+        {
+            using HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, url);
+            request.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+            request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+            request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2025-11-25");
+
+            using HttpResponseMessage response = await client.SendAsync(request, token).ConfigureAwait(false);
+            return await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
         }
 
         private static async Task<string> WaitForMcpPostOkAsync(string url, string body, CancellationToken token)

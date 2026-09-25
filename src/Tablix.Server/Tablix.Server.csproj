@@ -8,7 +8,7 @@
     <PackageReference Include="SerializableDataTable" Version="1.1.0" />
     <PackageReference Include="PolyPrompt" Version="2.6.0" />
     <PackageReference Include="SyslogLogging" Version="2.2.2" />
-    <PackageReference Include="Voltaic" Version="1.1.0" />
+    <PackageReference Include="Voltaic" Version="2.0.0" />
     <PackageReference Include="Watson" Version="7.2.0" />
   </ItemGroup>
 
