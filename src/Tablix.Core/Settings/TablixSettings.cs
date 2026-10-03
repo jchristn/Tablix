@@ -54,6 +54,15 @@ namespace Tablix.Core.Settings
             set { if (value != null) _Chat = value; }
         }
 
+        /// <summary>
+        /// Telemetry export settings (metrics, traces, and logs). Applied at startup.
+        /// </summary>
+        public TelemetrySettings Telemetry
+        {
+            get { return _Telemetry; }
+            set { if (value != null) _Telemetry = value; }
+        }
+
         #endregion
 
         #region Private-Members
@@ -62,6 +71,7 @@ namespace Tablix.Core.Settings
         private LoggingSettings _Logging = new LoggingSettings();
         private PersistenceDatabaseSettings _Persistence = new PersistenceDatabaseSettings();
         private ChatSettings _Chat = new ChatSettings();
+        private TelemetrySettings _Telemetry = new TelemetrySettings();
         private List<string> _ApiKeys = new List<string> { "tablixadmin" };
 
         #endregion

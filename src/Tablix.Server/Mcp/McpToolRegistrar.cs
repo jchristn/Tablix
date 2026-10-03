@@ -9,6 +9,7 @@ namespace Tablix.Server.Mcp
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
     using Tablix.Core.Models;
+    using Tablix.Core.Observability;
     using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
 
@@ -152,7 +153,7 @@ namespace Tablix.Server.Mcp
                     if (detail == null)
                     {
                         // Attempt a crawl
-                        detail = await crawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+                        detail = await crawlCache.CrawlOneAsync(entry, TelemetryNames.TriggerMcp).ConfigureAwait(false);
                         await persistence.DatabaseMetadata.SaveCrawlAsync(detail).ConfigureAwait(false);
                     }
 
@@ -225,7 +226,7 @@ namespace Tablix.Server.Mcp
                         detail = await persistence.DatabaseMetadata.ReadDetailAsync(request.DatabaseId).ConfigureAwait(false);
                     if (detail == null)
                     {
-                        detail = await crawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+                        detail = await crawlCache.CrawlOneAsync(entry, TelemetryNames.TriggerMcp).ConfigureAwait(false);
                         await persistence.DatabaseMetadata.SaveCrawlAsync(detail).ConfigureAwait(false);
                     }
 
@@ -275,7 +276,7 @@ namespace Tablix.Server.Mcp
                         detail = await persistence.DatabaseMetadata.ReadDetailAsync(request.DatabaseId).ConfigureAwait(false);
                     if (detail == null)
                     {
-                        detail = await crawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+                        detail = await crawlCache.CrawlOneAsync(entry, TelemetryNames.TriggerMcp).ConfigureAwait(false);
                         await persistence.DatabaseMetadata.SaveCrawlAsync(detail).ConfigureAwait(false);
                     }
 
@@ -331,7 +332,7 @@ namespace Tablix.Server.Mcp
                         detail = await persistence.DatabaseMetadata.ReadDetailAsync(request.DatabaseId).ConfigureAwait(false);
                     if (detail == null)
                     {
-                        detail = await crawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+                        detail = await crawlCache.CrawlOneAsync(entry, TelemetryNames.TriggerMcp).ConfigureAwait(false);
                         await persistence.DatabaseMetadata.SaveCrawlAsync(detail).ConfigureAwait(false);
                     }
 
@@ -377,21 +378,33 @@ namespace Tablix.Server.Mcp
                     if (entry == null)
                         return (object)new QueryResult { Success = false, DatabaseId = request.DatabaseId, Error = "Database '" + request.DatabaseId + "' not found" };
 
+                    long start = Stopwatch.GetTimestamp();
                     string normalizedQuery = QueryValidator.NormalizeSingleStatement(request.Query);
+                    string statement = QueryValidator.GetStatementType(normalizedQuery);
 
                     // Validate query against allowed types
                     string validationError = QueryValidator.Validate(normalizedQuery, entry.AllowedQueries);
                     if (validationError != null)
+                    {
+                        TablixMetrics.RecordQuery(TelemetryNames.SourceMcp, statement, TelemetryNames.OutcomeRejected, TablixMetrics.SecondsSince(start), 0);
                         return (object)new QueryResult { Success = false, DatabaseId = request.DatabaseId, Error = validationError };
+                    }
 
                     try
                     {
                         IDatabaseCrawler crawler = CrawlerFactory.Create(entry.Type);
                         QueryResult result = await crawler.ExecuteQueryAsync(entry, normalizedQuery).ConfigureAwait(false);
+                        TablixMetrics.RecordQuery(
+                            TelemetryNames.SourceMcp,
+                            statement,
+                            result != null && result.Success ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeFailure,
+                            TablixMetrics.SecondsSince(start),
+                            result?.RowsReturned ?? 0);
                         return (object)result;
                     }
                     catch (Exception ex)
                     {
+                        TablixMetrics.RecordQuery(TelemetryNames.SourceMcp, statement, TablixMetrics.OutcomeOf(ex), TablixMetrics.SecondsSince(start), 0);
                         return (object)new QueryResult { Success = false, DatabaseId = request.DatabaseId, Error = ex.Message };
                     }
                 });
@@ -950,7 +963,7 @@ namespace Tablix.Server.Mcp
                 detail = await persistence.DatabaseMetadata.ReadDetailAsync(entry.Id).ConfigureAwait(false);
             if (detail == null)
             {
-                detail = await crawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+                detail = await crawlCache.CrawlOneAsync(entry, TelemetryNames.TriggerMcp).ConfigureAwait(false);
                 await persistence.DatabaseMetadata.SaveCrawlAsync(detail).ConfigureAwait(false);
             }
 

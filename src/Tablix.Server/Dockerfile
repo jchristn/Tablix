@@ -25,5 +25,6 @@ COPY --from=build /app/publish .
 
 EXPOSE 9100
 EXPOSE 9102
+EXPOSE 9464
 
 ENTRYPOINT ["dotnet", "Tablix.Server.dll"]

@@ -55,7 +55,8 @@ namespace Test.Shared
                     McpToolBehaviorSuite(),
                     McpGuidanceSuite(),
                     DockerPackagingSuite(),
-                    DashboardApiContractSuite()
+                    DashboardApiContractSuite(),
+                    TablixTelemetrySuites.TelemetrySuite()
                 };
             }
         }
@@ -2054,22 +2055,22 @@ namespace Test.Shared
                 {
                     Case("CrawlerFactory", "CreatesSqliteCrawler", "Factory creates SQLite crawler", ct =>
                     {
-                        True(CrawlerFactory.Create(DatabaseTypeEnum.Sqlite) is SqliteCrawler, "Expected SqliteCrawler.");
+                        True(UnwrapCrawler(CrawlerFactory.Create(DatabaseTypeEnum.Sqlite)) is SqliteCrawler, "Expected SqliteCrawler.");
                         return Task.CompletedTask;
                     }),
                     Case("CrawlerFactory", "CreatesPostgresCrawler", "Factory creates PostgreSQL crawler", ct =>
                     {
-                        True(CrawlerFactory.Create(DatabaseTypeEnum.Postgresql) is PostgresCrawler, "Expected PostgresCrawler.");
+                        True(UnwrapCrawler(CrawlerFactory.Create(DatabaseTypeEnum.Postgresql)) is PostgresCrawler, "Expected PostgresCrawler.");
                         return Task.CompletedTask;
                     }),
                     Case("CrawlerFactory", "CreatesMysqlCrawler", "Factory creates MySQL crawler", ct =>
                     {
-                        True(CrawlerFactory.Create(DatabaseTypeEnum.Mysql) is MysqlCrawler, "Expected MysqlCrawler.");
+                        True(UnwrapCrawler(CrawlerFactory.Create(DatabaseTypeEnum.Mysql)) is MysqlCrawler, "Expected MysqlCrawler.");
                         return Task.CompletedTask;
                     }),
                     Case("CrawlerFactory", "CreatesSqlServerCrawler", "Factory creates SQL Server crawler", ct =>
                     {
-                        True(CrawlerFactory.Create(DatabaseTypeEnum.SqlServer) is SqlServerCrawler, "Expected SqlServerCrawler.");
+                        True(UnwrapCrawler(CrawlerFactory.Create(DatabaseTypeEnum.SqlServer)) is SqlServerCrawler, "Expected SqlServerCrawler.");
                         return Task.CompletedTask;
                     }),
                     Case("CrawlerFactory", "InvalidTypeThrows", "Factory invalid type throws NotSupportedException", ct =>
@@ -3244,6 +3245,12 @@ namespace Test.Shared
                         return Task.CompletedTask;
                     })
                 });
+        }
+
+        private static IDatabaseCrawler UnwrapCrawler(IDatabaseCrawler crawler)
+        {
+            InstrumentedDatabaseCrawler instrumented = crawler as InstrumentedDatabaseCrawler;
+            return instrumented == null ? crawler : instrumented.Inner;
         }
 
         private static TestCaseDescriptor Case(string suiteId, string caseId, string displayName, Func<CancellationToken, Task> executeAsync)

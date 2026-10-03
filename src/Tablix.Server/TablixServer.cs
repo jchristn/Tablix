@@ -2,6 +2,7 @@ namespace Tablix.Server
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.IO;
     using System.Text.Json;
     using System.Threading;
@@ -15,10 +16,12 @@ namespace Tablix.Server
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
     using Tablix.Core.Models;
+    using Tablix.Core.Observability;
     using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
     using Tablix.Server.Handlers;
     using Tablix.Server.Mcp;
+    using Tablix.Server.Observability;
     using Tablix.Server.Services;
     using Constants = Tablix.Core.Helpers.Constants;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
@@ -29,6 +32,18 @@ namespace Tablix.Server
     /// </summary>
     public class TablixServer
     {
+        #region Public-Members
+
+        /// <summary>
+        /// The telemetry host, available after <see cref="StartAsync"/> begins. Null before start and after stop.
+        /// </summary>
+        public TelemetryHost Telemetry
+        {
+            get { return _Telemetry; }
+        }
+
+        #endregion
+
         #region Private-Members
 
         private static readonly object _OpenApiInitializationLock = new object();
@@ -46,6 +61,7 @@ namespace Tablix.Server
         private ModelProviderHealthCheckService _ModelProviderHealthChecks;
         private SetupHandler _SetupHandler;
         private SettingsHandler _SettingsHandler;
+        private TelemetryHost _Telemetry;
         private DateTime _StartTimeUtc;
         private Task _McpTask = null;
         private Task _InitialCrawlTask = null;
@@ -82,28 +98,55 @@ namespace Tablix.Server
             _StartTimeUtc = DateTime.UtcNow;
             Welcome();
             InitializeSettings();
-            await InitializePersistenceAsync(runToken).ConfigureAwait(false);
-            InitializeLogging();
+            InitializeTelemetry();
 
-            _Logging.Info(_Header + "starting Tablix v" + Constants.ProductVersion);
+            // The startup span is a root trace of its own. It is detached from Activity.Current before listeners and
+            // background loops start, so request and background traces never inherit it as their parent.
+            Activity startup = TablixTracing.StartWithParent(TelemetryNames.SpanStartup, ActivityKind.Internal, default);
+            ActivityContext startupContext = startup?.Context ?? default;
+            try
+            {
+                await RunStartupStageAsync(startup, "persistence", () => InitializePersistenceAsync(runToken)).ConfigureAwait(false);
+                await RunStartupStageAsync(startup, "logging", () => { InitializeLogging(); return Task.CompletedTask; }).ConfigureAwait(false);
 
-            InitializeCrawlCache();
-            await InitializeModelProviderHealthChecksAsync(runToken).ConfigureAwait(false);
-            InitializeRest();
-            InitializeMcp();
+                _Logging.Info(_Header + "starting Tablix v" + Constants.ProductVersion);
+                if (_Telemetry.IsRunning)
+                    _Logging.Info(_Header + "telemetry export enabled" + (_Telemetry.PrometheusUrl != null ? ", Prometheus metrics at " + _Telemetry.PrometheusUrl : String.Empty));
+                else
+                    _Logging.Info(_Header + _Telemetry.StatusMessage);
 
-            // Start REST
-            _RestServer.Start(runToken);
-            string restUrl = "http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.Port;
-            _Logging.Info(_Header + "REST API available at " + restUrl);
-            _Logging.Info(_Header + "Swagger UI available at " + restUrl + "/swagger");
+                Activity.Current = null;
+                await RunStartupStageAsync(startup, "crawl_cache", () => { InitializeCrawlCache(); return Task.CompletedTask; }).ConfigureAwait(false);
+                await RunStartupStageAsync(startup, "health_checks", () => InitializeModelProviderHealthChecksAsync(runToken)).ConfigureAwait(false);
+                await RunStartupStageAsync(startup, "rest", () => { InitializeRest(); return Task.CompletedTask; }).ConfigureAwait(false);
+                await RunStartupStageAsync(startup, "mcp", () => { InitializeMcp(); return Task.CompletedTask; }).ConfigureAwait(false);
+                InitializeTelemetryState();
 
-            // Start MCP
-            _McpTask = Task.Run(() => _McpServer.StartAsync(runToken), runToken);
-            _Logging.Info(_Header + "MCP server available at http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.McpPort + "/mcp");
+                // Start REST
+                _RestServer.Start(runToken);
+                string restUrl = "http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.Port;
+                _Logging.Info(_Header + "REST API available at " + restUrl);
+                _Logging.Info(_Header + "Swagger UI available at " + restUrl + "/swagger");
 
-            StartInitialCrawl(runToken);
-            _Started = true;
+                // Start MCP
+                _McpTask = Task.Run(() => _McpServer.StartAsync(runToken), runToken);
+                _Logging.Info(_Header + "MCP server available at http://" + _SettingsManager.Settings.Rest.Hostname + ":" + _SettingsManager.Settings.Rest.McpPort + "/mcp");
+
+                StartInitialCrawl(startupContext, runToken);
+                _Started = true;
+                TablixTracing.SetSuccess(startup);
+            }
+            catch (Exception ex)
+            {
+                TablixTracing.RecordException(startup, ex);
+                TablixMetrics.RecordError(TelemetryNames.ComponentLifecycle, ex);
+                throw;
+            }
+            finally
+            {
+                TablixTracing.StopDetached(startup);
+                Activity.Current = null;
+            }
         }
 
         /// <summary>
@@ -192,6 +235,10 @@ namespace Tablix.Server
             _McpTask = null;
             _InitialCrawlTask = null;
             _Started = false;
+
+            ClearTelemetryState();
+            _Telemetry?.Dispose();
+            _Telemetry = null;
         }
 
         #endregion
@@ -212,6 +259,67 @@ namespace Tablix.Server
         {
             _SettingsManager = new SettingsManager(_SettingsFilename);
             Console.WriteLine("Settings loaded from " + _SettingsFilename);
+        }
+
+        private void InitializeTelemetry()
+        {
+            _Telemetry = TelemetryHost.Start(_SettingsManager.Settings.Telemetry);
+        }
+
+        private void InitializeTelemetryState()
+        {
+            _Telemetry?.AttachLogging(_Logging);
+
+            CrawlCache crawlCache = _CrawlCache;
+            TablixMetrics.CrawlCacheCountsProvider = () => crawlCache.GetCounts();
+
+            ModelProviderHealthCheckService healthChecks = _ModelProviderHealthChecks;
+            TablixMetrics.ProviderHealthCountsProvider = () => healthChecks.GetHealthCounts();
+
+            SettingsManager settingsManager = _SettingsManager;
+            TablixMetrics.ConfigFlagsProvider = () =>
+            {
+                TablixSettings current = settingsManager.Settings;
+                return new Dictionary<string, bool>(StringComparer.Ordinal)
+                {
+                    ["chat_enabled"] = current.Chat.Enabled,
+                    ["chat_default_streaming"] = current.Chat.DefaultStreaming,
+                    ["chat_context_updates"] = current.Chat.Tools.AllowContextUpdates,
+                    ["prompt_retry_after_schema_refresh"] = current.Chat.PromptProcessing.RetryAfterSchemaRefresh,
+                    ["rest_ssl"] = current.Rest.Ssl,
+                    ["telemetry_otlp"] = current.Telemetry.OtlpEnable,
+                    ["telemetry_prometheus"] = current.Telemetry.PrometheusEnable,
+                    ["telemetry_loki"] = current.Telemetry.LokiEnable
+                };
+            };
+        }
+
+        private static void ClearTelemetryState()
+        {
+            TablixMetrics.CrawlCacheCountsProvider = null;
+            TablixMetrics.ProviderHealthCountsProvider = null;
+            TablixMetrics.ConfigFlagsProvider = null;
+        }
+
+        private static async Task RunStartupStageAsync(Activity startup, string stage, Func<Task> action)
+        {
+            Activity activity = TablixTracing.StartDetachedChild(TablixTracing.StageSpanName(stage), startup);
+            try
+            {
+                // Scoped to this async method: work inside the stage nests under the stage span.
+                if (activity != null) Activity.Current = activity;
+                await action().ConfigureAwait(false);
+                TablixTracing.SetSuccess(activity);
+            }
+            catch (Exception ex)
+            {
+                TablixTracing.RecordException(activity, ex);
+                throw;
+            }
+            finally
+            {
+                TablixTracing.StopDetached(activity);
+            }
         }
 
         private async Task InitializePersistenceAsync(CancellationToken token)
@@ -276,14 +384,27 @@ namespace Tablix.Server
             _ModelProviderHealthChecks.Start(token);
         }
 
-        private async Task CrawlAllDatabasesAsync()
+        private async Task CrawlAllDatabasesAsync(ActivityContext startupContext)
         {
-            List<DatabaseEntry> databases = await _Persistence.DatabaseConnections.EnumerateAsync(1000, 0).ConfigureAwait(false);
-            _Logging.Info(_Header + "crawling " + databases.Count + " configured database(s)");
-            await _CrawlCache.CrawlAllAsync(databases).ConfigureAwait(false);
+            // A background job is its own root trace, linked to the startup trace that scheduled it.
+            using Activity batch = TablixTracing.StartWithParent(TelemetryNames.SpanCrawlBatch, ActivityKind.Internal, default, startupContext);
+            TablixTracing.SetTag(batch, TelemetryNames.AttrTrigger, TelemetryNames.TriggerStartup);
+            try
+            {
+                List<DatabaseEntry> databases = await _Persistence.DatabaseConnections.EnumerateAsync(1000, 0).ConfigureAwait(false);
+                _Logging.Info(_Header + "crawling " + databases.Count + " configured database(s)");
+                await _CrawlCache.CrawlAllAsync(databases, TelemetryNames.TriggerStartup).ConfigureAwait(false);
+                TablixTracing.SetSuccess(batch);
+            }
+            catch (Exception ex)
+            {
+                TablixTracing.RecordException(batch, ex);
+                TablixMetrics.RecordError(TelemetryNames.ComponentCrawl, ex);
+                throw;
+            }
         }
 
-        private void StartInitialCrawl(CancellationToken token)
+        private void StartInitialCrawl(ActivityContext startupContext, CancellationToken token)
         {
             _InitialCrawlTask = Task.Run(async () =>
             {
@@ -291,7 +412,7 @@ namespace Tablix.Server
                 {
                     if (token.IsCancellationRequested) return;
 
-                    await CrawlAllDatabasesAsync().ConfigureAwait(false);
+                    await CrawlAllDatabasesAsync(startupContext).ConfigureAwait(false);
                     _Logging.Info(_Header + "initial background crawl complete");
                 }
                 catch (OperationCanceledException)
@@ -310,6 +431,15 @@ namespace Tablix.Server
             TablixSettings settings = _SettingsManager.Settings;
 
             WebserverSettings webserverSettings = new WebserverSettings(settings.Rest.Hostname, settings.Rest.Port, settings.Rest.Ssl);
+
+            // Watson's built-in HTTP telemetry (request metrics and one server span per request) is the foundation for
+            // the REST surface. Confirm it is on; the telemetry host subscribes to the "Watson" meter and source.
+            // Watson's own in-process /metrics endpoint stays off because the telemetry host serves Prometheus.
+            webserverSettings.Telemetry.Enable = true;
+            webserverSettings.Telemetry.EnableMetrics = true;
+            webserverSettings.Telemetry.EnableTraces = true;
+            webserverSettings.Telemetry.PropagateContext = true;
+            webserverSettings.Telemetry.Prometheus.Enable = false;
             _RestServer = new Webserver(webserverSettings, DefaultRestRouteAsync);
             Webserver rest = _RestServer;
             Dictionary<string, OpenApiSchemaMetadata> openApiSchemas = new Dictionary<string, OpenApiSchemaMetadata>();
@@ -762,6 +892,11 @@ namespace Tablix.Server
         {
             _Logging.Warn(_Header + "exception: " + ex.Message);
 
+            // The middleware handles the exception, so Watson never sees it: attach it to Watson's request span
+            // (Activity.Current for the handler) and count it by type.
+            TablixMetrics.RecordError(TelemetryNames.ComponentRest, ex);
+            try { Activity.Current?.AddException(ex); } catch (Exception) { }
+
             int statusCode = 500;
             ApiErrorEnum errorType = ApiErrorEnum.InternalError;
 
@@ -829,6 +964,11 @@ namespace Tablix.Server
             _McpServer.ServerName = Constants.ProductName;
             _McpServer.ServerVersion = Constants.ProductVersion;
 
+            // MCP is trusted (no authentication), so this handler always admits the request. Its only job is to carry
+            // the inbound W3C trace context into the tool handler, because Voltaic exposes the HTTP request to the
+            // authentication hook but not to tool handlers.
+            _McpServer.AuthenticationHandler = McpTelemetry.CaptureTraceContextAsync;
+
             McpToolRegistrar.RegisterAll(
                 (name, description, inputSchema, handler) =>
                 {
@@ -836,7 +976,11 @@ namespace Tablix.Server
                         name,
                         description,
                         inputSchema,
-                        async (args) => await handler(ToToolArguments(args)).ConfigureAwait(false));
+                        async (args, callContext, token) => await McpTelemetry.InvokeToolAsync(
+                            name,
+                            callContext,
+                            () => handler(ToToolArguments(args)),
+                            token).ConfigureAwait(false));
                 },
                 _Persistence,
                 _CrawlCache,

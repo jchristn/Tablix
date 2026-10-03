@@ -2,11 +2,14 @@ namespace Tablix.Core.Persistence.Sqlite
 {
     using System;
     using System.Collections.Generic;
+    using System.Diagnostics;
     using System.IO;
+    using System.Runtime.CompilerServices;
     using System.Threading;
     using System.Threading.Tasks;
     using Microsoft.Data.Sqlite;
     using Tablix.Core.Enums;
+    using Tablix.Core.Observability;
     using Tablix.Core.Persistence.Sqlite.Implementations;
 
     /// <summary>
@@ -94,27 +97,62 @@ namespace Tablix.Core.Persistence.Sqlite
             return connection;
         }
 
-        internal async Task<T> ExecuteReadAsync<T>(Func<SqliteConnection, Task<T>> action, CancellationToken token)
+        internal async Task<T> ExecuteReadAsync<T>(Func<SqliteConnection, Task<T>> action, CancellationToken token, [CallerMemberName] string caller = null)
         {
             if (action == null) throw new ArgumentNullException(nameof(action));
 
-            await _OperationSemaphore.WaitAsync(token).ConfigureAwait(false);
+            Activity activity = StartOperationSpan(TelemetryNames.PersistenceRead, caller);
+            try
+            {
+                await AcquireOperationSlotAsync(TelemetryNames.PersistenceRead, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                TablixTracing.RecordException(activity, ex);
+                activity?.Dispose();
+                throw;
+            }
+
+            long start = Stopwatch.GetTimestamp();
+            string outcome = TelemetryNames.OutcomeSuccess;
             try
             {
                 using SqliteConnection connection = await OpenConnectionAsync(token).ConfigureAwait(false);
-                return await action(connection).ConfigureAwait(false);
+                T result = await action(connection).ConfigureAwait(false);
+                TablixTracing.SetSuccess(activity);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                outcome = ClassifyFailure(activity, ex);
+                throw;
             }
             finally
             {
                 _OperationSemaphore.Release();
+                TablixMetrics.RecordPersistenceOperation(TelemetryNames.PersistenceRead, outcome, TablixMetrics.SecondsSince(start));
+                activity?.Dispose();
             }
         }
 
-        internal async Task ExecuteWriteAsync(Func<SqliteConnection, Task> action, CancellationToken token)
+        internal async Task ExecuteWriteAsync(Func<SqliteConnection, Task> action, CancellationToken token, [CallerMemberName] string caller = null)
         {
             if (action == null) throw new ArgumentNullException(nameof(action));
 
-            await _OperationSemaphore.WaitAsync(token).ConfigureAwait(false);
+            Activity activity = StartOperationSpan(TelemetryNames.PersistenceWrite, caller);
+            try
+            {
+                await AcquireOperationSlotAsync(TelemetryNames.PersistenceWrite, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                TablixTracing.RecordException(activity, ex);
+                activity?.Dispose();
+                throw;
+            }
+
+            long start = Stopwatch.GetTimestamp();
+            string outcome = TelemetryNames.OutcomeSuccess;
             try
             {
                 using SqliteConnection connection = await OpenConnectionAsync(token).ConfigureAwait(false);
@@ -136,10 +174,19 @@ namespace Tablix.Core.Persistence.Sqlite
 
                     throw;
                 }
+
+                TablixTracing.SetSuccess(activity);
+            }
+            catch (Exception ex)
+            {
+                outcome = ClassifyFailure(activity, ex);
+                throw;
             }
             finally
             {
                 _OperationSemaphore.Release();
+                TablixMetrics.RecordPersistenceOperation(TelemetryNames.PersistenceWrite, outcome, TablixMetrics.SecondsSince(start));
+                activity?.Dispose();
             }
         }
 
@@ -182,6 +229,45 @@ namespace Tablix.Core.Persistence.Sqlite
 
             _Disposed = true;
             base.Dispose(disposing);
+        }
+
+        private static string ClassifyFailure(Activity activity, Exception ex)
+        {
+            // Lookups and argument checks inside persistence operations are domain validation, not storage failures.
+            if (ex is KeyNotFoundException || ex is ArgumentException)
+            {
+                TablixTracing.SetOutcome(activity, TelemetryNames.OutcomeRejected, ex.GetType().Name);
+                return TelemetryNames.OutcomeRejected;
+            }
+
+            TablixTracing.RecordException(activity, ex);
+            string outcome = TablixMetrics.OutcomeOf(ex);
+            if (outcome == TelemetryNames.OutcomeError) TablixMetrics.RecordError(TelemetryNames.ComponentPersistence, ex);
+            return outcome;
+        }
+
+        private static Activity StartOperationSpan(string kind, string caller)
+        {
+            Activity activity = TablixTracing.Start(TelemetryNames.SpanPersistencePrefix + kind, ActivityKind.Client);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrDbSystem, "sqlite");
+            TablixTracing.SetTag(activity, TelemetryNames.AttrDbOperation, kind);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrCodeFunction, caller);
+            return activity;
+        }
+
+        private async Task AcquireOperationSlotAsync(string kind, CancellationToken token)
+        {
+            long waitStart = Stopwatch.GetTimestamp();
+            TablixMetrics.AddPersistenceLockWaiting(1);
+            try
+            {
+                await _OperationSemaphore.WaitAsync(token).ConfigureAwait(false);
+            }
+            finally
+            {
+                TablixMetrics.AddPersistenceLockWaiting(-1);
+                TablixMetrics.RecordPersistenceLockWait(kind, TablixMetrics.SecondsSince(waitStart));
+            }
         }
 
         private static async Task ExecutePragmaAsync(SqliteConnection connection, string statement, CancellationToken token)

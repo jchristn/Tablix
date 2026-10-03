@@ -6,6 +6,7 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
     using System.Threading.Tasks;
     using Microsoft.Data.Sqlite;
     using Tablix.Core.Models;
+    using Tablix.Core.Observability;
     using Tablix.Core.Persistence.Interfaces;
 
     /// <summary>
@@ -84,25 +85,36 @@ namespace Tablix.Core.Persistence.Sqlite.Implementations
 
             TableContextRead updatedRead = null;
 
-            await _Driver.ExecuteWriteAsync(async connection =>
+            string contextSource = TablixMetrics.ContextSource(source);
+            try
             {
-                if (!await TableExistsAsync(connection, databaseId, tableId, token).ConfigureAwait(false))
-                    throw new KeyNotFoundException("Table metadata '" + tableId + "' was not found for database '" + databaseId + "'. Crawl the database again before writing table context.");
+                await _Driver.ExecuteWriteAsync(async connection =>
+                {
+                    if (!await TableExistsAsync(connection, databaseId, tableId, token).ConfigureAwait(false))
+                        throw new KeyNotFoundException("Table metadata '" + tableId + "' was not found for database '" + databaseId + "'. Crawl the database again before writing table context.");
 
-                TableContextRead existing = await ReadTableContextAsync(connection, databaseId, tableId, token).ConfigureAwait(false);
-                string updated = BuildUpdatedContext(existing == null ? null : existing.Context, context, mode);
+                    TableContextRead existing = await ReadTableContextAsync(connection, databaseId, tableId, token).ConfigureAwait(false);
+                    string updated = BuildUpdatedContext(existing == null ? null : existing.Context, context, mode);
 
-                using SqliteCommand command = connection.CreateCommand();
-                command.CommandText = "INSERT INTO context_records (id, database_id, table_id, scope, context, source, provider_id, prompt, created_utc, updated_utc) VALUES ($id, $database_id, $table_id, 'Table', $context, $source, NULL, NULL, $now, $now) ON CONFLICT(database_id, table_id, scope) WHERE table_id IS NOT NULL DO UPDATE SET context = excluded.context, source = excluded.source, updated_utc = excluded.updated_utc";
-                command.Parameters.AddWithValue("$id", SqliteDatabaseDriver.NewId("ctx"));
-                command.Parameters.AddWithValue("$database_id", databaseId);
-                command.Parameters.AddWithValue("$table_id", tableId);
-                command.Parameters.AddWithValue("$context", updated ?? string.Empty);
-                command.Parameters.AddWithValue("$source", source ?? "user");
-                command.Parameters.AddWithValue("$now", SqliteDatabaseDriver.ToStorageDate(DateTime.UtcNow));
-                await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
-                updatedRead = await ReadTableContextAsync(connection, databaseId, tableId, token).ConfigureAwait(false);
-            }, token).ConfigureAwait(false);
+                    using SqliteCommand command = connection.CreateCommand();
+                    command.CommandText = "INSERT INTO context_records (id, database_id, table_id, scope, context, source, provider_id, prompt, created_utc, updated_utc) VALUES ($id, $database_id, $table_id, 'Table', $context, $source, NULL, NULL, $now, $now) ON CONFLICT(database_id, table_id, scope) WHERE table_id IS NOT NULL DO UPDATE SET context = excluded.context, source = excluded.source, updated_utc = excluded.updated_utc";
+                    command.Parameters.AddWithValue("$id", SqliteDatabaseDriver.NewId("ctx"));
+                    command.Parameters.AddWithValue("$database_id", databaseId);
+                    command.Parameters.AddWithValue("$table_id", tableId);
+                    command.Parameters.AddWithValue("$context", updated ?? string.Empty);
+                    command.Parameters.AddWithValue("$source", source ?? "user");
+                    command.Parameters.AddWithValue("$now", SqliteDatabaseDriver.ToStorageDate(DateTime.UtcNow));
+                    await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+                    updatedRead = await ReadTableContextAsync(connection, databaseId, tableId, token).ConfigureAwait(false);
+                }, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                TablixMetrics.RecordContextUpdate(TelemetryNames.ScopeTable, contextSource, TablixMetrics.OutcomeOf(ex));
+                throw;
+            }
+
+            TablixMetrics.RecordContextUpdate(TelemetryNames.ScopeTable, contextSource, TelemetryNames.OutcomeSuccess);
 
             return updatedRead;
         }

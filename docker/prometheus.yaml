@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Tablix in-process Prometheus endpoint (Radiant). Carries the Tablix application metrics, Watson's HTTP
+  # metrics, outbound HTTP client metrics, and .NET runtime metrics.
+  - job_name: 'tablix-server'
+    metrics_path: '/metrics'
+    # Scrape the classic text format. With OpenMetrics negotiation Prometheus 3 receives dotted UTF-8 names and
+    # rejects the whole scrape because "# UNIT" is not a suffix of the dotted name.
+    scrape_protocols: ['PrometheusText0.0.4']
+    static_configs:
+      - targets: ['tablix-server:9464']
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['127.0.0.1:9090']

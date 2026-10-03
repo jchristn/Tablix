@@ -4,6 +4,7 @@ import { apiFetch } from '../api/client';
 import ActionMenu, { EllipsisIcon, openActionMenuFromButton, type ActionMenuState } from '../components/ActionMenu';
 import ConfirmDialog from '../components/ConfirmDialog';
 import DatabaseFormModal from '../components/DatabaseFormModal';
+import ExternalServicesCard from '../components/ExternalServicesCard';
 import { isInteractiveRowClick } from '../components/RecordViewModal';
 import { translateTooltip } from '../i18n';
 import type { BuildContextResponse, ChatOptionsResponse, DatabaseSummary, EnumerationResult, ModelProviderSummary } from '../types';
@@ -281,6 +282,8 @@ export default function DatabaseListPage() {
           </table>
         </div>
       )}
+
+      <ExternalServicesCard />
 
       <ActionMenu
         State={actionMenu}

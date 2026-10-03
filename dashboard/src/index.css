@@ -2148,3 +2148,41 @@ button.health-histogram:focus-visible {
     grid-template-columns: 1fr;
   }
 }
+
+.external-services-card {
+  margin-top: 24px;
+}
+
+.external-services-card h3 {
+  margin: 0 0 4px 0;
+}
+
+.external-services-note {
+  margin: 8px 0 12px 0;
+}
+
+.external-service-purpose {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.external-service-url,
+.external-service-credentials {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mono-token {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+code.mono-token {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+}

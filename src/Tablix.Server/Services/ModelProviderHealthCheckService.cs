@@ -12,6 +12,7 @@ namespace Tablix.Server.Services
     using SyslogLogging;
     using Tablix.Core.Enums;
     using Tablix.Core.Models;
+    using Tablix.Core.Observability;
     using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
 
@@ -202,6 +203,27 @@ namespace Tablix.Server.Services
                 .ToList();
         }
 
+        /// <summary>
+        /// Count configured providers by health state, for the provider health gauge.
+        /// </summary>
+        /// <returns>Healthy, unhealthy, and unmonitored counts.</returns>
+        public ProviderHealthCounts GetHealthCounts()
+        {
+            ProviderHealthCounts counts = new ProviderHealthCounts();
+            foreach (EndpointHealthState state in _States.Values)
+            {
+                if (state == null) continue;
+                lock (state.SyncRoot)
+                {
+                    if (!state.HealthCheckEnabled) counts.Unmonitored++;
+                    else if (state.IsHealthy) counts.Healthy++;
+                    else counts.Unhealthy++;
+                }
+            }
+
+            return counts;
+        }
+
         /// <inheritdoc />
         public void Dispose()
         {
@@ -218,6 +240,8 @@ namespace Tablix.Server.Services
 
         private async Task RunAsync(CancellationToken token)
         {
+            // Background work: never inherit the ambient span of whatever started the monitor. Each check is a root.
+            Activity.Current = null;
             _Logging.Info(_Header + "started");
 
             while (!token.IsCancellationRequested)
@@ -242,6 +266,7 @@ namespace Tablix.Server.Services
                         ScheduleNextCheck(provider, DateTime.UtcNow);
                     }
 
+                    TablixMetrics.MarkHealthCycle();
                     await Task.Delay(1000, token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
@@ -250,6 +275,7 @@ namespace Tablix.Server.Services
                 }
                 catch (Exception ex)
                 {
+                    TablixMetrics.RecordError(TelemetryNames.ComponentHealthCheck, ex);
                     _Logging.Warn(_Header + "health monitor loop failed: " + ex.Message);
                     try
                     {
@@ -293,6 +319,22 @@ namespace Tablix.Server.Services
 
         private async Task<HealthCheckResult> PerformCheckAsync(ModelProviderSettings provider, CancellationToken token)
         {
+            string providerName = TablixMetrics.GenAiProvider(provider.Type);
+            using Activity activity = TablixTracing.StartWithParent(providerName + " " + TelemetryNames.ModelOperationHealthCheck, ActivityKind.Client, default);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrGenAiProvider, providerName);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrGenAiOperation, TelemetryNames.ModelOperationHealthCheck);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrProviderId, provider.Id);
+
+            HealthCheckResult result = await PerformCheckCoreAsync(provider, activity, token).ConfigureAwait(false);
+            string outcome = result.Success ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeFailure;
+            if (result.Success) TablixTracing.SetSuccess(activity);
+            else TablixTracing.SetOutcome(activity, outcome, result.ErrorType ?? "health_check_failed", result.Error);
+            TablixMetrics.RecordModelRequest(providerName, TelemetryNames.ModelOperationHealthCheck, outcome, result.TotalMs / 1000.0);
+            return result;
+        }
+
+        private async Task<HealthCheckResult> PerformCheckCoreAsync(ModelProviderSettings provider, Activity activity, CancellationToken token)
+        {
             Stopwatch stopwatch = Stopwatch.StartNew();
             try
             {
@@ -301,6 +343,9 @@ namespace Tablix.Server.Services
 
                 if (!Uri.TryCreate(provider.HealthCheckUrl, UriKind.Absolute, out Uri uri))
                     throw new ArgumentException("Health check URL is not absolute.");
+
+                TablixTracing.SetTag(activity, TelemetryNames.AttrServerAddress, uri.Host);
+                TablixTracing.SetTag(activity, TelemetryNames.AttrServerPort, uri.Port);
 
                 HttpMethod method = provider.HealthCheckMethod == HealthCheckMethodEnum.HEAD ? HttpMethod.Head : HttpMethod.Get;
                 using HttpRequestMessage request = new HttpRequestMessage(method, uri);
@@ -319,12 +364,14 @@ namespace Tablix.Server.Services
                 stopwatch.Stop();
 
                 int statusCode = (int)response.StatusCode;
+                TablixTracing.SetTag(activity, "http.response.status_code", statusCode);
                 bool success = statusCode == provider.HealthCheckExpectedStatusCode;
                 return new HealthCheckResult
                 {
                     Success = success,
                     TotalMs = stopwatch.Elapsed.TotalMilliseconds,
-                    Error = success ? null : "Expected HTTP " + provider.HealthCheckExpectedStatusCode + " but received HTTP " + statusCode + "."
+                    Error = success ? null : "Expected HTTP " + provider.HealthCheckExpectedStatusCode + " but received HTTP " + statusCode + ".",
+                    ErrorType = success ? null : "unexpected_status"
                 };
             }
             catch (Exception ex)
@@ -334,7 +381,8 @@ namespace Tablix.Server.Services
                 {
                     Success = false,
                     TotalMs = stopwatch.Elapsed.TotalMilliseconds,
-                    Error = Sanitize(ex.Message, provider.ApiKey)
+                    Error = Sanitize(ex.Message, provider.ApiKey),
+                    ErrorType = ex.GetType().Name
                 };
             }
         }
@@ -374,6 +422,8 @@ namespace Tablix.Server.Services
                     {
                         state.IsHealthy = true;
                         state.LastStateChangeUtc = timestampUtc;
+                        TablixMetrics.RecordHealthTransition(TablixMetrics.GenAiProvider(provider.Type), true);
+                        _Logging.Info(_Header + "model provider '" + provider.Id + "' is healthy");
                     }
                 }
                 else
@@ -387,6 +437,8 @@ namespace Tablix.Server.Services
                     {
                         state.IsHealthy = false;
                         state.LastStateChangeUtc = timestampUtc;
+                        TablixMetrics.RecordHealthTransition(TablixMetrics.GenAiProvider(provider.Type), false);
+                        _Logging.Warn(_Header + "model provider '" + provider.Id + "' is unhealthy: " + result.Error);
                     }
                 }
             }
@@ -479,6 +531,7 @@ namespace Tablix.Server.Services
             public bool Success { get; set; } = false;
             public double TotalMs { get; set; } = 0;
             public string Error { get; set; } = null;
+            public string ErrorType { get; set; } = null;
         }
     }
 }

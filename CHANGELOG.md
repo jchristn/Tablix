@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- Added production observability: metrics, traces, and logs for every major code path, exported through one Radiant 0.1.2 telemetry host and documented in [TELEMETRY.md](TELEMETRY.md).
+  - The `Tablix` meter and activity source cover the crawl pipeline (jobs, per-stage duration including queued, last success, tables), crawl cache, chat (outcomes, execution paths, per-stage latency, tool calls, time to first token), context generation (queued, inference, persist), context writes, SQL queries by source and statement (including rejections), operations against user-configured databases, model provider calls and tokens, provider health state and transitions, MCP tool calls, the Tablix state store (operations, lock wait), handled errors by type, build info, and configuration flags.
+  - Watson's built-in HTTP telemetry is explicitly enabled and exported alongside .NET runtime and HTTP client metrics. Watson's request-duration histogram gets seconds-scale buckets.
+  - Spans for every chat stage, crawl stage, context-build stage, model call, database operation, persistence operation, and MCP tool call. W3C `traceparent` is honored on REST and MCP and propagated to model providers; background work runs as linked root traces.
+  - Tablix log messages are exported with trace and span ids for Loki.
+  - New `Telemetry` section in `tablix.json` (OTLP endpoint and protocol, in-process Prometheus endpoint, optional direct Loki export, sampling, export interval), defaulting to `127.0.0.1`.
+- Added the observability stack to `docker/compose.yaml`: OpenTelemetry Collector, Prometheus, Tempo, Loki, and Grafana, pinned, healthchecked, and started in dependency order, with eight provisioned Grafana dashboards in a **Tablix** folder (`assets/grafana/`).
+- Added an **External Services** card to the dashboard home page with the URL, default credentials, copy control, and reachability of each bundled observability service.
+- Added `build-all.sh`, `build-server.sh`, and `build-dashboard.sh`, equivalent to the existing `.bat` scripts.
+- Added telemetry tests (in-memory listeners, an end-to-end Prometheus scrape, and dashboard and stack contract checks) to the shared Touchstone suites.
+
 ### Fixed
 
 - Fixed MCP tool arguments not reaching Tablix tool handlers after the Voltaic 1.1.0 upgrade, which made every tool that takes a `databaseId` report it as missing.
@@ -17,6 +30,8 @@
 - MCP `ping` now returns an empty result (`{}`) instead of `"pong"`, as the MCP specification requires.
 - Tablix tools are reachable only through `tools/call`. Calling a tool name as a bare JSON-RPC method returns `-32601` (method not found).
 - Stopped tracking `.claude/settings.local.json`, which holds machine-local settings.
+- Docker healthchecks probe `127.0.0.1` instead of `localhost`.
+- `CrawlerFactory.Create` now returns the crawler wrapped in `InstrumentedDatabaseCrawler`; the concrete crawler is available through its `Inner` property.
 
 ## v0.3.0 - ALPHA (2026-07-22)
 

@@ -8,6 +8,7 @@ namespace Tablix.Server.Handlers
     using WatsonWebserver.Core;
     using Tablix.Core.Enums;
     using Tablix.Core.Models;
+    using Tablix.Core.Observability;
     using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
@@ -58,6 +59,7 @@ namespace Tablix.Server.Handlers
             if (request == null)
             {
                 req.Http.Response.StatusCode = 400;
+                TablixMetrics.RecordSettingsUpdate(TelemetryNames.OutcomeRejected);
                 return Task.FromResult((object)new ApiErrorResponse(ApiErrorEnum.BadRequest, "Request body is required."));
             }
 
@@ -70,6 +72,7 @@ namespace Tablix.Server.Handlers
             if (apiKeys.Count == 0)
             {
                 req.Http.Response.StatusCode = 400;
+                TablixMetrics.RecordSettingsUpdate(TelemetryNames.OutcomeRejected);
                 return Task.FromResult((object)new ApiErrorResponse(ApiErrorEnum.BadRequest, "At least one API key is required."));
             }
 
@@ -80,10 +83,21 @@ namespace Tablix.Server.Handlers
                 Logging = request.Logging ?? existing.Logging,
                 Persistence = request.Persistence ?? existing.Persistence,
                 ApiKeys = apiKeys,
-                Chat = BuildChatSettings(existing.Chat, request.Chat)
+                Chat = BuildChatSettings(existing.Chat, request.Chat),
+                Telemetry = existing.Telemetry
             };
 
-            _SettingsManager.UpdateSettings(updated);
+            try
+            {
+                _SettingsManager.UpdateSettings(updated);
+            }
+            catch (Exception ex)
+            {
+                TablixMetrics.RecordSettingsUpdate(TablixMetrics.OutcomeOf(ex));
+                throw;
+            }
+
+            TablixMetrics.RecordSettingsUpdate(TelemetryNames.OutcomeSuccess);
             return Task.FromResult((object)CreateReadResponse(updated, _SettingsManager.Filename, _Persistence));
         }
 

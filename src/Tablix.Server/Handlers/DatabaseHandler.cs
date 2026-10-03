@@ -5,11 +5,13 @@ namespace Tablix.Server.Handlers
     using System.Diagnostics;
     using System.Linq;
     using System.Text;
+    using System.Threading;
     using System.Threading.Tasks;
     using Tablix.Core.DatabaseDrivers;
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
     using Tablix.Core.Models;
+    using Tablix.Core.Observability;
     using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
     using WatsonWebserver.Core;
@@ -546,7 +548,7 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.NotFound, "Database '" + id + "' not found.");
             }
 
-            DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
+            DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(entry, TelemetryNames.TriggerApi).ConfigureAwait(false);
             await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, req.CancellationToken).ConfigureAwait(false);
             return detail;
         }
@@ -605,7 +607,7 @@ namespace Tablix.Server.Handlers
                 DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(entry, async (update) =>
                 {
                     await SendCrawlEventAsync(req, CreateCrawlProgressEvent(id, update, stopwatch), false).ConfigureAwait(false);
-                }).ConfigureAwait(false);
+                }, TelemetryNames.TriggerApiStream).ConfigureAwait(false);
                 await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, req.CancellationToken).ConfigureAwait(false);
                 stopwatch.Stop();
 
@@ -663,12 +665,15 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.BadRequest, "Query is required.");
             }
 
+            long start = Stopwatch.GetTimestamp();
             string normalizedQuery = QueryValidator.NormalizeSingleStatement(queryRequest.Query);
+            string statement = QueryValidator.GetStatementType(normalizedQuery);
 
             // Validate query against allowed types
             string validationError = QueryValidator.Validate(normalizedQuery, entry.AllowedQueries);
             if (validationError != null)
             {
+                TablixMetrics.RecordQuery(TelemetryNames.SourceRest, statement, TelemetryNames.OutcomeRejected, TablixMetrics.SecondsSince(start), 0);
                 req.Http.Response.StatusCode = 403;
                 return new ApiErrorResponse(ApiErrorEnum.Forbidden, validationError);
             }
@@ -677,10 +682,18 @@ namespace Tablix.Server.Handlers
             {
                 IDatabaseCrawler crawler = CrawlerFactory.Create(entry.Type);
                 QueryResult result = await crawler.ExecuteQueryAsync(entry, normalizedQuery).ConfigureAwait(false);
+                TablixMetrics.RecordQuery(
+                    TelemetryNames.SourceRest,
+                    statement,
+                    result != null && result.Success ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeFailure,
+                    TablixMetrics.SecondsSince(start),
+                    result?.RowsReturned ?? 0);
                 return result;
             }
             catch (Exception ex)
             {
+                TablixMetrics.RecordQuery(TelemetryNames.SourceRest, statement, TablixMetrics.OutcomeOf(ex), TablixMetrics.SecondsSince(start), 0);
+                TablixMetrics.RecordError(TelemetryNames.ComponentRest, ex);
                 req.Http.Response.StatusCode = 500;
                 return new ApiErrorResponse(ApiErrorEnum.InternalError, ex.Message);
             }
@@ -709,8 +722,21 @@ namespace Tablix.Server.Handlers
 
         private async Task CrawlAndPersistAsync(DatabaseEntry entry, CancellationToken token)
         {
-            DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(entry).ConfigureAwait(false);
-            await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, token).ConfigureAwait(false);
+            // Fire-and-forget background crawl after a database is added: its own root trace, linked to the request.
+            ActivityContext requestContext = Activity.Current?.Context ?? default;
+            using Activity batch = TablixTracing.StartWithParent(TelemetryNames.SpanCrawlBatch, ActivityKind.Internal, default, requestContext);
+            TablixTracing.SetTag(batch, TelemetryNames.AttrTrigger, TelemetryNames.TriggerDatabaseAdded);
+            try
+            {
+                DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(entry, TelemetryNames.TriggerDatabaseAdded).ConfigureAwait(false);
+                await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, token).ConfigureAwait(false);
+                TablixTracing.SetSuccess(batch);
+            }
+            catch (Exception ex)
+            {
+                TablixTracing.RecordException(batch, ex);
+                TablixMetrics.RecordError(TelemetryNames.ComponentCrawl, ex);
+            }
         }
 
         private static TableDetail FindTable(DatabaseDetail detail, string tableId)

@@ -47,5 +47,21 @@
   },
   "ApiKeys": [
     "tablixadmin"
-  ]
+  ],
+  "Telemetry": {
+    "Enable": true,
+    "ServiceName": "tablix-server",
+    "OtlpEnable": true,
+    "OtlpEndpoint": "http://otel-collector:4317",
+    "OtlpProtocol": "grpc",
+    "PrometheusEnable": true,
+    "PrometheusHostname": "tablix-server",
+    "PrometheusPort": 9464,
+    "PrometheusPath": "/metrics",
+    "LokiEnable": false,
+    "LokiEndpoint": "http://loki:3100/otlp",
+    "ExportLogs": true,
+    "TraceSamplingRatio": 1.0,
+    "MetricExportIntervalMs": 15000
+  }
 }

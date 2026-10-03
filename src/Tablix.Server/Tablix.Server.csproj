@@ -5,6 +5,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Radiant" Version="0.1.2" />
     <PackageReference Include="SerializableDataTable" Version="1.1.0" />
     <PackageReference Include="PolyPrompt" Version="2.6.0" />
     <PackageReference Include="SyslogLogging" Version="2.2.2" />

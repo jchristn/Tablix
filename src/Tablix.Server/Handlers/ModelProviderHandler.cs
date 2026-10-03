@@ -13,8 +13,10 @@ namespace Tablix.Server.Handlers
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
     using Tablix.Core.Models;
+    using Tablix.Core.Observability;
     using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
+    using Tablix.Server.Observability;
     using Tablix.Server.Services;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
 
@@ -291,7 +293,21 @@ namespace Tablix.Server.Handlers
                 {
                     SystemPrompt = "Reply with the single word OK."
                 };
-                ChatResponse response = await client.ChatAsync("Reply with the single word OK.", options, token).ConfigureAwait(false);
+                ChatResponse response;
+                using (ModelCallScope modelCall = ModelCallScope.Start(provider, TelemetryNames.ModelOperationConnectivityTest))
+                {
+                    try
+                    {
+                        response = await client.ChatAsync("Reply with the single word OK.", options, token).ConfigureAwait(false);
+                        modelCall.Complete(response.Success, response.Model, response.StatusCode, response.Usage, 0, response.Error);
+                    }
+                    catch (Exception ex)
+                    {
+                        modelCall.Complete(ex);
+                        throw;
+                    }
+                }
+
                 stopwatch.Stop();
 
                 result.Success = response.Success;

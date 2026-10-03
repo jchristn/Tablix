@@ -9,6 +9,16 @@ namespace Tablix.Core.Helpers
     /// </summary>
     public static class QueryValidator
     {
+        #region Private-Members
+
+        private static readonly HashSet<string> _StatementTypes = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "select", "insert", "update", "delete", "merge", "create", "alter", "drop", "truncate",
+            "replace", "pragma", "explain", "show", "describe", "exec", "call"
+        };
+
+        #endregion
+
         #region Public-Methods
 
         /// <summary>
@@ -54,6 +64,35 @@ namespace Tablix.Core.Helpers
                 return "Query type '" + normalizedKeyword + "' is not permitted. Allowed types: " + String.Join(", ", allowedQueries) + ".";
 
             return null;
+        }
+
+        /// <summary>
+        /// Classify a SQL query into a bounded, lower-case statement type suitable for a metric label.
+        /// Known statement keywords (select, insert, update, delete, merge, create, alter, drop, truncate, replace,
+        /// pragma, explain, show, describe, exec, call) are returned as-is; anything else, including empty or
+        /// unparseable input, returns "other". Never throws.
+        /// </summary>
+        /// <param name="query">SQL query string. May be null.</param>
+        /// <returns>Lower-case statement type, or "other".</returns>
+        public static string GetStatementType(string query)
+        {
+            try
+            {
+                if (String.IsNullOrWhiteSpace(query)) return "other";
+
+                string stripped = StripLeadingComments(NormalizeSingleStatement(query)).TrimStart();
+                if (String.IsNullOrWhiteSpace(stripped)) return "other";
+
+                string keyword = GetEffectiveStatementKeyword(stripped);
+                if (String.IsNullOrEmpty(keyword)) return "other";
+
+                string normalized = keyword.ToLowerInvariant();
+                return _StatementTypes.Contains(normalized) ? normalized : "other";
+            }
+            catch (Exception)
+            {
+                return "other";
+            }
         }
 
         /// <summary>

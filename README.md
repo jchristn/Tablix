@@ -105,6 +105,10 @@ Once running, the following services are available:
 | Swagger UI | http://localhost:9100/swagger |
 | Dashboard | http://localhost:9101 |
 | MCP | http://localhost:9102/mcp |
+| Grafana (dashboards) | http://localhost:3000 (`admin` / `admin` for local use) |
+| Prometheus | http://localhost:9090 |
+| Tempo | http://localhost:3200 |
+| Loki | http://localhost:3100 |
 
 Default API key: `tablixadmin`
 
@@ -112,12 +116,14 @@ The sample SQLite database includes `users`, `orders`, and `line_items` tables s
 
 #### Docker Compose Details
 
-The `docker/compose.yaml` starts two containers:
+The `docker/compose.yaml` starts the two Tablix containers and the observability stack:
 
 - **tablix-server** (`jchristn77/tablix-server`) - the REST API and MCP server. Ports 9100 (REST) and 9102 (MCP) are exposed. The bootstrap `tablix.json`, sample `database.db`, and `logs/` directory are bind-mounted from the `docker/` directory. Product state is stored at `/data/tablix.db`, backed by the same host `docker/` directory, so the server can create the SQLite file on first run if it is missing.
 - **tablix-ui** (`jchristn77/tablix-ui`) - the dashboard, served via nginx on port 9101. It proxies API calls to the server using the `TABLIX_SERVER_URL` environment variable and shows that configured URL on the login page.
 
-Both containers include simple curl-based healthchecks that run every 5 seconds with a 2 second timeout and use Docker's standard retry handling. The UI depends on a healthy backend and applies a 15 second startup delay through `TABLIX_UI_STARTUP_DELAY_SECONDS`.
+- **otel-collector**, **prometheus**, **tempo**, **loki**, and **grafana** - the observability stack described in [Observability](#observability). Their ports are published on host loopback only.
+
+The Tablix containers include curl-based healthchecks against `127.0.0.1` that run every 5 seconds with a 2 second timeout and 2 retries; the observability services use the probe their images ship. The UI depends on a healthy backend and applies a 15 second startup delay through `TABLIX_UI_STARTUP_DELAY_SECONDS`. Grafana starts only after Prometheus, Tempo, and Loki are healthy.
 
 #### Running Individual Containers
 
@@ -158,7 +164,8 @@ reset.bat       # Windows
 To build and push the release Docker images from source, use the aggregate script from the repository root:
 
 ```bash
-build-all.bat v0.3.0
+build-all.bat v0.3.0     # Windows
+./build-all.sh v0.3.0    # Linux/Mac
 ```
 
 The aggregate script runs the dashboard and server image builds in order and pushes both `v0.3.0` and `latest` tags for `jchristn77/tablix-ui` and `jchristn77/tablix-server`. It expects Docker Buildx and Docker Hub push permissions for the `jchristn77` repositories.
@@ -166,8 +173,8 @@ The aggregate script runs the dashboard and server image builds in order and pus
 The individual image scripts remain available when only one image needs to be rebuilt:
 
 ```bash
-build-server.bat v0.3.0
-build-dashboard.bat v0.3.0
+build-server.bat v0.3.0      # or ./build-server.sh v0.3.0
+build-dashboard.bat v0.3.0   # or ./build-dashboard.sh v0.3.0
 ```
 
 ### Running from Source
@@ -209,6 +216,17 @@ dotnet test src/Test.Nunit/Test.Nunit.csproj
 
 Tests are defined once in `Test.Shared` using Touchstone descriptors and exposed through the console runner, xUnit adapter, and NUnit adapter.
 The xUnit and NUnit projects are intentionally adapter surfaces over the same shared tests, so coverage changes should start in `src/Test.Shared`.
+
+## Observability
+
+Tablix emits metrics, traces, and logs for every major code path, and the Docker stack renders them in Grafana. See [TELEMETRY.md](TELEMETRY.md) for the full metric and span catalog, configuration keys, alert rules, and dashboard map.
+
+- **Metrics:** the `Tablix` meter covers the crawl pipeline (jobs, per-stage latency including queued, last success), chat (outcomes, execution paths, per-stage latency, tool calls, time to first token), context generation, queries (including rejected statements), operations against user databases, model providers (requests, tokens, health), MCP tool calls, the Tablix state store (operations and lock wait), errors by type, build info, and configuration flags. Watson adds the REST HTTP metrics, and the .NET runtime and HTTP client metrics are included. Prometheus scrapes them from `tablix-server:9464/metrics`.
+- **Traces:** every REST request (Watson), MCP tool call, chat workflow stage, crawl stage, context-build stage, model provider call, database operation, and persistence operation is a span. Inbound W3C `traceparent` is honored on REST and MCP, outbound model calls propagate it, and background work (startup crawl, crawls after a database is added, provider health checks) runs as its own root traces. Traces go to Tempo through the OpenTelemetry Collector.
+- **Logs:** Tablix log messages are also exported with their trace and span ids and land in Loki, so a log line links to its trace in Grafana.
+- **Dashboards:** eight provisioned dashboards in the Grafana **Tablix** folder: Overview, HTTP, Chat & Context, Crawl Pipeline, Queries & Databases, Integrations, Runtime, and Logs & Traces. The Tablix dashboard home page shows an **External Services** card with each tool's URL, credentials, and reachability.
+
+Telemetry is configured in the `Telemetry` section of `tablix.json` (export endpoint, Prometheus endpoint, optional direct Loki export, sampling). Export is best-effort: if the telemetry host cannot start, Tablix logs why and keeps serving. Change Grafana's `admin` / `admin` default (`GRAFANA_ADMIN_PASSWORD`) before sharing the stack.
 
 ## Installing MCP
 
@@ -504,9 +522,27 @@ For local source runs, the default relative `tablix.db` path is resolved next to
       "PlannerTemperature": 0
     }
   },
-  "ApiKeys": ["tablixadmin"]
+  "ApiKeys": ["tablixadmin"],
+  "Telemetry": {
+    "Enable": true,
+    "ServiceName": "tablix-server",
+    "OtlpEnable": true,
+    "OtlpEndpoint": "http://127.0.0.1:4317",
+    "OtlpProtocol": "grpc",
+    "PrometheusEnable": true,
+    "PrometheusHostname": "127.0.0.1",
+    "PrometheusPort": 9464,
+    "PrometheusPath": "/metrics",
+    "LokiEnable": false,
+    "LokiEndpoint": "http://127.0.0.1:3100/otlp",
+    "ExportLogs": true,
+    "TraceSamplingRatio": 1.0,
+    "MetricExportIntervalMs": 15000
+  }
 }
 ```
+
+The `Telemetry` section is described in [TELEMETRY.md](TELEMETRY.md#enabling-and-configuring). The Docker configuration exports to `http://otel-collector:4317` and binds the scrape endpoint to `tablix-server`.
 
 Model providers are managed through the dashboard **Models** page or `/v1/model`. Database connections are managed through the dashboard **Databases** page or `/v1/database`.
 

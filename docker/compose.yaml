@@ -1,21 +1,31 @@
 services:
 
+  # ------------------------------------------------------------------
+  # Tablix server and dashboard
+  # ------------------------------------------------------------------
   tablix-server:
     image: jchristn77/tablix-server:v0.3.0
     container_name: tablix-server
     ports:
       - "9100:9100"
       - "9102:9102"
+    # The in-process Prometheus endpoint (port 9464) is internal to the compose network and deliberately not
+    # published: it is anonymous, and it binds the service name so it answers scrapes addressed to tablix-server:9464.
     volumes:
       - ./tablix.json:/app/tablix.json
       - ./:/data
       - ./database.db:/app/database.db
       - ./logs:/app/logs
+    depends_on:
+      # The collector image is distroless (no shell, curl, or wget), so it cannot carry a healthcheck.
+      otel-collector:
+        condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://localhost:9100/"]
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:9100/"]
       interval: 5s
       timeout: 2s
       retries: 2
+      start_period: 20s
     restart: unless-stopped
 
   tablix-ui:
@@ -30,9 +40,128 @@ services:
       tablix-server:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://localhost:9101/"]
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:9101/"]
       interval: 5s
       timeout: 2s
       retries: 2
       start_period: 15s
     restart: unless-stopped
+
+  # ------------------------------------------------------------------
+  # Observability: OpenTelemetry Collector + Prometheus + Tempo + Loki + Grafana
+  #
+  # Tablix pushes traces and logs over OTLP to the collector, which forwards traces to Tempo and logs to Loki.
+  # Prometheus scrapes Tablix's in-process /metrics endpoint directly. Observability ports are published on
+  # host loopback only; Prometheus, Tempo, Loki, and the collector have no authentication of their own.
+  # ------------------------------------------------------------------
+  otel-collector:
+    container_name: tablix-otel-collector
+    image: otel/opentelemetry-collector-contrib:0.109.0
+    command: ["--config=/etc/otel-collector.yaml"]
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+    volumes:
+      - ./otel-collector.yaml:/etc/otel-collector.yaml:ro
+    depends_on:
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus:
+    container_name: tablix-prometheus
+    image: prom/prometheus:v3.14.0
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yaml"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - tablix-prometheus-data:/prometheus
+    depends_on:
+      tablix-server:
+        condition: service_healthy
+    healthcheck:
+      # The prometheus image ships wget (not curl).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/healthy"]
+      interval: 5s
+      timeout: 2s
+      retries: 2
+      start_period: 20s
+    restart: unless-stopped
+
+  tempo:
+    container_name: tablix-tempo
+    # Pinned: later tags reject the standard ingester/compactor configuration sections.
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "127.0.0.1:3200:3200"
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      - tablix-tempo-data:/var/tempo
+    healthcheck:
+      # The tempo image ships wget (not curl); /ready returns 503 until ready, then 200.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3200/ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 2
+      start_period: 40s
+    restart: unless-stopped
+
+  loki:
+    container_name: tablix-loki
+    image: grafana/loki:3.3.0
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "127.0.0.1:3100:3100"
+    volumes:
+      - tablix-loki-data:/loki
+    healthcheck:
+      # The loki image ships wget (not curl).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3100/ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 2
+      start_period: 40s
+    restart: unless-stopped
+
+  grafana:
+    container_name: tablix-grafana
+    image: grafana/grafana-oss:13.0.2
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      # Local development defaults. Override GRAFANA_ADMIN_PASSWORD (for example in an untracked .env file)
+      # for any shared or hosted deployment; never commit a real password here.
+      GF_SECURITY_ADMIN_USER: "${GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - tablix-grafana-data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ../assets/grafana:/var/lib/grafana/dashboards/tablix:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "--max-time", "2", "http://127.0.0.1:3000/api/health"]
+      interval: 5s
+      timeout: 2s
+      retries: 2
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  tablix-prometheus-data:
+  tablix-tempo-data:
+  tablix-loki-data:
+  tablix-grafana-data:

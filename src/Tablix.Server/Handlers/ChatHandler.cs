@@ -17,8 +17,10 @@ namespace Tablix.Server.Handlers
     using Tablix.Core.Enums;
     using Tablix.Core.Helpers;
     using Tablix.Core.Models;
+    using Tablix.Core.Observability;
     using Tablix.Core.Persistence;
     using Tablix.Core.Settings;
+    using Tablix.Server.Observability;
     using ApiErrorResponse = Tablix.Core.Models.ApiErrorResponse;
     using CoreChatMessage = Tablix.Core.Models.ChatMessage;
     using PromptChatMessage = PolyPrompt.Models.ChatMessage;
@@ -100,6 +102,43 @@ namespace Tablix.Server.Handlers
         /// </summary>
         public async Task<object> BuildContextAsync(ApiRequest req)
         {
+            return await InstrumentContextBuildAsync(req, TelemetryNames.ScopeDatabase, () => BuildContextCoreAsync(req)).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// POST /v1/database/{id}/table-context/build - generate and persist table context for every selected table.
+        /// </summary>
+        public async Task<object> BuildAllTableContextsAsync(ApiRequest req)
+        {
+            return await InstrumentContextBuildAsync(req, TelemetryNames.ScopeTable, () => BuildAllTableContextsCoreAsync(req)).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// POST /v1/database/{id}/table-context/{tableId}/build - generate and persist context for one table.
+        /// </summary>
+        public async Task<object> BuildTableContextAsync(ApiRequest req)
+        {
+            return await InstrumentContextBuildAsync(req, TelemetryNames.ScopeTable, () => BuildTableContextCoreAsync(req)).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// POST /v1/chat - non-streaming chat.
+        /// </summary>
+        public async Task<object> ChatAsync(ApiRequest req)
+        {
+            return await InstrumentChatAsync(req, TelemetryNames.ChatModeSync, state => ChatCoreAsync(req, state)).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// POST /v1/chat/stream - streaming chat using server-sent events.
+        /// </summary>
+        public async Task<object> ChatStreamAsync(ApiRequest req)
+        {
+            return await InstrumentChatAsync(req, TelemetryNames.ChatModeStream, state => ChatStreamCoreAsync(req, state)).ConfigureAwait(false);
+        }
+
+        private async Task<object> BuildContextCoreAsync(ApiRequest req)
+        {
             string id = req.Parameters["id"];
             BuildContextRequest request = req.GetData<BuildContextRequest>();
             if (request == null)
@@ -147,7 +186,7 @@ namespace Tablix.Server.Handlers
             using CompletionClientBase client = CreateClient(provider);
             ChatCompletionOptions options = CreateOptions(provider, systemPrompt);
             Stopwatch stopwatch = Stopwatch.StartNew();
-            ChatResponse response = await client.ChatAsync(prompt, options, req.CancellationToken).ConfigureAwait(false);
+            ChatResponse response = await CallChatAsync(client, provider, prompt, options, TelemetryNames.StageInference, ContextStageRecorder(TelemetryNames.ScopeDatabase), req.CancellationToken).ConfigureAwait(false);
             stopwatch.Stop();
 
             if (!response.Success)
@@ -171,7 +210,11 @@ namespace Tablix.Server.Handlers
                 return new ApiErrorResponse(ApiErrorEnum.InternalError, "Provider returned empty context.");
             }
 
-            database.Context = await _Persistence.DatabaseContexts.UpsertAsync(database.Id, context, "replace", "model", req.CancellationToken).ConfigureAwait(false);
+            database.Context = await RunStageAsync(
+                TelemetryNames.StagePersist,
+                ContextStageRecorder(TelemetryNames.ScopeDatabase),
+                () => _Persistence.DatabaseContexts.UpsertAsync(database.Id, context, "replace", "model", req.CancellationToken),
+                null).ConfigureAwait(false);
             detail.Context = context;
 
             ChatTelemetry telemetry = CreateTelemetry(
@@ -192,10 +235,7 @@ namespace Tablix.Server.Handlers
             };
         }
 
-        /// <summary>
-        /// POST /v1/database/{id}/table-context/build - generate and persist table context for every selected table.
-        /// </summary>
-        public async Task<object> BuildAllTableContextsAsync(ApiRequest req)
+        private async Task<object> BuildAllTableContextsCoreAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             BuildTableContextRequest request = req.GetData<BuildTableContextRequest>();
@@ -225,10 +265,7 @@ namespace Tablix.Server.Handlers
             return await GenerateTableContextsAsync(req, preparation, request, selectedTables).ConfigureAwait(false);
         }
 
-        /// <summary>
-        /// POST /v1/database/{id}/table-context/{tableId}/build - generate and persist context for one table.
-        /// </summary>
-        public async Task<object> BuildTableContextAsync(ApiRequest req)
+        private async Task<object> BuildTableContextCoreAsync(ApiRequest req)
         {
             string id = req.Parameters["id"];
             string tableId = req.Parameters["tableId"];
@@ -253,14 +290,12 @@ namespace Tablix.Server.Handlers
             return await GenerateTableContextsAsync(req, preparation, request, selectedTables).ConfigureAwait(false);
         }
 
-        /// <summary>
-        /// POST /v1/chat - non-streaming chat.
-        /// </summary>
-        public async Task<object> ChatAsync(ApiRequest req)
+        private async Task<object> ChatCoreAsync(ApiRequest req, RequestTelemetryState state)
         {
             ChatRequest request = req.GetData<ChatRequest>();
-            ChatPreparation preparation = await PrepareChatAsync(req, request).ConfigureAwait(false);
+            ChatPreparation preparation = await PrepareChatStageAsync(req, request).ConfigureAwait(false);
             if (preparation.Error != null) return preparation.Error;
+            TagChatSpan(preparation);
 
             using CompletionClientBase client = CreateClient(preparation.Provider);
             ChatExecutionResult execution = await ExecuteChatResponseAsync(
@@ -270,6 +305,7 @@ namespace Tablix.Server.Handlers
                 req.CancellationToken,
                 null).ConfigureAwait(false);
             FinalizeExecution(preparation, execution);
+            state.ExecutionPath = execution.ExecutionPath;
 
             if (!execution.Success)
             {
@@ -293,14 +329,12 @@ namespace Tablix.Server.Handlers
             };
         }
 
-        /// <summary>
-        /// POST /v1/chat/stream - streaming chat using server-sent events.
-        /// </summary>
-        public async Task<object> ChatStreamAsync(ApiRequest req)
+        private async Task<object> ChatStreamCoreAsync(ApiRequest req, RequestTelemetryState state)
         {
             ChatRequest request = req.GetData<ChatRequest>();
-            ChatPreparation preparation = await PrepareChatAsync(req, request).ConfigureAwait(false);
+            ChatPreparation preparation = await PrepareChatStageAsync(req, request).ConfigureAwait(false);
             if (preparation.Error != null) return preparation.Error;
+            TagChatSpan(preparation);
 
             req.Http.Response.StatusCode = 200;
             req.Http.Response.ContentType = "text/event-stream";
@@ -326,9 +360,12 @@ namespace Tablix.Server.Handlers
                 req.CancellationToken,
                 async (evt) => await SendChatEventAsync(req, evt, false).ConfigureAwait(false)).ConfigureAwait(false);
             FinalizeExecution(preparation, execution);
+            state.ExecutionPath = execution.ExecutionPath;
 
             if (!execution.Success)
             {
+                state.Outcome = TelemetryNames.OutcomeFailure;
+                state.ErrorType = "provider_error";
                 await SendChatEventAsync(req, new ChatStreamEvent
                 {
                     EventType = "error",
@@ -387,6 +424,251 @@ namespace Tablix.Server.Handlers
                 ContextPromptEstimatedTokens = EstimateTokens(contextPrompt),
                 ConversationMessages = request?.Messages?.Count ?? 0
             };
+        }
+
+        #endregion
+
+        #region Telemetry-Methods
+
+        private static readonly Action<string, string, double> _ChatStageRecorder = TablixMetrics.RecordChatStage;
+
+        private static Action<string, string, double> ContextStageRecorder(string scope)
+        {
+            return (stage, outcome, seconds) => TablixMetrics.RecordContextBuildStage(scope, stage, outcome, seconds);
+        }
+
+        private async Task<object> InstrumentChatAsync(ApiRequest req, string mode, Func<RequestTelemetryState, Task<object>> core)
+        {
+            long start = Stopwatch.GetTimestamp();
+            RequestTelemetryState state = new RequestTelemetryState();
+            using Activity activity = TablixTracing.Start(TelemetryNames.SpanChat);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrChatMode, mode);
+            try
+            {
+                object result = await core(state).ConfigureAwait(false);
+                CompleteRequestSpan(activity, req, result, state);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                state.Outcome = TablixMetrics.OutcomeOf(ex);
+                TablixTracing.RecordException(activity, ex);
+                TablixMetrics.RecordError(TelemetryNames.ComponentChat, ex);
+                throw;
+            }
+            finally
+            {
+                TablixTracing.SetTag(activity, TelemetryNames.AttrExecutionPath, state.ExecutionPath);
+                TablixMetrics.RecordChat(mode, state.ExecutionPath, state.Outcome ?? TelemetryNames.OutcomeError, TablixMetrics.SecondsSince(start));
+            }
+        }
+
+        private async Task<object> InstrumentContextBuildAsync(ApiRequest req, string scope, Func<Task<object>> core)
+        {
+            long start = Stopwatch.GetTimestamp();
+            RequestTelemetryState state = new RequestTelemetryState();
+            using Activity activity = TablixTracing.Start(TelemetryNames.SpanContextBuild);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrContextScope, scope);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrDatabaseId, req?.Parameters?["id"]);
+            try
+            {
+                object result = await core().ConfigureAwait(false);
+                CompleteRequestSpan(activity, req, result, state);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                state.Outcome = TablixMetrics.OutcomeOf(ex);
+                TablixTracing.RecordException(activity, ex);
+                TablixMetrics.RecordError(TelemetryNames.ComponentContextBuild, ex);
+                throw;
+            }
+            finally
+            {
+                TablixMetrics.RecordContextBuild(scope, state.Outcome ?? TelemetryNames.OutcomeError, TablixMetrics.SecondsSince(start));
+            }
+        }
+
+        private static void CompleteRequestSpan(Activity activity, ApiRequest req, object result, RequestTelemetryState state)
+        {
+            if (state.Outcome == null)
+            {
+                int statusCode = req?.Http?.Response?.StatusCode ?? 200;
+                if (result is ApiErrorResponse || statusCode >= 400)
+                {
+                    state.Outcome = statusCode >= 500 ? TelemetryNames.OutcomeFailure : TelemetryNames.OutcomeRejected;
+                    state.ErrorType = "http_" + statusCode;
+                }
+                else
+                {
+                    state.Outcome = TelemetryNames.OutcomeSuccess;
+                }
+            }
+
+            if (state.Outcome == TelemetryNames.OutcomeSuccess) TablixTracing.SetSuccess(activity);
+            else TablixTracing.SetOutcome(activity, state.Outcome, state.ErrorType);
+        }
+
+        private static void TagChatSpan(ChatPreparation preparation)
+        {
+            Activity activity = Activity.Current;
+            if (activity == null || preparation == null) return;
+
+            TablixTracing.SetTag(activity, TelemetryNames.AttrDatabaseId, preparation.Database?.Id);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrProviderId, preparation.Provider?.Id);
+            if (preparation.Provider != null)
+            {
+                TablixTracing.SetTag(activity, TelemetryNames.AttrGenAiProvider, TablixMetrics.GenAiProvider(preparation.Provider.Type));
+                TablixTracing.SetTag(activity, TelemetryNames.AttrGenAiRequestModel, preparation.Provider.Model);
+            }
+        }
+
+        private async Task<ChatPreparation> PrepareChatStageAsync(ApiRequest req, ChatRequest request)
+        {
+            return await RunStageAsync(
+                TelemetryNames.StagePrepare,
+                _ChatStageRecorder,
+                () => PrepareChatAsync(req, request),
+                preparation => preparation.Error == null ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeRejected).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Run one workflow stage inside a "stage:{name}" span (the ambient span for work inside the stage) and record
+        /// its duration and outcome. Exceptions are recorded and rethrown unchanged.
+        /// </summary>
+        private static async Task<T> RunStageAsync<T>(string stage, Action<string, string, double> record, Func<Task<T>> action, Func<T, string> classify)
+        {
+            long start = Stopwatch.GetTimestamp();
+            using Activity activity = TablixTracing.Start(TablixTracing.StageSpanName(stage));
+            string outcome = TelemetryNames.OutcomeSuccess;
+            try
+            {
+                T result = await action().ConfigureAwait(false);
+                if (classify != null) outcome = classify(result) ?? TelemetryNames.OutcomeSuccess;
+                if (outcome == TelemetryNames.OutcomeSuccess) TablixTracing.SetSuccess(activity);
+                else TablixTracing.SetOutcome(activity, outcome, null);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                outcome = TablixMetrics.OutcomeOf(ex);
+                TablixTracing.RecordException(activity, ex);
+                throw;
+            }
+            finally
+            {
+                try { record?.Invoke(stage, outcome, TablixMetrics.SecondsSince(start)); } catch (Exception) { }
+            }
+        }
+
+        private static async Task<ChatResponse> CallChatAsync(
+            CompletionClientBase client,
+            ModelProviderSettings provider,
+            string prompt,
+            ChatCompletionOptions options,
+            string stage,
+            Action<string, string, double> record,
+            CancellationToken token)
+        {
+            return await RunStageAsync(
+                stage,
+                record,
+                async () =>
+                {
+                    using ModelCallScope modelCall = ModelCallScope.Start(provider, TelemetryNames.ModelOperationChat);
+                    try
+                    {
+                        ChatResponse response = await client.ChatAsync(prompt, options, token).ConfigureAwait(false);
+                        modelCall.Complete(response.Success, response.Model, response.StatusCode, response.Usage, 0, response.Error);
+                        return response;
+                    }
+                    catch (Exception ex)
+                    {
+                        modelCall.Complete(ex);
+                        throw;
+                    }
+                },
+                response => response != null && response.Success ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeFailure).ConfigureAwait(false);
+        }
+
+        private static async Task<ToolChatResponse> CallToolChatAsync(
+            CompletionClientBase client,
+            ModelProviderSettings provider,
+            ToolChatRequest request,
+            string stage,
+            CancellationToken token)
+        {
+            return await RunStageAsync(
+                stage,
+                _ChatStageRecorder,
+                async () =>
+                {
+                    using ModelCallScope modelCall = ModelCallScope.Start(provider, TelemetryNames.ModelOperationToolChat);
+                    try
+                    {
+                        ToolChatResponse response = await client.ToolChatAsync(request, token).ConfigureAwait(false);
+                        modelCall.Complete(response.Success, response.Model, response.StatusCode, response.Usage, 0, response.Error);
+                        return response;
+                    }
+                    catch (Exception ex)
+                    {
+                        modelCall.Complete(ex);
+                        throw;
+                    }
+                },
+                response => response != null && response.Success ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeFailure).ConfigureAwait(false);
+        }
+
+        private static async Task<ChatToolCall> InstrumentToolCallAsync(string toolName, string phase, Func<Task<ChatToolCall>> action)
+        {
+            string boundedName = BoundToolName(toolName);
+            long start = Stopwatch.GetTimestamp();
+            using Activity stage = TablixTracing.Start(TablixTracing.StageSpanName(TelemetryNames.StageTool));
+            using Activity activity = TablixTracing.Start(TelemetryNames.SpanExecuteToolPrefix + boundedName);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrToolName, boundedName);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrToolPhase, phase);
+            TablixTracing.SetTag(activity, TelemetryNames.AttrGenAiOperation, "execute_tool");
+            string outcome = TelemetryNames.OutcomeSuccess;
+            try
+            {
+                ChatToolCall toolCall = await action().ConfigureAwait(false);
+                if (toolCall != null && !toolCall.Success)
+                {
+                    outcome = TelemetryNames.OutcomeFailure;
+                    TablixTracing.SetOutcome(activity, outcome, "tool_failed");
+                    TablixTracing.SetOutcome(stage, outcome, "tool_failed");
+                }
+                else
+                {
+                    TablixTracing.SetSuccess(activity);
+                    TablixTracing.SetSuccess(stage);
+                }
+
+                return toolCall;
+            }
+            catch (Exception ex)
+            {
+                outcome = TablixMetrics.OutcomeOf(ex);
+                TablixTracing.RecordException(activity, ex);
+                TablixTracing.RecordException(stage, ex);
+                throw;
+            }
+            finally
+            {
+                double seconds = TablixMetrics.SecondsSince(start);
+                TablixMetrics.RecordChatToolCall(boundedName, phase, outcome, seconds);
+                TablixMetrics.RecordChatStage(TelemetryNames.StageTool, outcome, seconds);
+            }
+        }
+
+        private static string BoundToolName(string toolName)
+        {
+            if (String.Equals(toolName, TablixChatToolDefinitions.ExecuteQueryToolName, StringComparison.Ordinal)
+                || String.Equals(toolName, TablixChatToolDefinitions.UpdateDatabaseContextToolName, StringComparison.Ordinal)
+                || String.Equals(toolName, TablixChatToolDefinitions.UpdateTableContextToolName, StringComparison.Ordinal))
+                return toolName;
+
+            return TelemetryNames.ValueUnknown;
         }
 
         #endregion
@@ -451,7 +733,7 @@ namespace Tablix.Server.Handlers
                 detail = _CrawlCache.Get(database.Id);
             if (detail == null)
             {
-                detail = await _CrawlCache.CrawlOneAsync(database).ConfigureAwait(false);
+                detail = await _CrawlCache.CrawlOneAsync(database, TelemetryNames.TriggerChat).ConfigureAwait(false);
                 await _Persistence.DatabaseMetadata.SaveCrawlAsync(detail, req.CancellationToken).ConfigureAwait(false);
             }
 
@@ -615,7 +897,16 @@ namespace Tablix.Server.Handlers
             string[] responseModels,
             int tableIndex)
         {
-            await semaphore.WaitAsync(req.CancellationToken).ConfigureAwait(false);
+            // One span per table, so parallel tables keep their own stages and identity.
+            using Activity tableSpan = TablixTracing.Start(TelemetryNames.SpanContextTable);
+            TablixTracing.SetTag(tableSpan, TelemetryNames.AttrTableId, table.TableId);
+            TablixTracing.SetTag(tableSpan, TelemetryNames.AttrDatabaseId, preparation.Database.Id);
+            await RunStageAsync<bool>(
+                TelemetryNames.StageQueued,
+                ContextStageRecorder(TelemetryNames.ScopeTable),
+                async () => { await semaphore.WaitAsync(req.CancellationToken).ConfigureAwait(false); return true; },
+                null).ConfigureAwait(false);
+            TablixMetrics.AddContextBuildSlotsInUse(1);
             try
             {
                 string prompt = BuildTableContextPrompt(preparation.Database, preparation.Detail, table, instructions);
@@ -623,7 +914,7 @@ namespace Tablix.Server.Handlers
 
                 using CompletionClientBase client = CreateClient(preparation.Provider);
                 ChatCompletionOptions options = CreateOptions(preparation.Provider, systemPrompt);
-                ChatResponse response = await client.ChatAsync(prompt, options, req.CancellationToken).ConfigureAwait(false);
+                ChatResponse response = await CallChatAsync(client, preparation.Provider, prompt, options, TelemetryNames.StageInference, ContextStageRecorder(TelemetryNames.ScopeTable), req.CancellationToken).ConfigureAwait(false);
                 if (!response.Success)
                     throw new InvalidOperationException(response.Error ?? "Provider table context generation failed.");
 
@@ -636,21 +927,27 @@ namespace Tablix.Server.Handlers
                 if (String.IsNullOrWhiteSpace(context))
                     throw new InvalidOperationException("Provider returned empty table context for " + table.SchemaName + "." + table.TableName + ".");
 
-                TableContextRead saved = await _Persistence.TableContexts.UpsertAsync(
-                    preparation.Database.Id,
-                    table.TableId,
-                    context,
-                    "replace",
-                    "model",
-                    req.CancellationToken).ConfigureAwait(false);
+                TableContextRead saved = await RunStageAsync(
+                    TelemetryNames.StagePersist,
+                    ContextStageRecorder(TelemetryNames.ScopeTable),
+                    () => _Persistence.TableContexts.UpsertAsync(
+                        preparation.Database.Id,
+                        table.TableId,
+                        context,
+                        "replace",
+                        "model",
+                        req.CancellationToken),
+                    null).ConfigureAwait(false);
 
                 table.Context = saved.Context;
                 responseTranscript[tableIndex] = context;
                 responseModels[tableIndex] = response.Model;
+                TablixTracing.SetSuccess(tableSpan);
                 return saved;
             }
             finally
             {
+                TablixMetrics.AddContextBuildSlotsInUse(-1);
                 semaphore.Release();
             }
         }
@@ -1185,7 +1482,7 @@ namespace Tablix.Server.Handlers
                     MaxTokens = preparation.Provider.MaxTokens
                 };
 
-                response = await client.ToolChatAsync(toolRequest, token).ConfigureAwait(false);
+                response = await CallToolChatAsync(client, preparation.Provider, toolRequest, TelemetryNames.StageToolSelection, token).ConfigureAwait(false);
                 if (!response.Success)
                 {
                     stopwatch.Stop();
@@ -1227,7 +1524,7 @@ namespace Tablix.Server.Handlers
                     MaxTokens = preparation.Provider.MaxTokens
                 };
 
-                response = await client.ToolChatAsync(finalRequest, token).ConfigureAwait(false);
+                response = await CallToolChatAsync(client, preparation.Provider, finalRequest, TelemetryNames.StageFinalInference, token).ConfigureAwait(false);
             }
 
             stopwatch.Stop();
@@ -1427,7 +1724,7 @@ namespace Tablix.Server.Handlers
 
             for (int attempt = 0; attempt < policy.MaxPlanningAttempts; attempt++)
             {
-                planResponse = await client.ChatAsync(plannerPrompt, plannerOptions, token).ConfigureAwait(false);
+                planResponse = await CallChatAsync(client, preparation.Provider, plannerPrompt, plannerOptions, TelemetryNames.StagePlanner, _ChatStageRecorder, token).ConfigureAwait(false);
                 if (!planResponse.Success)
                     break;
 
@@ -1460,10 +1757,13 @@ namespace Tablix.Server.Handlers
                 return await ExecutePlainChatAsync(client, preparation, "fallback_no_plan", policy.CapabilityNotice, token).ConfigureAwait(false);
             }
 
-            ChatToolCall toolCall = await ExecutePlannedQueryAsync(preparation, plan.Query, "fallback", token, sendEventAsync).ConfigureAwait(false);
+            ChatToolCall toolCall = await InstrumentToolCallAsync(
+                TablixChatToolDefinitions.ExecuteQueryToolName,
+                "fallback",
+                () => ExecutePlannedQueryAsync(preparation, plan.Query, "fallback", token, sendEventAsync)).ConfigureAwait(false);
             string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, planResponse.Text, toolCall);
             ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
-            ChatResponse finalResponse = await client.ChatAsync(followupPrompt, options, token).ConfigureAwait(false);
+            ChatResponse finalResponse = await CallChatAsync(client, preparation.Provider, followupPrompt, options, TelemetryNames.StageFinalInference, _ChatStageRecorder, token).ConfigureAwait(false);
             stopwatch.Stop();
 
             string message = finalResponse.Success ? finalResponse.Text : "The query could not be executed: " + (toolCall.Error ?? finalResponse.Error);
@@ -1495,7 +1795,7 @@ namespace Tablix.Server.Handlers
 
             for (int attempt = 0; attempt < policy.MaxPlanningAttempts; attempt++)
             {
-                planResponse = await client.ChatAsync(plannerPrompt, plannerOptions, token).ConfigureAwait(false);
+                planResponse = await CallChatAsync(client, preparation.Provider, plannerPrompt, plannerOptions, TelemetryNames.StagePlanner, _ChatStageRecorder, token).ConfigureAwait(false);
                 if (!planResponse.Success)
                     break;
 
@@ -1529,7 +1829,10 @@ namespace Tablix.Server.Handlers
                 return await ExecutePlainChatStreamingAsync(client, preparation, "fallback_no_plan", policy.CapabilityNotice, token, sendEventAsync).ConfigureAwait(false);
             }
 
-            ChatToolCall toolCall = await ExecutePlannedQueryAsync(preparation, plan.Query, "fallback", token, sendEventAsync).ConfigureAwait(false);
+            ChatToolCall toolCall = await InstrumentToolCallAsync(
+                TablixChatToolDefinitions.ExecuteQueryToolName,
+                "fallback",
+                () => ExecutePlannedQueryAsync(preparation, plan.Query, "fallback", token, sendEventAsync)).ConfigureAwait(false);
             string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, planResponse.Text, toolCall);
             return await ExecutePromptStreamingAsync(
                 client,
@@ -1546,7 +1849,7 @@ namespace Tablix.Server.Handlers
         {
             ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
             Stopwatch stopwatch = Stopwatch.StartNew();
-            ChatResponse response = await client.ChatAsync(preparation.Prompt, options, token).ConfigureAwait(false);
+            ChatResponse response = await CallChatAsync(client, preparation.Provider, preparation.Prompt, options, TelemetryNames.StageFinalInference, _ChatStageRecorder, token).ConfigureAwait(false);
             stopwatch.Stop();
 
             if (!response.Success)
@@ -1601,31 +1904,71 @@ namespace Tablix.Server.Handlers
             CancellationToken token,
             Func<ChatStreamEvent, Task> sendEventAsync)
         {
-            ToolChatStreamingResponse response = await client.ToolChatStreamingAsync(request, token).ConfigureAwait(false);
-            if (!response.Success)
-                return response;
+            return await RunStageAsync(
+                streamText ? TelemetryNames.StageFinalInference : TelemetryNames.StageToolSelection,
+                _ChatStageRecorder,
+                () => StreamToolChatResponseCoreAsync(client, request, preparation, executionPath, capabilityNotice, streamText, token, sendEventAsync),
+                result => result.Success ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeFailure).ConfigureAwait(false);
+        }
 
-            await foreach (ToolChatStreamingChunk chunk in response.Chunks.WithCancellation(token).ConfigureAwait(false))
+        private async Task<ToolChatStreamingResponse> StreamToolChatResponseCoreAsync(
+            CompletionClientBase client,
+            ToolChatRequest request,
+            ChatPreparation preparation,
+            string executionPath,
+            string capabilityNotice,
+            bool streamText,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            using ModelCallScope modelCall = ModelCallScope.Start(preparation.Provider, TelemetryNames.ModelOperationToolChatStream);
+            ToolChatStreamingResponse response;
+            try
             {
-                if (!streamText || String.IsNullOrEmpty(chunk.Text))
-                    continue;
-
-                string model = String.IsNullOrWhiteSpace(chunk.Model) ? preparation.Provider.Model : chunk.Model;
-                foreach (string delta in SplitStreamingText(chunk.Text))
-                {
-                    await sendEventAsync(new ChatStreamEvent
-                    {
-                        EventType = "token",
-                        DatabaseId = preparation.Database.Id,
-                        ProviderId = preparation.Provider.Id,
-                        Model = model,
-                        Delta = delta,
-                        ExecutionPath = executionPath,
-                        CapabilityNotice = capabilityNotice
-                    }).ConfigureAwait(false);
-                }
+                response = await client.ToolChatStreamingAsync(request, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                modelCall.Complete(ex);
+                throw;
             }
 
+            if (!response.Success)
+            {
+                modelCall.Complete(false, response.Model, response.StatusCode, response.Usage, 0, response.Error);
+                return response;
+            }
+
+            try
+            {
+                await foreach (ToolChatStreamingChunk chunk in response.Chunks.WithCancellation(token).ConfigureAwait(false))
+                {
+                    if (!streamText || String.IsNullOrEmpty(chunk.Text))
+                        continue;
+
+                    string model = String.IsNullOrWhiteSpace(chunk.Model) ? preparation.Provider.Model : chunk.Model;
+                    foreach (string delta in SplitStreamingText(chunk.Text))
+                    {
+                        await sendEventAsync(new ChatStreamEvent
+                        {
+                            EventType = "token",
+                            DatabaseId = preparation.Database.Id,
+                            ProviderId = preparation.Provider.Id,
+                            Model = model,
+                            Delta = delta,
+                            ExecutionPath = executionPath,
+                            CapabilityNotice = capabilityNotice
+                        }).ConfigureAwait(false);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                modelCall.Complete(ex);
+                throw;
+            }
+
+            modelCall.Complete(true, response.Model, response.StatusCode, response.Usage, response.TimeToFirstTokenMs, null);
             return response;
         }
 
@@ -1639,11 +1982,40 @@ namespace Tablix.Server.Handlers
             CancellationToken token,
             Func<ChatStreamEvent, Task> sendEventAsync)
         {
+            return await RunStageAsync(
+                TelemetryNames.StageFinalInference,
+                _ChatStageRecorder,
+                () => ExecutePromptStreamingCoreAsync(client, preparation, prompt, executionPath, capabilityNotice, toolCalls, token, sendEventAsync),
+                result => result.Success ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeFailure).ConfigureAwait(false);
+        }
+
+        private async Task<ChatExecutionResult> ExecutePromptStreamingCoreAsync(
+            CompletionClientBase client,
+            ChatPreparation preparation,
+            string prompt,
+            string executionPath,
+            string capabilityNotice,
+            List<ChatToolCall> toolCalls,
+            CancellationToken token,
+            Func<ChatStreamEvent, Task> sendEventAsync)
+        {
             ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
             Stopwatch stopwatch = Stopwatch.StartNew();
-            ChatStreamingResponse response = await client.ChatStreamingAsync(prompt, options, token).ConfigureAwait(false);
+            using ModelCallScope modelCall = ModelCallScope.Start(preparation.Provider, TelemetryNames.ModelOperationChatStream);
+            ChatStreamingResponse response;
+            try
+            {
+                response = await client.ChatStreamingAsync(prompt, options, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                modelCall.Complete(ex);
+                throw;
+            }
+
             if (!response.Success)
             {
+                modelCall.Complete(false, response.Model, response.StatusCode, response.Usage, 0, response.Error);
                 stopwatch.Stop();
                 return new ChatExecutionResult
                 {
@@ -1659,31 +2031,40 @@ namespace Tablix.Server.Handlers
             StringBuilder messageBuilder = new StringBuilder();
             ChatStreamingUsage usage = null;
 
-            await foreach (ChatStreamingChunk chunk in response.Chunks.WithCancellation(token).ConfigureAwait(false))
+            try
             {
-                if (chunk.Usage != null)
-                    usage = chunk.Usage;
-
-                if (String.IsNullOrEmpty(chunk.Text))
-                    continue;
-
-                messageBuilder.Append(chunk.Text);
-                string model = String.IsNullOrWhiteSpace(chunk.Model) ? preparation.Provider.Model : chunk.Model;
-                foreach (string delta in SplitStreamingText(chunk.Text))
+                await foreach (ChatStreamingChunk chunk in response.Chunks.WithCancellation(token).ConfigureAwait(false))
                 {
-                    await sendEventAsync(new ChatStreamEvent
+                    if (chunk.Usage != null)
+                        usage = chunk.Usage;
+
+                    if (String.IsNullOrEmpty(chunk.Text))
+                        continue;
+
+                    messageBuilder.Append(chunk.Text);
+                    string model = String.IsNullOrWhiteSpace(chunk.Model) ? preparation.Provider.Model : chunk.Model;
+                    foreach (string delta in SplitStreamingText(chunk.Text))
                     {
-                        EventType = "token",
-                        DatabaseId = preparation.Database.Id,
-                        ProviderId = preparation.Provider.Id,
-                        Model = model,
-                        Delta = delta,
-                        ExecutionPath = executionPath,
-                        CapabilityNotice = capabilityNotice
-                    }).ConfigureAwait(false);
+                        await sendEventAsync(new ChatStreamEvent
+                        {
+                            EventType = "token",
+                            DatabaseId = preparation.Database.Id,
+                            ProviderId = preparation.Provider.Id,
+                            Model = model,
+                            Delta = delta,
+                            ExecutionPath = executionPath,
+                            CapabilityNotice = capabilityNotice
+                        }).ConfigureAwait(false);
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                modelCall.Complete(ex);
+                throw;
+            }
 
+            modelCall.Complete(true, response.Model, response.StatusCode, usage ?? response.Usage, response.TimeToFirstTokenMs, null);
             stopwatch.Stop();
             string message = messageBuilder.ToString();
             long totalMs = response.OverallRuntimeMs > 0 ? response.OverallRuntimeMs : stopwatch.ElapsedMilliseconds;
@@ -1748,6 +2129,14 @@ namespace Tablix.Server.Handlers
         }
 
         private async Task<ChatToolCall> ExecutePromptToolCallAsync(ChatPreparation preparation, PromptToolCall promptToolCall, string phase, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync)
+        {
+            return await InstrumentToolCallAsync(
+                promptToolCall?.Name,
+                phase,
+                () => ExecutePromptToolCallCoreAsync(preparation, promptToolCall, phase, token, sendEventAsync)).ConfigureAwait(false);
+        }
+
+        private async Task<ChatToolCall> ExecutePromptToolCallCoreAsync(ChatPreparation preparation, PromptToolCall promptToolCall, string phase, CancellationToken token, Func<ChatStreamEvent, Task> sendEventAsync)
         {
             ChatToolCall toolCall = new ChatToolCall
             {

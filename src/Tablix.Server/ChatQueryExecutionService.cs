@@ -7,6 +7,7 @@ namespace Tablix.Server
     using Tablix.Core.DatabaseDrivers;
     using Tablix.Core.Helpers;
     using Tablix.Core.Models;
+    using Tablix.Core.Observability;
     using Tablix.Core.Settings;
 
     /// <summary>
@@ -52,10 +53,11 @@ namespace Tablix.Server
                 return result;
 
             Stopwatch refreshStopwatch = Stopwatch.StartNew();
-            DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(database).ConfigureAwait(false);
+            DatabaseDetail detail = await _CrawlCache.CrawlOneAsync(database, TelemetryNames.TriggerQueryRetry).ConfigureAwait(false);
             refreshStopwatch.Stop();
 
             ChatQueryExecutionResult retry = await ExecuteOnceAsync(database, query, token).ConfigureAwait(false);
+            TablixMetrics.RecordSchemaRefresh(retry.Success ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeFailure);
             retry.SchemaRefreshed = true;
             retry.SchemaRefreshMs = refreshStopwatch.Elapsed.TotalMilliseconds;
             retry.SchemaRefreshTableCount = detail == null || detail.Tables == null ? 0 : detail.Tables.Count;
@@ -71,10 +73,12 @@ namespace Tablix.Server
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
             string normalizedQuery = QueryValidator.NormalizeSingleStatement(query);
+            string statement = QueryValidator.GetStatementType(normalizedQuery);
             string validationError = QueryValidator.Validate(normalizedQuery, database.AllowedQueries);
             if (validationError != null)
             {
                 stopwatch.Stop();
+                TablixMetrics.RecordQuery(TelemetryNames.SourceChat, statement, TelemetryNames.OutcomeRejected, stopwatch.Elapsed.TotalSeconds, 0);
                 return new ChatQueryExecutionResult
                 {
                     Success = false,
@@ -89,6 +93,12 @@ namespace Tablix.Server
                 IDatabaseCrawler crawler = CrawlerFactory.Create(database.Type);
                 QueryResult queryResult = await crawler.ExecuteQueryAsync(database, normalizedQuery, token).ConfigureAwait(false);
                 stopwatch.Stop();
+                TablixMetrics.RecordQuery(
+                    TelemetryNames.SourceChat,
+                    statement,
+                    queryResult != null && queryResult.Success ? TelemetryNames.OutcomeSuccess : TelemetryNames.OutcomeFailure,
+                    stopwatch.Elapsed.TotalSeconds,
+                    queryResult?.RowsReturned ?? 0);
 
                 return new ChatQueryExecutionResult
                 {
@@ -101,6 +111,7 @@ namespace Tablix.Server
             catch (Exception ex)
             {
                 stopwatch.Stop();
+                TablixMetrics.RecordQuery(TelemetryNames.SourceChat, statement, TablixMetrics.OutcomeOf(ex), stopwatch.Elapsed.TotalSeconds, 0);
                 return new ChatQueryExecutionResult
                 {
                     Success = false,
