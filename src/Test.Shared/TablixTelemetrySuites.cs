@@ -452,7 +452,7 @@ namespace Test.Shared
 
             using (ModelCallScope scope = ModelCallScope.Start(provider, TelemetryNames.ModelOperationChatStream))
             {
-                scope.Complete(true, "fake-model", 200, new ChatStreamingUsage { PromptTokens = 7, CompletionTokens = 3 }, 120, null);
+                scope.Complete(true, "fake-model", 200, new TokenUsage { PromptTokens = 7, CompletionTokens = 3 }, 120, null);
             }
 
             using (ModelCallScope scope = ModelCallScope.Start(provider, TelemetryNames.ModelOperationChat))
@@ -659,15 +659,12 @@ namespace Test.Shared
                 await SendAsync(http, HttpMethod.Post, restUrl + "/v1/chat", chatBody, null, 502, token).ConfigureAwait(false);
 
                 // MCP tool call from a caller trace.
-                using (HttpRequestMessage mcp = new HttpRequestMessage(HttpMethod.Post, mcpUrl))
-                {
-                    mcp.Content = new StringContent("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"tablix_discover_databases\",\"arguments\":{}}}", Encoding.UTF8, "application/json");
-                    mcp.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
-                    mcp.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2025-11-25");
-                    mcp.Headers.TryAddWithoutValidation("traceparent", "00-" + _SampleTraceId.Replace('4', '5') + "-" + _SampleSpanId + "-01");
-                    using HttpResponseMessage response = await http.SendAsync(mcp, token).ConfigureAwait(false);
-                    True(response.IsSuccessStatusCode, "MCP call failed: HTTP " + (int)response.StatusCode);
-                }
+                McpTestSession mcp = await McpTestSession.OpenAsync(mcpUrl, token).ConfigureAwait(false);
+                string mcpResponse = await mcp.PostAsync(
+                    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"tablix_discover_databases\",\"arguments\":{}}}",
+                    token,
+                    "00-" + _SampleTraceId.Replace('4', '5') + "-" + _SampleSpanId + "-01").ConfigureAwait(false);
+                True(mcpResponse.Contains("\"result\"", StringComparison.Ordinal), "MCP call failed: " + mcpResponse);
 
                 // Metrics through the real Prometheus exporter.
                 string scrape = await WaitForScrapeAsync(http, metricsUrl, "tablix_mcp_tool_calls_total", token).ConfigureAwait(false);

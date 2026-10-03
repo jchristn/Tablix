@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <b>v0.3.0 - ALPHA</b> - API and structure may change without notice
+  <b>v0.3.1 - ALPHA</b> - API and structure may change without notice
 </p>
 
 # Tablix
@@ -29,6 +29,15 @@ Tablix is a database gateway for AI agents, connecting your databases through MC
     <img src="assets/ss5.png" alt="Tablix chat recent purchases verified answer screenshot" />
   </p>
 </details>
+
+## What's New in v0.3.1
+
+v0.3.1 adds production observability and refreshes dependencies. Docker images for this release are published under the `v0.3.0` and `latest` tags.
+
+- **Observability:** metrics, traces, and logs for crawl, chat, context generation, queries, model calls, MCP tools, and persistence, with a bundled OpenTelemetry Collector, Prometheus, Tempo, Loki, and Grafana stack. See [TELEMETRY.md](TELEMETRY.md).
+- **PolyPrompt 3:** model providers use PolyPrompt 3.1's per-capability completion clients. Provider model, temperature, top-p, and max tokens are client defaults, and native tool-chat requests carry them in `ToolChatRequest.Options`.
+- **Voltaic 2.2:** handshake-era MCP clients must `initialize` and send `MCP-Session-Id`; stateless `2026-07-28` clients such as Claude Code are unaffected. See [MCP_API.md](MCP_API.md).
+- **Dependency updates:** Watson 7.2.2, SyslogLogging 2.3.1, Microsoft.Data.SqlClient 7.1.1, and Touchstone 0.2.0, NUnit 5.0.0, and coverlet 10.1.0 for tests.
 
 ## What's New in v0.3.0
 
@@ -550,7 +559,7 @@ Model providers are managed through the dashboard **Models** page or `/v1/model`
 
 The `Chat` section is the configuration surface for the dashboard chat experience and prompt-processing behavior. Provider records are stored in `tablix.db`; the seeded Docker database includes provider templates for Ollama, OpenAI, OpenAI-compatible endpoints, and Gemini. Only the local Ollama provider is enabled by default; cloud providers are disabled until an endpoint, model, and API key are supplied.
 
-Tablix uses PolyPrompt `2.0.0` for provider-normalized tool chat and streaming native tool-chat responses. When `Chat.PromptProcessing.PreferNativeToolCalls` is enabled and the selected persisted provider has native tool calls enabled, Tablix sends `tablix_execute_query`, `tablix_update_database_context`, and `tablix_update_table_context` tool definitions to the model when context updates are enabled. New providers default `UseNativeToolCalls` to `true` whenever `SupportsNativeToolCalls` is `true`; turn it off only for a specific model endpoint that fails tool-call validation. Tablix still owns query validation, execution, `AllowedQueries` enforcement, schema-refresh retry, context-update persistence, telemetry, and secret redaction. If native tools are unavailable or the model does not call a tool, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` lets Tablix ask the model planner to classify intent and generate one permitted query only when execution is appropriate.
+Tablix uses PolyPrompt `3.1.0` for provider-normalized tool chat and streaming native tool-chat responses. When `Chat.PromptProcessing.PreferNativeToolCalls` is enabled and the selected persisted provider has native tool calls enabled, Tablix sends `tablix_execute_query`, `tablix_update_database_context`, and `tablix_update_table_context` tool definitions to the model when context updates are enabled. New providers default `UseNativeToolCalls` to `true` whenever `SupportsNativeToolCalls` is `true`; turn it off only for a specific model endpoint that fails tool-call validation. Tablix still owns query validation, execution, `AllowedQueries` enforcement, schema-refresh retry, context-update persistence, telemetry, and secret redaction. If native tools are unavailable or the model does not call a tool, `Chat.PromptProcessing.FallbackWhenNativeToolNotCalled` lets Tablix ask the model planner to classify intent and generate one permitted query only when execution is appropriate.
 
 The default `Chat.SystemPrompt` instructs the model to restrict conversation to the selected database, its structure, its contents, and their relationships. It tells the model to use database context for database-wide guidance, table context for table-specific guidance, and schema discovery as the source of truth for table names, column names, keys, indexes, and data types. It also instructs the model to execute an allowed query with the available Tablix query tool when the user asks for data that can be answered from the database, rather than merely returning SQL for the user to run, and to never fabricate result rows, counts, names, dates, metrics, or other database facts. If query execution reports a bad or unknown column, missing column, or column type mismatch, the prompt tells the model to refresh schema by crawling or re-discovering relevant tables, then update database or table context when refreshed schema proves saved context stale. Tablix appends mandatory execution and no-fabrication rules to every effective chat system prompt.
 

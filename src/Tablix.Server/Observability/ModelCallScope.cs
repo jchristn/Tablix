@@ -74,7 +74,7 @@ namespace Tablix.Server.Observability
         /// <param name="timeToFirstTokenMs">Time to first token for streamed calls, or 0.</param>
         /// <param name="error">Provider error message for failures. Recorded as the span status description with the API
         /// key redacted and truncated to 256 characters.</param>
-        public void Complete(bool success, string responseModel, int? statusCode, ChatStreamingUsage usage, long timeToFirstTokenMs, string error)
+        public void Complete(bool success, string responseModel, int? statusCode, TokenUsage usage, long timeToFirstTokenMs, string error)
         {
             if (_Completed) return;
             _Completed = true;

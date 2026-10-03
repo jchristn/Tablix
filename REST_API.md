@@ -324,7 +324,7 @@ Health check. No authentication required.
 ```json
 {
   "Name": "Tablix",
-  "Version": "0.3.0",
+  "Version": "0.3.1",
   "StartTimeUtc": "2026-03-20T14:30:00.000Z",
   "Uptime": "01:23:45.678"
 }

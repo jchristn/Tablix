@@ -184,7 +184,7 @@ namespace Tablix.Server.Handlers
             string systemPrompt = "You generate concise, durable database context for Tablix settings. Restrict output to the selected database, its structure, contents, and relationships. Do not include credentials, secrets, raw result rows, or speculative facts.";
 
             using CompletionClientBase client = CreateClient(provider);
-            ChatCompletionOptions options = CreateOptions(provider, systemPrompt);
+            CompletionOptions options = CreateOptions(provider, systemPrompt);
             Stopwatch stopwatch = Stopwatch.StartNew();
             ChatResponse response = await CallChatAsync(client, provider, prompt, options, TelemetryNames.StageInference, ContextStageRecorder(TelemetryNames.ScopeDatabase), req.CancellationToken).ConfigureAwait(false);
             stopwatch.Stop();
@@ -196,7 +196,7 @@ namespace Tablix.Server.Handlers
             }
 
             string finishReason;
-            ChatStreamingUsage usage;
+            TokenUsage usage;
             string context = NormalizeGeneratedContext(client, provider, response, out finishReason, out usage);
             if (IsRejectedContextFinishReason(finishReason))
             {
@@ -565,7 +565,7 @@ namespace Tablix.Server.Handlers
             CompletionClientBase client,
             ModelProviderSettings provider,
             string prompt,
-            ChatCompletionOptions options,
+            CompletionOptions options,
             string stage,
             Action<string, string, double> record,
             CancellationToken token)
@@ -913,13 +913,13 @@ namespace Tablix.Server.Handlers
                 promptTranscript[tableIndex] = prompt;
 
                 using CompletionClientBase client = CreateClient(preparation.Provider);
-                ChatCompletionOptions options = CreateOptions(preparation.Provider, systemPrompt);
+                CompletionOptions options = CreateOptions(preparation.Provider, systemPrompt);
                 ChatResponse response = await CallChatAsync(client, preparation.Provider, prompt, options, TelemetryNames.StageInference, ContextStageRecorder(TelemetryNames.ScopeTable), req.CancellationToken).ConfigureAwait(false);
                 if (!response.Success)
                     throw new InvalidOperationException(response.Error ?? "Provider table context generation failed.");
 
                 string finishReason;
-                ChatStreamingUsage usage;
+                TokenUsage usage;
                 string context = NormalizeGeneratedContext(client, preparation.Provider, response, out finishReason, out usage);
                 if (IsRejectedContextFinishReason(finishReason))
                     throw new InvalidOperationException("Provider stopped table context generation for " + table.SchemaName + "." + table.TableName + " with finish reason '" + finishReason + "'. Context was not saved.");
@@ -1045,23 +1045,23 @@ namespace Tablix.Server.Handlers
         {
             CompletionClientBase client;
             if (provider.Type == ModelProviderTypeEnum.Gemini)
-                client = new GeminiClient(provider.Endpoint, provider.ApiKey, _Logging);
+                client = new GeminiCompletionClient(provider.Endpoint, provider.ApiKey, _Logging);
             else if (provider.Type == ModelProviderTypeEnum.Ollama)
-                client = new OllamaClient(provider.Endpoint, provider.ApiKey, _Logging);
+                client = new OllamaCompletionClient(provider.Endpoint, provider.ApiKey, _Logging);
             else
-                client = new OpenAiClient(provider.Endpoint, provider.ApiKey, _Logging);
+                client = new OpenAiCompletionClient(provider.Endpoint, provider.ApiKey, _Logging);
 
-            client.Model = provider.Model;
+            if (!String.IsNullOrWhiteSpace(provider.Model)) client.Model = provider.Model;
             client.TimeoutMs = provider.RequestTimeoutMs;
-            if (provider.Temperature.HasValue) client.Temperature = provider.Temperature.Value;
-            if (provider.TopP.HasValue) client.TopP = provider.TopP.Value;
-            if (provider.MaxTokens.HasValue) client.MaxTokens = provider.MaxTokens.Value;
+            if (provider.Temperature.HasValue) client.Defaults.Temperature = provider.Temperature.Value;
+            if (provider.TopP.HasValue) client.Defaults.TopP = provider.TopP.Value;
+            if (provider.MaxTokens.HasValue) client.Defaults.MaxTokens = provider.MaxTokens.Value;
             return client;
         }
 
-        private static ChatCompletionOptions CreateOptions(ModelProviderSettings provider, string systemPrompt)
+        private static CompletionOptions CreateOptions(ModelProviderSettings provider, string systemPrompt)
         {
-            ChatCompletionOptions options = new ChatCompletionOptions
+            CompletionOptions options = new CompletionOptions
             {
                 SystemPrompt = systemPrompt
             };
@@ -1270,7 +1270,7 @@ namespace Tablix.Server.Handlers
             return normalized.Trim();
         }
 
-        private static string NormalizeGeneratedContext(CompletionClientBase client, ModelProviderSettings provider, ChatResponse response, out string finishReason, out ChatStreamingUsage usage)
+        private static string NormalizeGeneratedContext(CompletionClientBase client, ModelProviderSettings provider, ChatResponse response, out string finishReason, out TokenUsage usage)
         {
             finishReason = null;
             usage = null;
@@ -1290,7 +1290,7 @@ namespace Tablix.Server.Handlers
             return NormalizeGeneratedContext(context);
         }
 
-        private static string ExtractGeminiTextFromResponseBody(string responseBody, out string finishReason, out ChatStreamingUsage usage)
+        private static string ExtractGeminiTextFromResponseBody(string responseBody, out string finishReason, out TokenUsage usage)
         {
             finishReason = null;
             usage = null;
@@ -1323,11 +1323,11 @@ namespace Tablix.Server.Handlers
             }
         }
 
-        private static ChatStreamingUsage ExtractGeminiUsage(GeminiUsageMetadata usageMetadata)
+        private static TokenUsage ExtractGeminiUsage(GeminiUsageMetadata usageMetadata)
         {
             if (usageMetadata == null) return null;
 
-            ChatStreamingUsage usage = new ChatStreamingUsage
+            TokenUsage usage = new TokenUsage
             {
                 PromptTokens = usageMetadata.PromptTokenCount,
                 CompletionTokens = usageMetadata.CandidatesTokenCount,
@@ -1473,13 +1473,16 @@ namespace Tablix.Server.Handlers
             {
                 ToolChatRequest toolRequest = new ToolChatRequest
                 {
-                    Model = preparation.Provider.Model,
                     Messages = messages,
                     Tools = TablixChatToolDefinitions.Build(preparation.Settings.Chat.Tools.AllowContextUpdates),
                     ToolChoice = "auto",
-                    Temperature = preparation.Provider.Temperature,
-                    TopP = preparation.Provider.TopP,
-                    MaxTokens = preparation.Provider.MaxTokens
+                    Options = new CompletionOptions
+                    {
+                        Model = preparation.Provider.Model,
+                        Temperature = preparation.Provider.Temperature,
+                        TopP = preparation.Provider.TopP,
+                        MaxTokens = preparation.Provider.MaxTokens
+                    }
                 };
 
                 response = await CallToolChatAsync(client, preparation.Provider, toolRequest, TelemetryNames.StageToolSelection, token).ConfigureAwait(false);
@@ -1515,13 +1518,16 @@ namespace Tablix.Server.Handlers
             {
                 ToolChatRequest finalRequest = new ToolChatRequest
                 {
-                    Model = preparation.Provider.Model,
                     Messages = messages,
                     Tools = new List<ToolDefinition>(),
                     ToolChoice = "none",
-                    Temperature = preparation.Provider.Temperature,
-                    TopP = preparation.Provider.TopP,
-                    MaxTokens = preparation.Provider.MaxTokens
+                    Options = new CompletionOptions
+                    {
+                        Model = preparation.Provider.Model,
+                        Temperature = preparation.Provider.Temperature,
+                        TopP = preparation.Provider.TopP,
+                        MaxTokens = preparation.Provider.MaxTokens
+                    }
                 };
 
                 response = await CallToolChatAsync(client, preparation.Provider, finalRequest, TelemetryNames.StageFinalInference, token).ConfigureAwait(false);
@@ -1584,13 +1590,16 @@ namespace Tablix.Server.Handlers
             {
                 ToolChatRequest toolRequest = new ToolChatRequest
                 {
-                    Model = preparation.Provider.Model,
                     Messages = messages,
                     Tools = TablixChatToolDefinitions.Build(preparation.Settings.Chat.Tools.AllowContextUpdates),
                     ToolChoice = "auto",
-                    Temperature = preparation.Provider.Temperature,
-                    TopP = preparation.Provider.TopP,
-                    MaxTokens = preparation.Provider.MaxTokens
+                    Options = new CompletionOptions
+                    {
+                        Model = preparation.Provider.Model,
+                        Temperature = preparation.Provider.Temperature,
+                        TopP = preparation.Provider.TopP,
+                        MaxTokens = preparation.Provider.MaxTokens
+                    }
                 };
 
                 response = await StreamToolChatResponseAsync(
@@ -1662,13 +1671,16 @@ namespace Tablix.Server.Handlers
 
             ToolChatRequest finalRequest = new ToolChatRequest
             {
-                Model = preparation.Provider.Model,
                 Messages = messages,
                 Tools = new List<ToolDefinition>(),
                 ToolChoice = "none",
-                Temperature = preparation.Provider.Temperature,
-                TopP = preparation.Provider.TopP,
-                MaxTokens = preparation.Provider.MaxTokens
+                Options = new CompletionOptions
+                {
+                    Model = preparation.Provider.Model,
+                    Temperature = preparation.Provider.Temperature,
+                    TopP = preparation.Provider.TopP,
+                    MaxTokens = preparation.Provider.MaxTokens
+                }
             };
 
             ToolChatStreamingResponse finalResponse = await StreamToolChatResponseAsync(
@@ -1716,7 +1728,7 @@ namespace Tablix.Server.Handlers
             ChatExecutionResult noExecutionResult = null)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
-            ChatCompletionOptions plannerOptions = CreateOptions(preparation.Provider, BuildFallbackPlannerSystemPrompt(preparation));
+            CompletionOptions plannerOptions = CreateOptions(preparation.Provider, BuildFallbackPlannerSystemPrompt(preparation));
             plannerOptions.Temperature = preparation.Settings.Chat.PromptProcessing.PlannerTemperature;
             string plannerPrompt = BuildFallbackPlannerPrompt(preparation);
             ChatResponse planResponse = null;
@@ -1762,7 +1774,7 @@ namespace Tablix.Server.Handlers
                 "fallback",
                 () => ExecutePlannedQueryAsync(preparation, plan.Query, "fallback", token, sendEventAsync)).ConfigureAwait(false);
             string followupPrompt = BuildToolFollowupPrompt(preparation.Prompt, planResponse.Text, toolCall);
-            ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
+            CompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
             ChatResponse finalResponse = await CallChatAsync(client, preparation.Provider, followupPrompt, options, TelemetryNames.StageFinalInference, _ChatStageRecorder, token).ConfigureAwait(false);
             stopwatch.Stop();
 
@@ -1787,7 +1799,7 @@ namespace Tablix.Server.Handlers
             Func<ChatStreamEvent, Task> sendEventAsync,
             ChatExecutionResult noExecutionResult = null)
         {
-            ChatCompletionOptions plannerOptions = CreateOptions(preparation.Provider, BuildFallbackPlannerSystemPrompt(preparation));
+            CompletionOptions plannerOptions = CreateOptions(preparation.Provider, BuildFallbackPlannerSystemPrompt(preparation));
             plannerOptions.Temperature = preparation.Settings.Chat.PromptProcessing.PlannerTemperature;
             string plannerPrompt = BuildFallbackPlannerPrompt(preparation);
             ChatResponse planResponse = null;
@@ -1847,7 +1859,7 @@ namespace Tablix.Server.Handlers
 
         private async Task<ChatExecutionResult> ExecutePlainChatAsync(CompletionClientBase client, ChatPreparation preparation, string executionPath, string capabilityNotice, CancellationToken token)
         {
-            ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
+            CompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
             Stopwatch stopwatch = Stopwatch.StartNew();
             ChatResponse response = await CallChatAsync(client, preparation.Provider, preparation.Prompt, options, TelemetryNames.StageFinalInference, _ChatStageRecorder, token).ConfigureAwait(false);
             stopwatch.Stop();
@@ -1999,7 +2011,7 @@ namespace Tablix.Server.Handlers
             CancellationToken token,
             Func<ChatStreamEvent, Task> sendEventAsync)
         {
-            ChatCompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
+            CompletionOptions options = CreateOptions(preparation.Provider, preparation.SystemPrompt);
             Stopwatch stopwatch = Stopwatch.StartNew();
             using ModelCallScope modelCall = ModelCallScope.Start(preparation.Provider, TelemetryNames.ModelOperationChatStream);
             ChatStreamingResponse response;
@@ -2029,7 +2041,7 @@ namespace Tablix.Server.Handlers
             }
 
             StringBuilder messageBuilder = new StringBuilder();
-            ChatStreamingUsage usage = null;
+            TokenUsage usage = null;
 
             try
             {
@@ -2810,7 +2822,7 @@ namespace Tablix.Server.Handlers
             return result.Substring(0, limit) + "...[truncated]";
         }
 
-        private static ChatTelemetry CreateTelemetry(long timeToFirstTokenMs, long totalStreamingTimeMs, string prompt, string response, ChatStreamingUsage usage)
+        private static ChatTelemetry CreateTelemetry(long timeToFirstTokenMs, long totalStreamingTimeMs, string prompt, string response, TokenUsage usage)
         {
             ChatTelemetry telemetry = new ChatTelemetry
             {

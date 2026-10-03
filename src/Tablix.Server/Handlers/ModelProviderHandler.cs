@@ -289,7 +289,7 @@ namespace Tablix.Server.Handlers
                     throw new ArgumentException("Provider model is required.");
 
                 using CompletionClientBase client = CreateClient(provider);
-                ChatCompletionOptions options = new ChatCompletionOptions
+                CompletionOptions options = new CompletionOptions
                 {
                     SystemPrompt = "Reply with the single word OK."
                 };
@@ -330,17 +330,17 @@ namespace Tablix.Server.Handlers
         {
             CompletionClientBase client;
             if (provider.Type == ModelProviderTypeEnum.Gemini)
-                client = new GeminiClient(provider.Endpoint, provider.ApiKey, _Logging);
+                client = new GeminiCompletionClient(provider.Endpoint, provider.ApiKey, _Logging);
             else if (provider.Type == ModelProviderTypeEnum.Ollama)
-                client = new OllamaClient(provider.Endpoint, provider.ApiKey, _Logging);
+                client = new OllamaCompletionClient(provider.Endpoint, provider.ApiKey, _Logging);
             else
-                client = new OpenAiClient(provider.Endpoint, provider.ApiKey, _Logging);
+                client = new OpenAiCompletionClient(provider.Endpoint, provider.ApiKey, _Logging);
 
-            client.Model = provider.Model;
+            if (!String.IsNullOrWhiteSpace(provider.Model)) client.Model = provider.Model;
             client.TimeoutMs = provider.RequestTimeoutMs;
-            if (provider.Temperature.HasValue) client.Temperature = provider.Temperature.Value;
-            if (provider.TopP.HasValue) client.TopP = provider.TopP.Value;
-            if (provider.MaxTokens.HasValue) client.MaxTokens = provider.MaxTokens.Value;
+            if (provider.Temperature.HasValue) client.Defaults.Temperature = provider.Temperature.Value;
+            if (provider.TopP.HasValue) client.Defaults.TopP = provider.TopP.Value;
+            if (provider.MaxTokens.HasValue) client.Defaults.MaxTokens = provider.MaxTokens.Value;
             return client;
         }
 

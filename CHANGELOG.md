@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.1 - ALPHA (2026-10-03)
 
 ### Added
 
@@ -26,6 +26,11 @@
 ### Changed
 
 - Updated NuGet dependencies, including Voltaic 2.0.0, Watson 7.2.0, PolyPrompt 2.6.0, and SyslogLogging 2.2.2.
+- Updated NuGet dependencies: PolyPrompt 2.6.0 -> 3.1.0, Voltaic 2.0.0 -> 2.2.1, Watson 7.2.0 -> 7.2.2, SyslogLogging 2.2.2 -> 2.3.1, Microsoft.Data.SqlClient 7.1.0 -> 7.1.1, Touchstone 0.1.12 -> 0.2.0, NUnit 4.6.1 -> 5.0.0, and coverlet.collector 10.0.1 -> 10.1.0.
+- Migrated model provider calls to PolyPrompt 3: `OpenAiCompletionClient`, `GeminiCompletionClient`, and `OllamaCompletionClient` replace the 2.x all-in-one clients; provider temperature, top-p, and max tokens are set on the client `Defaults`; `CompletionOptions` replaces `ChatCompletionOptions`; `TokenUsage` replaces `ChatStreamingUsage`; and native tool-chat requests carry model and sampling settings in `ToolChatRequest.Options`. A blank provider model is no longer assigned to the client, because PolyPrompt 3 rejects a blank `Model`.
+- With Voltaic 2.2.1, a handshake-era MCP request other than `initialize` that has no `MCP-Session-Id` (including `ping`) gets HTTP 400 and `-32600`. Stateless `2026-07-28` clients such as Claude Code are unaffected. Live-server MCP tests now open a session with `initialize`, and new tests cover the sessionless rejection and session issuance.
+- Added tests for the PolyPrompt 3 migration: the completion client chosen per provider type, client defaults from provider settings, per-call `CompletionOptions`, and tool-chat settings on `ToolChatRequest.Options`.
+- Product, assembly, and REST health version is now 0.3.1. Docker images remain tagged `v0.3.0` and `latest`.
 - With Voltaic 2.0.0 the MCP server lists only the Tablix tools. Voltaic's demo tools (`ping`, `echo`, `getTime`, `getSessions`) are no longer published; `getSessions` had disclosed every client's session ID.
 - MCP `ping` now returns an empty result (`{}`) instead of `"pong"`, as the MCP specification requires.
 - Tablix tools are reachable only through `tools/call`. Calling a tool name as a bare JSON-RPC method returns `-32601` (method not found).

@@ -8,6 +8,11 @@ http://localhost:9102/mcp
 
 The MCP host and port are configured in `tablix.json` under `Rest.Hostname` and `Rest.McpPort`.
 
+The endpoint serves two kinds of MCP clients:
+
+- **Stateless clients** (MCP revision `2026-07-28`, for example Claude Code 2.1.x) send `server/discover` and then carry the protocol version on every request. No session is needed.
+- **Handshake clients** (revisions `2024-11-05` through `2025-11-25`) send `initialize` first and then send the returned `MCP-Session-Id` header on every later request. A handshake-era request without a session, including `ping`, gets HTTP 400 with JSON-RPC error `-32600`. Use `GET /` on the REST port to probe liveness without a session.
+
 ## Security Model
 
 The MCP server is intended to run in a trusted local or private environment. Current MCP tools do not require an API key.
@@ -21,7 +26,7 @@ Credential redaction is enforced on discovery tools:
 
 Model provider credentials are stored in `tablix.db` and managed through the REST Models API or dashboard Models page. These provider keys are not part of the MCP tool response surface and must not be stored in database context.
 
-Dashboard Chat uses PolyPrompt `2.0.0` native tool chat, including streaming tool-chat calls for `/v1/chat/stream`, when a selected provider is configured for native tool calls. That provider-facing tool loop is internal to REST chat and can expose `tablix_execute_query`, `tablix_update_database_context`, and `tablix_update_table_context`. MCP clients continue to use the explicit MCP tools documented here; `tablix_execute_query` follows the same validation and `AllowedQueries` enforcement used by REST chat native-tool and fallback execution, and MCP context update tools use the same persisted context records as REST chat context updates.
+Dashboard Chat uses PolyPrompt `3.1.0` native tool chat, including streaming tool-chat calls for `/v1/chat/stream`, when a selected provider is configured for native tool calls. That provider-facing tool loop is internal to REST chat and can expose `tablix_execute_query`, `tablix_update_database_context`, and `tablix_update_table_context`. MCP clients continue to use the explicit MCP tools documented here; `tablix_execute_query` follows the same validation and `AllowedQueries` enforcement used by REST chat native-tool and fallback execution, and MCP context update tools use the same persisted context records as REST chat context updates.
 
 Do not save secrets, raw query result data, access tokens, connection strings, or passwords into database or table context with any context update tool.
 

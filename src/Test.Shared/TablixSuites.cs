@@ -762,20 +762,20 @@ namespace Test.Shared
                     }),
                     Case("ServerLifecycle", "McpToolCallReceivesArguments", "MCP tools/call over HTTP delivers arguments to Tablix tool handlers", async ct =>
                     {
-                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        await WithLiveMcpServerAsync(ct, async (mcp, token) =>
                         {
                             string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"tablix_discover_database\",\"arguments\":{\"databaseId\":\"missing_db\"}}}";
-                            string responseJson = await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false);
+                            string responseJson = await mcp.PostAsync(request, token).ConfigureAwait(false);
                             DoesNotContain(responseJson, "databaseId is required", "MCP tool arguments should reach the tool handler.");
                             Contains(responseJson, "missing_db", "MCP tool handler should see the supplied databaseId.");
                         }).ConfigureAwait(false);
                     }),
                     Case("ServerLifecycle", "McpToolsListReturnsOnlyTablixTools", "MCP tools/list over HTTP returns exactly the Tablix tools and no Voltaic demo tools", async ct =>
                     {
-                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        await WithLiveMcpServerAsync(ct, async (mcp, token) =>
                         {
                             string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}";
-                            using JsonDocument document = ParseMcpResponse(await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false));
+                            using JsonDocument document = ParseMcpResponse(await mcp.PostAsync(request, token).ConfigureAwait(false));
                             List<string> names = Required(document.RootElement, "result", "tools").EnumerateArray()
                                 .Select(tool => tool.GetProperty("name").GetString())
                                 .ToList();
@@ -790,10 +790,10 @@ namespace Test.Shared
                     }),
                     Case("ServerLifecycle", "McpPingReturnsEmptyResult", "MCP ping over HTTP returns an empty result object instead of \"pong\"", async ct =>
                     {
-                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        await WithLiveMcpServerAsync(ct, async (mcp, token) =>
                         {
                             string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}";
-                            using JsonDocument document = ParseMcpResponse(await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false));
+                            using JsonDocument document = ParseMcpResponse(await mcp.PostAsync(request, token).ConfigureAwait(false));
                             JsonElement root = document.RootElement;
 
                             False(root.TryGetProperty("error", out _), "ping should not return an error.");
@@ -804,10 +804,10 @@ namespace Test.Shared
                     }),
                     Case("ServerLifecycle", "McpBareToolMethodRejected", "MCP rejects a Tablix tool invoked as a bare JSON-RPC method", async ct =>
                     {
-                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        await WithLiveMcpServerAsync(ct, async (mcp, token) =>
                         {
                             string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tablix_discover_databases\",\"params\":{}}";
-                            using JsonDocument document = ParseMcpResponse(await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false));
+                            using JsonDocument document = ParseMcpResponse(await mcp.PostAsync(request, token).ConfigureAwait(false));
                             JsonElement root = document.RootElement;
 
                             False(root.TryGetProperty("result", out _), "A bare tool call should not return a result.");
@@ -816,12 +816,12 @@ namespace Test.Shared
                     }),
                     Case("ServerLifecycle", "McpDemoToolsNotCallable", "MCP tools/call rejects the removed Voltaic demo tools", async ct =>
                     {
-                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        await WithLiveMcpServerAsync(ct, async (mcp, token) =>
                         {
                             foreach (string demoTool in new[] { "echo", "getTime", "getSessions" })
                             {
                                 string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"" + demoTool + "\",\"arguments\":{}}}";
-                                string responseJson = await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false);
+                                string responseJson = await mcp.PostAsync(request, token).ConfigureAwait(false);
                                 using JsonDocument document = ParseMcpResponse(responseJson);
                                 JsonElement root = document.RootElement;
 
@@ -834,16 +834,42 @@ namespace Test.Shared
                     }),
                     Case("ServerLifecycle", "McpToolCallToleratesUndeclaredArgument", "MCP tools/call accepts an undeclared argument because Tablix schemas do not forbid additional properties", async ct =>
                     {
-                        await WithLiveMcpServerAsync(ct, async (mcpUrl, token) =>
+                        await WithLiveMcpServerAsync(ct, async (mcp, token) =>
                         {
                             string request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"tablix_discover_databases\",\"arguments\":{\"maxResults\":5,\"unexpectedArgument\":true}}}";
-                            string responseJson = await PostMcpAsync(mcpUrl, request, token).ConfigureAwait(false);
+                            string responseJson = await mcp.PostAsync(request, token).ConfigureAwait(false);
                             using JsonDocument document = ParseMcpResponse(responseJson);
                             JsonElement root = document.RootElement;
 
                             False(root.TryGetProperty("error", out _), "An undeclared argument should not be rejected: " + responseJson);
                             DoesNotContain(responseJson, "unexpected property", "Tablix tool schemas should not enforce additionalProperties.");
                             True(Required(root, "result").TryGetProperty("content", out _), "tools/call should return tool content.");
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("ServerLifecycle", "McpSessionlessRequestRejected", "MCP rejects a handshake-era request without an MCP-Session-Id", async ct =>
+                    {
+                        await WithLiveMcpServerAsync(ct, async (mcp, token) =>
+                        {
+                            using HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+                            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, mcp.Url);
+                            request.Content = new StringContent("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}", System.Text.Encoding.UTF8, "application/json");
+                            request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+                            request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", McpTestSession.ProtocolVersion);
+
+                            using HttpResponseMessage response = await client.SendAsync(request, token).ConfigureAwait(false);
+                            string responseJson = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                            Equal(400, (int)response.StatusCode, "A sessionless handshake-era request should get HTTP 400.");
+                            using JsonDocument document = ParseMcpResponse(responseJson);
+                            Equal(-32600, Required(document.RootElement, "error", "code").GetInt32(), "A sessionless request should be an invalid request.");
+                        }).ConfigureAwait(false);
+                    }),
+                    Case("ServerLifecycle", "McpInitializeIssuesSession", "MCP initialize issues a session that later requests can use", async ct =>
+                    {
+                        await WithLiveMcpServerAsync(ct, async (mcp, token) =>
+                        {
+                            False(String.IsNullOrWhiteSpace(mcp.SessionId), "initialize should return an MCP-Session-Id.");
+                            using JsonDocument document = ParseMcpResponse(await mcp.PostAsync("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}", token).ConfigureAwait(false));
+                            False(document.RootElement.TryGetProperty("error", out _), "ping on the session should succeed.");
                         }).ConfigureAwait(false);
                     }),
                     Case("Persistence", "DatabaseCreateRead", "Persistence creates and reads database entries", async ct =>
@@ -2008,11 +2034,84 @@ namespace Test.Shared
 
                         Equal("First part. Second part.", text, "Gemini parser should concatenate all text parts.");
                         Equal("STOP", Convert.ToString(args[1]), "Gemini parser should expose finish reason.");
-                        ChatStreamingUsage usage = args[2] as ChatStreamingUsage;
+                        TokenUsage usage = args[2] as TokenUsage;
                         NotNull(usage, "Gemini parser should expose usage metadata.");
                         Equal(10, usage.PromptTokens.Value, "Prompt token count mismatch.");
                         Equal(5, usage.CompletionTokens.Value, "Completion token count mismatch.");
                         Equal(15, usage.TotalTokens.Value, "Total token count mismatch.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("ModelGuards", "PolyPromptCompletionClientPerProviderType", "Each provider type gets the PolyPrompt 3 completion client for its protocol", ct =>
+                    {
+                        MethodInfo method = typeof(ChatHandler).GetMethod("CreateClient", BindingFlags.NonPublic | BindingFlags.Instance);
+                        NotNull(method, "ChatHandler.CreateClient should exist.");
+                        ChatHandler handler = (ChatHandler)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(ChatHandler));
+
+                        Dictionary<ModelProviderTypeEnum, Type> expected = new Dictionary<ModelProviderTypeEnum, Type>
+                        {
+                            { ModelProviderTypeEnum.OpenAI, typeof(PolyPrompt.Clients.OpenAiCompletionClient) },
+                            { ModelProviderTypeEnum.OpenAICompatible, typeof(PolyPrompt.Clients.OpenAiCompletionClient) },
+                            { ModelProviderTypeEnum.Gemini, typeof(PolyPrompt.Clients.GeminiCompletionClient) },
+                            { ModelProviderTypeEnum.Ollama, typeof(PolyPrompt.Clients.OllamaCompletionClient) }
+                        };
+
+                        foreach (KeyValuePair<ModelProviderTypeEnum, Type> pair in expected)
+                        {
+                            ModelProviderSettings provider = new ModelProviderSettings { Type = pair.Key, Endpoint = "http://127.0.0.1:1", Model = "test-model" };
+                            using PolyPrompt.Clients.CompletionClientBase client = (PolyPrompt.Clients.CompletionClientBase)method.Invoke(handler, new object[] { provider });
+                            Equal(pair.Value, client.GetType(), "Wrong completion client for " + pair.Key + ".");
+                        }
+
+                        return Task.CompletedTask;
+                    }),
+                    Case("ModelGuards", "PolyPromptClientDefaultsFromProvider", "Provider model, sampling, token limit, and timeout become PolyPrompt client Defaults", ct =>
+                    {
+                        MethodInfo method = typeof(ChatHandler).GetMethod("CreateClient", BindingFlags.NonPublic | BindingFlags.Instance);
+                        ChatHandler handler = (ChatHandler)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(ChatHandler));
+                        ModelProviderSettings provider = new ModelProviderSettings
+                        {
+                            Type = ModelProviderTypeEnum.OpenAI,
+                            Endpoint = "http://127.0.0.1:1",
+                            Model = "gpt-test",
+                            Temperature = 0.25,
+                            TopP = 0.5,
+                            MaxTokens = 321,
+                            RequestTimeoutMs = 45000
+                        };
+
+                        using PolyPrompt.Clients.CompletionClientBase client = (PolyPrompt.Clients.CompletionClientBase)method.Invoke(handler, new object[] { provider });
+                        Equal("gpt-test", client.Model, "Model should be set on the client.");
+                        Equal(0.25, client.Defaults.Temperature.Value, "Temperature should be a client default.");
+                        Equal(0.5, client.Defaults.TopP.Value, "TopP should be a client default.");
+                        Equal(321, client.Defaults.MaxTokens.Value, "MaxTokens should be a client default.");
+                        Equal(45000, client.TimeoutMs, "Timeout should be set on the client.");
+
+                        ModelProviderSettings unset = new ModelProviderSettings { Type = ModelProviderTypeEnum.Ollama, Endpoint = "http://127.0.0.1:1", Temperature = null, MaxTokens = null };
+                        using PolyPrompt.Clients.CompletionClientBase bare = (PolyPrompt.Clients.CompletionClientBase)method.Invoke(handler, new object[] { unset });
+                        Null(bare.Defaults.Temperature, "Unset temperature should leave the provider default.");
+                        Null(bare.Defaults.MaxTokens, "Unset max tokens should leave the PolyPrompt default.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("ModelGuards", "PolyPromptCompletionOptionsFromProvider", "Per-call CompletionOptions carry the system prompt and provider sampling", ct =>
+                    {
+                        MethodInfo method = typeof(ChatHandler).GetMethod("CreateOptions", BindingFlags.NonPublic | BindingFlags.Static);
+                        NotNull(method, "ChatHandler.CreateOptions should exist.");
+                        ModelProviderSettings provider = new ModelProviderSettings { Temperature = 0.1, TopP = 0.9, MaxTokens = 64 };
+
+                        CompletionOptions options = (CompletionOptions)method.Invoke(null, new object[] { provider, "You are Tablix." });
+                        Equal("You are Tablix.", options.SystemPrompt, "System prompt should be a per-call option.");
+                        Equal(0.1, options.Temperature.Value, "Temperature mismatch.");
+                        Equal(0.9, options.TopP.Value, "TopP mismatch.");
+                        Equal(64, options.MaxTokens.Value, "MaxTokens mismatch.");
+                        return Task.CompletedTask;
+                    }),
+                    Case("ModelGuards", "PolyPromptToolChatSettingsUseOptions", "Native tool-chat requests put model and sampling on ToolChatRequest.Options", ct =>
+                    {
+                        string chatHandler = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "Tablix.Server", "Handlers", "ChatHandler.cs"));
+                        int requests = Regex.Matches(chatHandler, @"new ToolChatRequest\s*\{").Count;
+                        int options = Regex.Matches(chatHandler, @"new ToolChatRequest\s*\{[^}]*?Options = new CompletionOptions\s*\{\s*Model = preparation\.Provider\.Model,", RegexOptions.Singleline).Count;
+                        True(requests > 0, "ChatHandler should build native tool-chat requests.");
+                        Equal(requests, options, "Every ToolChatRequest should carry the provider model and sampling in Options.");
                         return Task.CompletedTask;
                     }),
                     Case("ModelGuards", "SyslogHostnameNullThrows", "SyslogServer null hostname throws", ct =>
@@ -2695,7 +2794,7 @@ namespace Test.Shared
                         Contains(stylesheet, "button.health-histogram", "Clickable health histograms should preserve chart styling.");
                         return Task.CompletedTask;
                     }),
-                    Case("DashboardApiContract", "ReleaseVersion030Documented", "Release version 0.3.0 is reflected in docs, compose tags, package metadata, and product constants", ct =>
+                    Case("DashboardApiContract", "ReleaseVersion031Documented", "Release version 0.3.1 is reflected in docs, package metadata, and product constants, with v0.3.0 image tags", ct =>
                     {
                         string repositoryRoot = FindRepositoryRoot();
                         string readme = File.ReadAllText(Path.Combine(repositoryRoot, "README.md"));
@@ -2720,20 +2819,22 @@ namespace Test.Shared
                             .OrderBy(filename => filename)
                             .ToList();
 
-                        Contains(readme, "<b>v0.3.0 - ALPHA</b>", "README should show the current release tag.");
-                        Contains(readme, "## What's New in v0.3.0", "README current release section should be v0.3.0.");
+                        Contains(readme, "<b>v0.3.1 - ALPHA</b>", "README should show the current release tag.");
+                        Contains(readme, "## What's New in v0.3.1", "README current release section should be v0.3.1.");
+                        Contains(readme, "## What's New in v0.3.0", "README should keep the v0.3.0 release section.");
                         Contains(readme, "jchristn77/tablix-server:v0.3.0", "README server image examples should use v0.3.0.");
                         Contains(readme, "jchristn77/tablix-ui:v0.3.0", "README UI image examples should use v0.3.0.");
                         Contains(readme, "build-all.bat v0.3.0", "README build instructions should use v0.3.0.");
                         DoesNotContain(readme, dockerCloudBuilderName, "README build instructions should not require a hard-coded cloud builder.");
                         DoesNotContain(readme, "v0.2.0", "README current-facing release references should not stay on v0.2.0.");
 
-                        Contains(restApi, "\"Version\": \"0.3.0\"", "REST API health example should use product version 0.3.0.");
+                        Contains(restApi, "\"Version\": \"0.3.1\"", "REST API health example should use product version 0.3.1.");
                         Contains(restApi, "tablix_update_database_context", "REST API chat docs should mention database context update tools.");
                         Contains(restApi, "tablix_update_table_context", "REST API chat docs should mention table context update tools.");
                         Contains(restApi, "Chat.Tools.AllowContextUpdates", "REST API chat docs should document the context-update gate.");
                         Contains(mcpApi, "REST chat context updates", "MCP API docs should connect MCP and REST chat context updates.");
                         Contains(gettingStarted, "Database and table context updates", "Getting started chat docs should mention context update tool calls.");
+                        Contains(changelog, "## v0.3.1 - ALPHA", "Changelog should include the v0.3.1 release.");
                         Contains(changelog, "## v0.3.0 - ALPHA", "Changelog should include the v0.3.0 release.");
 
                         Contains(compose, "jchristn77/tablix-server:v0.3.0", "Compose server image tag should be v0.3.0.");
@@ -2770,9 +2871,9 @@ namespace Test.Shared
                         foreach (string projectFile in projectFiles)
                         {
                             string project = File.ReadAllText(projectFile);
-                            Contains(project, "<Version>0.3.0</Version>", Path.GetFileName(projectFile) + " package version should be 0.3.0.");
+                            Contains(project, "<Version>0.3.1</Version>", Path.GetFileName(projectFile) + " package version should be 0.3.1.");
                         }
-                        Contains(constants, "ProductVersion = \"0.3.0\"", "Runtime product version should be 0.3.0.");
+                        Contains(constants, "ProductVersion = \"0.3.1\"", "Runtime product version should be 0.3.1.");
                         return Task.CompletedTask;
                     }),
                     Case("DashboardApiContract", "ApiFetchDoesNotForceJsonOnBodylessRequests", "Dashboard API helper only sends JSON content type with request bodies", ct =>
@@ -3536,7 +3637,7 @@ namespace Test.Shared
             throw new InvalidOperationException("Timed out waiting for " + url, lastException);
         }
 
-        private static async Task WithLiveMcpServerAsync(CancellationToken ct, Func<string, CancellationToken, Task> action)
+        private static async Task WithLiveMcpServerAsync(CancellationToken ct, Func<McpTestSession, CancellationToken, Task> action)
         {
             string directory = Path.Combine(Path.GetTempPath(), "tablix_server_" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(directory);
@@ -3559,8 +3660,8 @@ namespace Test.Shared
             {
                 await server.StartAsync(linked.Token).ConfigureAwait(false);
                 string mcpUrl = "http://127.0.0.1:" + settings.Rest.McpPort + "/mcp";
-                await WaitForMcpPostOkAsync(mcpUrl, "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"ping\"}", linked.Token).ConfigureAwait(false);
-                await action(mcpUrl, linked.Token).ConfigureAwait(false);
+                McpTestSession session = await McpTestSession.OpenAsync(mcpUrl, linked.Token).ConfigureAwait(false);
+                await action(session, linked.Token).ConfigureAwait(false);
             }
             finally
             {
@@ -3591,53 +3692,7 @@ namespace Test.Shared
             return JsonDocument.Parse(trimmed);
         }
 
-        /// <summary>
-        /// POST one MCP request to a ready endpoint and return the body regardless of HTTP status.
-        /// </summary>
-        private static async Task<string> PostMcpAsync(string url, string body, CancellationToken token)
-        {
-            using HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
-            using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, url);
-            request.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-            request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
-            request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2025-11-25");
 
-            using HttpResponseMessage response = await client.SendAsync(request, token).ConfigureAwait(false);
-            return await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
-        }
-
-        private static async Task<string> WaitForMcpPostOkAsync(string url, string body, CancellationToken token)
-        {
-            using HttpClient client = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-            Exception lastException = null;
-
-            for (int attempt = 0; attempt < 20; attempt++)
-            {
-                token.ThrowIfCancellationRequested();
-
-                try
-                {
-                    using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, url);
-                    request.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
-                    request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
-                    request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2025-11-25");
-
-                    using HttpResponseMessage response = await client.SendAsync(request, token).ConfigureAwait(false);
-                    string content = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
-                    if (response.IsSuccessStatusCode) return content;
-
-                    lastException = new InvalidOperationException("HTTP " + (int)response.StatusCode + ": " + content);
-                }
-                catch (Exception ex) when (!token.IsCancellationRequested && (ex is HttpRequestException || ex is TaskCanceledException || ex is IOException))
-                {
-                    lastException = ex;
-                }
-
-                await Task.Delay(100, token).ConfigureAwait(false);
-            }
-
-            throw new InvalidOperationException("Timed out waiting for " + url, lastException);
-        }
 
         private static void AssertOpenApiMetadataComplete(string openApiJson)
         {
